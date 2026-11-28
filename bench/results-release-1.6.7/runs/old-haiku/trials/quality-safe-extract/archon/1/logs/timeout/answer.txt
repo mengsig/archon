@@ -1,0 +1,10 @@
+I queued the work as `qi_01M8GK456FN425NMQD41VMX6BF`. It is not finished yet, and I'll report when it completes.
+
+- **Repository:** `quality-safe-extract`, base `main`.
+- **Pipeline:** `adaptive`. Archive extraction is security-sensitive, so I didn't use `direct`.
+- **Review:** `strict`, because this is a security-related change.
+- **Shipping:** local only. The item commits on a local branch and does not push.
+
+The brief passes your request through verbatim. It also requires every SPEC.md requirement and error case to have a test, the suite to pass, and commits to carry no attribution lines. I haven't checked SPEC.md's contents myself. The agent is told to choose the safer reading wherever the spec is ambiguous and to state that choice in its summary.
+
+Cancelled: Implement safe_extract.py per SPEC.md with focused stdlib tests. archon-bench: trial timeout

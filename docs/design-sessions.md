@@ -17,6 +17,7 @@ ever reaches your browser: only pictures and JSON.
 
 - [Configuration](#configuration)
 - [Starting a session](#starting-a-session)
+- [How the agent starts your app](#how-the-agent-starts-your-app)
 - [Using the design screen](#using-the-design-screen)
 - [Files, downloads and other browser features](#files-downloads-and-other-browser-features)
 - [Notes and their statuses](#notes-and-their-statuses)
@@ -92,6 +93,116 @@ entry "Design session ready" appears with an **Open** button that opens the
 design screen. (Archon sends no push notifications yet; the inbox entry is the
 signal.) Until then the design screen shows
 "Starting your app…" and the agent's latest progress line.
+
+## How the agent starts your app
+
+You do not tell the agent how to run your app. It works out what the page
+needs, starts all of it, checks it, and Archon remembers what worked for the
+next session.
+
+**Discovery.** The agent first asks Archon for this repository's saved
+recipe (the `design_recipe` tool) and tries it. Without one, or when a step of
+it fails, it looks for the repository's own documented preview or dev route:
+docs that mention preview or development, `scripts/*preview*` or
+`scripts/dev*`, Makefile or justfile targets, `package.json` scripts, a
+Procfile, Compose files, `.devcontainer/` and the README. Only without one does
+it infer the stack from its files (Vite, Next, Create React App, Angular,
+Svelte, Django, Flask, FastAPI, Rails, Go, Rust web servers, static sites). It
+starts the backends and databases the page calls, not only the frontend; an
+app with one dev server still needs only that server. Every long-running
+process runs from the item's worktree in its own process group, bound to
+`127.0.0.1`, with its PID in `.archon/services/<name>.pid`, so Archon stops it
+when the run ends. The page itself must come from such a host process, because
+archond checks the process that owns its port and a port a container publishes
+does not count; containers may run the backends, databases and other services,
+and a frontend that only runs in a container is started on the host instead.
+
+**Compose.** A Compose stack gets a project of its own, `archon-<item>` (the
+item id in lowercase), set as `COMPOSE_PROJECT_NAME` and passed with `-p`. A
+project name a repository's script sets itself gets the same name. The agent
+never reuses an existing project's name, stopped ones included (`docker
+compose ls -a`), reports a clash by name instead of starting, and never touches another Compose
+project or container on the host, such as your own. Every other knob a
+script reads that names a project, a volume or a state directory (such as
+`DEV_PREVIEW_PROJECT` or `DEV_PREVIEW_HOME`) is set to the run's own too, with
+state under `.archon/` in the worktree, so it never meets a shared stack's
+data; the agent never deletes or resets state it did not create, nor asks you
+to. When the run ends, archond tears down the projects whose containers all
+run from the item's worktree; one with any container from elsewhere is left
+alone. Volumes are kept, except for the item's own project `archon-<item>`:
+its name is unique to the item's runs, so archond takes it down with `docker
+compose --project-name archon-<item> down --remove-orphans`, from the compose
+files and directory it started from. When Compose cannot read the files, as
+when they need variables only a repo script such as `dev-preview-stack`
+sets, the containers are stopped as any other project's and removed with
+their anonymous volumes, and the feed says why. Either way, and also when its
+containers were already gone, the networks and volumes labelled
+`com.docker.compose.project=archon-<item>` are then removed; one Docker
+refuses as in use is told in the feed. Compose's own `down --volumes` is
+never used: it removes each declared volume by its configured name, so an
+explicitly named one such as another stack's would go too.
+
+**Dependencies.** When an install fails (a package missing from its index, a
+private package, a build error) the agent asks you, naming the command, the
+package and the error, instead of working around it, and previews nothing
+until you answer.
+
+**Verification.** Before it calls `design_preview`, the agent checks that the
+page loads without a server error and that each backend the page calls
+answers. If part of the stack does not come up it previews none of it and
+tells the orchestrator which step failed, with its command and error. archond
+checks again before it shows anything: the process serving the port must run
+in the item's worktree under a recorded PID or its process group, the page
+must give a whole final answer below HTTP 500, past informational answers and
+at most five loopback redirects, and every service step of the recipe must
+answer the same way at its `ready` URL, or accept connections on its `port`.
+When a recipe has more than one service, each must name one of them; a single
+dev server is checked through the page. Otherwise `design_preview` is refused with every failure named, for example "the preview stack is not
+up, so nothing was previewed or saved: step api: http://127.0.0.1:8000/health
+does not answer".
+
+**The saved recipe.** With `design_preview` the agent passes the recipe that
+brought the stack up: where it came from (`docs/dev-preview.md`, say), the
+commands in start order, which keep running and which run once, the
+directory, port and readiness URL of each, and the names of the environment
+variables they need. A port that differs per run carries `port_pick`:
+`"free"` when the command or its script picks a free port, or
+`{"env": "PORT"}` when the command reads it from a variable the recipe lists.
+The agent gives this run's port or readiness URL beside it for the check,
+the saved recipe keeps only how to pick it, and a command that spells out
+this run's port is refused, so a replay never binds or checks one run's
+number. archond saves it for the repository only when all its
+checks pass, replacing the last one, in Archon's own state, never in the
+repository. A `design_preview` that another preview or a clear overtakes
+while it checks the stack changes nothing and is refused, so an older
+request never undoes a newer recipe or your clear. It never holds a value: archond refuses a recipe that spells out
+a secret-named variable or flag (`DB_PASSWORD=…`, `PGPASSWORD=…`,
+`--api-key …`), a password in a URL or a `user:password` pair, an
+`Authorization` header, a well-known token, and one that names a Compose
+project other than as `$COMPOSE_PROJECT_NAME`. Every `-p` after `compose`
+counts as a project name, so `run -p 8080:80` is refused too: publish ports
+in the compose file instead. After `compose` only `$COMPOSE_PROJECT_NAME`
+and a double-quoted value of `-f`, `--file`, `--profile`, `--env-file` or
+`--project-directory` (`--profile "$PROFILE"`) may be expanded; any other
+`$VAR`, `$(…)` or backtick there is refused. A Compose call inside a quoted
+`sh -c` script or in `eval`'s arguments is read again as the shell reads it,
+with its quoting and line continuations, as well; one whose quoting cannot be read, or into which the outer shell
+expands a variable, is refused.
+A secret, or a path to one, is
+written as a whole variable (`$DB_PASSWORD` or `${DB_PASSWORD}`), never
+spelled out, and commands are read with the shell's quoting, so one with an
+unclosed quote is refused. The next session of the same repository tries
+it first, and saves a corrected one when it had to find the route again.
+
+See it with `archon settings --repo NAME` (the line
+`design preview recipe: …`, or the `design_recipe` field with `--json`), and
+forget it with:
+
+```sh
+archon settings --repo NAME --clear-design-recipe
+```
+
+The next session then discovers the stack again.
 
 ## Using the design screen
 
@@ -570,6 +681,9 @@ daemon’s sealed Git environment.
 
 - **No frames.** Run `archon doctor`; check the browser line. Check the item's
   agent started a server (`archon log`), and that `design_preview` was called.
+- **The agent keeps starting the stack the wrong way.** A saved recipe may be
+  stale: `archon settings --repo NAME --clear-design-recipe` makes the next
+  session find the route again.
 - **The page is blank or unstyled.** The app may load assets from other hosts;
   serve those assets through the same dev server as the page.
 - **Edits do not show.** After a note is done Archon reloads once if nothing

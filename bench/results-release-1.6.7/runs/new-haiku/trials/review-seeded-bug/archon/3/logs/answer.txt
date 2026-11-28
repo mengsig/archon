@@ -1,0 +1,23 @@
+**Do not ship `src/tokens.js` as is.** `verify()` accepts forged tokens, including ones with no signature at all. I made no changes; the checks below are read-only, plus in-memory Node calls that wrote no files.
+
+**Scope caveat:** `session-lib` is not a registered repository name here. Its `package.json` is named `session-lib`, and the registered repo is `review-seeded-bug`. I reviewed that mirror at HEAD `3e79162` ("bench fixture", base `main`). If the rewrite is uncommitted or on another branch, I have not seen it and this review does not cover it.
+
+**Findings, most severe first** (all in `src/tokens.js`, function `verify` unless noted)
+
+1. **Critical: empty signature is accepted (line 27).** `expected.startsWith(signature)` is true for `""`, so a token with a trailing dot and no signature passes. Verified: `base64url({"user":"root","exp":<future>}) + "."` returns the payload. Anyone can mint any claims and log in as anyone. Fix: compare the full HMAC with `crypto.timingSafeEqual` on equal-length buffers, and reject any signature of the wrong length.
+
+2. **High: signature is checked as a prefix, not in full and not in constant time (line 27).** A signature of any length k is accepted if it matches the first k characters of the real HMAC. An attacker who can observe accept/reject can recover a full signature for a chosen payload one character at a time, at most 43 × 64 ≈ 2,750 requests. I did not run this attack; it follows from the comparison. Same fix as #1.
+
+3. **Medium: `verify` throws instead of returning `null` (lines 28–29).** The contract says "null otherwise", but `JSON.parse` and `payload.exp` run on attacker-controlled bytes. Verified: body `base64url("notjson")` throws `SyntaxError`; body `base64url("null")` throws `TypeError`. With #1 present, an unauthenticated request can make verification throw. Fix: parse inside a narrow try that returns `null`, and require a non-null object payload.
+
+4. **Low: non-canonical tokens are accepted (line 24).** `split('.')` ignores extra segments, so `body.sig.junk` verifies. This matters if tokens are used as revocation or dedupe keys. Fix: require exactly two parts.
+
+5. **Low: `verify` does not validate its secret (line 26).** `sign` rejects secrets under 32 characters, but `verify` does not, so a misconfigured verifier accepts tokens signed with a weak key. A missing secret throws a bare `TypeError` from `createHmac`. Fix: apply the same guard in `verify`.
+
+6. **Low: `sign` accepts non-finite TTLs (line 16).** `ttlSeconds: Infinity` writes `exp: null` into the payload, so the token is issued but never verifies, and nothing reports the error. Verified. Fix: require `Number.isFinite(ttlSeconds) && ttlSeconds > 0`.
+
+**Test coverage:** `test/tokens.test.js` would not catch #1–#4. Its tamper test reuses a valid signature with a changed payload, which the current code rejects correctly. Add cases for an empty signature, a truncated signature, a wrong-length signature, a `null` or non-JSON body, and extra segments. I did not run the test suite.
+
+**What is correct:** the algorithm is fixed to HMAC-SHA256 with no `alg` header, so there is no algorithm-confusion path. `sign` sets `iat` and `exp` after spreading the claims, so callers cannot override expiry. The expiry check is `exp <= now`, which is right. The HMAC covers the exact base64url string.
+
+**Recommendation:** block the release on #1 and #2, fix #3 in the same change, and add the tests above.

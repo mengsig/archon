@@ -19,8 +19,10 @@ use tempfile::TempDir;
 
 /// `ps` prints the canned containers, a project's alone when filtered by
 /// it; `ps.after.N` replaces them after the Nth `ps`. `rm` drops the
-/// containers it names. `block.<command>` holds that command once until
-/// `release` appears, ten seconds at most.
+/// containers it names. `networks` and `volumes` hold project and name
+/// lines, listed by project; `volume rm` refuses a volume whose project still
+/// has a container, as Docker refuses one in use. `block.<command>` holds
+/// that command once until `release` appears, ten seconds at most.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
@@ -51,7 +53,42 @@ case "$1" in
       mv "$dir/ps.left" "$dir/ps"
     fi ;;
   network)
-    if [ "$2" = ls ]; then cat "$dir/networks" 2>/dev/null; fi ;;
+    if [ "$2" = rm ] && [ -e "$dir/network.exit" ]; then
+      echo "the network has active endpoints" >&2
+      exit 1
+    fi
+    if [ "$2" = ls ]; then
+      project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
+      awk -F '\t' -v p="$project" '$1 == p { print $2 }' "$dir/networks" 2>/dev/null
+    fi ;;
+  compose)
+    if [ -e "$dir/compose.exit" ]; then
+      partial=$(cat "$dir/compose.partial" 2>/dev/null)
+      if [ -n "$partial" ]; then
+        awk -F '\t' -v id="$partial" '$1 != id' "$dir/ps" > "$dir/ps.left"
+        mv "$dir/ps.left" "$dir/ps"
+      fi
+      echo "compose cannot read the project" >&2
+      exit 1
+    fi
+    project=$(echo "$*" | sed -n 's/.*--project-name \([^ ]*\).*/\1/p')
+    awk -F '\t' -v p="$project" '$2 != p' "$dir/ps" > "$dir/ps.left"
+    mv "$dir/ps.left" "$dir/ps" ;;
+  volume)
+    if [ "$2" = rm ]; then
+      shift 2
+      for name in "$@"; do
+        project=$(awk -F '\t' -v n="$name" '$2 == n { print $1 }' "$dir/volumes")
+        if awk -F '\t' -v p="$project" '$2 == p { used = 1 } END { exit !used }' "$dir/ps" 2>/dev/null; then
+          echo "volume $name is in use" >&2
+          exit 1
+        fi
+      done
+    fi
+    if [ "$2" = ls ]; then
+      project=$(echo "$*" | sed -n 's/.*label=com\.docker\.compose\.project=\([^ ]*\).*/\1/p')
+      awk -F '\t' -v p="$project" '$1 == p { print $2 }' "$dir/volumes" 2>/dev/null
+    fi ;;
 esac
 exit 0
 "#;
@@ -86,7 +123,7 @@ impl FakeDocker {
     pub(crate) fn removals(&self) -> Vec<String> {
         let calls = self.calls();
         let removes = |c: &String| {
-            ["stop ", "rm ", "network rm "]
+            ["stop ", "rm ", "network rm ", "volume rm ", "compose "]
                 .iter()
                 .any(|v| c.starts_with(v))
         };
@@ -163,7 +200,7 @@ async fn only_the_worktrees_own_projects_go_and_volumes_are_kept() {
             container("d2", "both", &operator),
         ],
     );
-    docker.lists("networks", &["e1".to_owned()]);
+    docker.lists("networks", &["review-1\te1".to_owned()]);
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
@@ -174,9 +211,196 @@ async fn only_the_worktrees_own_projects_go_and_volumes_are_kept() {
         docker.calls()
     );
     let calls = docker.calls();
-    assert!(!calls.iter().any(|c| c.contains("volume")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("volume rm")),
+        "{calls:?}"
+    );
     assert!(!calls.iter().any(|c| c.starts_with("compose")), "{calls:?}");
     assert!(harness.system_notes().await.is_empty());
+}
+
+/// S7: the item's own project, `archon-<item>`, unique to its runs, goes
+/// with `docker compose down` from the files it started from, then the
+/// volumes labelled for it; every other project keeps its.
+#[tokio::test]
+async fn the_items_own_project_goes_down_with_its_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    assert_eq!(own, format!("archon-{}", item.as_str().to_lowercase()));
+    docker.lists(
+        "ps",
+        &[
+            container("a1", &own, &tree),
+            container("b1", "review-1", &tree),
+        ],
+    );
+    own_and_other_volumes(&docker, &own);
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    let down = format!(
+        "compose --project-name {own} --project-directory {dir} --file {dir}/compose.yml \
+         --file {dir}/compose.dev.yml down --remove-orphans",
+        dir = tree.display()
+    );
+    assert_eq!(
+        docker.removals(),
+        [down.as_str(), "stop b1", "rm b1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    only_own_volumes_went(&docker, &own);
+    assert!(harness.system_notes().await.is_empty());
+}
+
+/// The volumes listing of the own project's `pgdata`, another project's, one
+/// explicitly named by another project and an external one with no label.
+fn own_and_other_volumes(docker: &FakeDocker, own: &str) {
+    let volumes = [
+        format!("{own}\t{own}_pgdata"),
+        "ccso-dev-preview\tccso-dev-preview_pgdata".to_owned(),
+        "ccso-dev-preview\tccso-dev-preview".to_owned(),
+        "\texternal-data".to_owned(),
+    ];
+    docker.lists("volumes", &volumes);
+}
+
+/// Compose is never asked to remove volumes, as it would by their declared
+/// names whoever's they are, and only the own project's labelled one is named.
+fn only_own_volumes_went(docker: &FakeDocker, own: &str) {
+    let calls = docker.calls();
+    let compose_volumes =
+        |c: &&String| c.starts_with("compose ") && (c.contains("--volumes") || c.contains(" -v"));
+    assert!(!calls.iter().any(|c| compose_volumes(&c)), "{calls:?}");
+    let removed: Vec<&str> = calls
+        .iter()
+        .filter_map(|c| c.strip_prefix("volume rm "))
+        .collect();
+    assert_eq!(removed, [format!("{own}_pgdata")], "{calls:?}");
+}
+
+/// When Compose cannot take the own project down, as when its files need a
+/// script's variables, its checked containers are stopped and removed with
+/// their anonymous volumes, its labelled volumes removed, and the failure told.
+#[tokio::test]
+async fn an_own_project_compose_cannot_take_down_is_stopped_and_told() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals[1..],
+        ["stop a1", "rm -v a1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("down --remove-orphans"), "{notes:?}");
+    only_own_volumes_went(&docker, &own);
+}
+
+/// A `compose down` that removed some containers before it failed leaves
+/// only the rest to stop, and its own error stays in the feed.
+#[tokio::test]
+async fn a_partial_compose_down_stops_only_the_containers_it_left() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists(
+        "ps",
+        &[container("a1", &own, &tree), container("a2", &own, &tree)],
+    );
+    docker.fails("compose");
+    std::fs::write(docker.dir.path().join("compose.partial"), "a1").unwrap();
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    assert_eq!(
+        removals[1..],
+        ["stop a2", "rm -v a2"],
+        "{:?}",
+        docker.calls()
+    );
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(!notes[0].contains("failed too"), "{notes:?}");
+}
+
+/// A failed `compose down` whose fallback fails too tells both errors, and
+/// the volume a container still uses is refused by Docker and told.
+#[tokio::test]
+async fn a_failed_fallback_after_compose_down_tells_both_errors() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    docker.fails("stop");
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    only_own_volumes_went(&docker, &own);
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(notes[0].contains("failed too"), "{notes:?}");
+    assert!(notes[0].contains("cannot stop the containers"), "{notes:?}");
+    assert!(notes[0].contains("is in use"), "{notes:?}");
+}
+
+/// A failed `compose down` that removed every checked container leaves
+/// nothing to stop, and still tells compose's error.
+#[tokio::test]
+async fn a_failed_compose_down_that_left_nothing_stops_nothing() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.fails("compose");
+    std::fs::write(docker.dir.path().join("compose.partial"), "a1").unwrap();
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert_eq!(removals.len(), 1, "{:?}", docker.calls());
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(!notes[0].contains("failed too"), "{notes:?}");
 }
 
 /// A project that gained a container from elsewhere after it was listed is
@@ -198,12 +422,9 @@ async fn a_project_that_changed_since_its_listing_is_left_running() {
         .await
         .unwrap();
     assert!(docker.removals().is_empty(), "{:?}", docker.calls());
-    assert_eq!(
-        docker.calls().len(),
-        2,
-        "two listings: {:?}",
-        docker.calls()
-    );
+    let listings = docker.calls().into_iter().filter(|c| c.starts_with("ps "));
+    let listings: Vec<String> = listings.filter(|c| !c.contains("archon-qi_")).collect();
+    assert_eq!(listings.len(), 2, "two listings: {:?}", docker.calls());
 }
 
 /// Only the containers checked are stopped: one that joins the project
@@ -221,7 +442,7 @@ async fn a_container_that_joins_during_the_teardown_is_not_stopped() {
         container("b1", "review-1", &operator),
     ];
     docker.lists("ps.after.2", &joined);
-    docker.lists("networks", &["e1".to_owned()]);
+    docker.lists("networks", &["review-1\te1".to_owned()]);
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
@@ -248,7 +469,7 @@ async fn a_container_gone_once_stopped_is_not_removed_again() {
     ];
     docker.lists("ps", &listed);
     docker.lists("ps.after.2", &[container("a1", "review-1", &tree)]);
-    docker.lists("networks", &["e1".to_owned()]);
+    docker.lists("networks", &["review-1\te1".to_owned()]);
     compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
         .await
         .unwrap();
@@ -357,6 +578,171 @@ async fn ending_a_run_tears_down_its_worktrees_stacks() {
         !harness.ctx.collecting.contains(&item),
         "the teardown let go of the worktree"
     );
+}
+
+/// Cancelling an item whose own project a repo script started, so that
+/// `compose down` from its files fails, still removes the project's `pgdata`
+/// volume, and no other project's or unlabelled volume.
+#[tokio::test]
+async fn cancelling_an_item_removes_its_own_projects_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let (item, tree) = running_in(&harness).await;
+    let own = compose::own_project(&item);
+    let stack = tree.join("scripts/dev-preview");
+    docker.lists(
+        "ps",
+        &[container("a1", &own, &stack), container("a2", &own, &stack)],
+    );
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    executor::cancel_item(&harness.ctx, &item, "cancelled")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals[1..],
+        ["stop a1 a2", "rm -v a1 a2", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    only_own_volumes_went(&docker, &own);
+}
+
+/// Cancelling an item whose own project `compose down` takes down still
+/// removes its labelled `pgdata` volume, which plain `down` keeps.
+#[tokio::test]
+async fn cancelling_an_item_after_compose_down_removes_its_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let (item, tree) = running_in(&harness).await;
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    executor::cancel_item(&harness.ctx, &item, "cancelled")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    assert!(removals[0].starts_with("compose "), "{removals:?}");
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals[1..],
+        ["network rm e1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    only_own_volumes_went(&docker, &own);
+    assert!(harness.system_notes().await.is_empty());
+}
+
+/// An own project whose containers are already gone, removed by another
+/// tool before the teardown, still loses its networks and volumes; another
+/// project's are kept.
+#[tokio::test]
+async fn an_own_project_without_containers_loses_its_networks_and_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let (item, _tree) = running_in(&harness).await;
+    let own = compose::own_project(&item);
+    let networks = [format!("{own}\te1"), "ccso-dev-preview\te2".to_owned()];
+    docker.lists("networks", &networks);
+    own_and_other_volumes(&docker, &own);
+    executor::cancel_item(&harness.ctx, &item, "cancelled")
+        .await
+        .unwrap();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        docker.removals(),
+        ["network rm e1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    only_own_volumes_went(&docker, &own);
+}
+
+/// An own project whose last container goes between the listing and its
+/// recheck still loses its networks and volumes.
+#[tokio::test]
+async fn an_own_project_emptied_before_its_recheck_loses_its_leftovers() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.lists("ps.after.1", &[]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        docker.removals(),
+        ["network rm e1", volume_rm.as_str()],
+        "{:?}",
+        docker.calls()
+    );
+    assert!(harness.system_notes().await.is_empty());
+}
+
+/// A network Docker refuses to remove still lets the own project's volumes
+/// go, and its error is told.
+#[tokio::test]
+async fn a_network_that_cannot_go_still_lets_the_volumes_go() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    docker.lists("ps", &[container("a1", &own, &tree)]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    docker.fails("compose");
+    docker.fails("network");
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    let removals = docker.removals();
+    let volume_rm = format!("volume rm {own}_pgdata");
+    assert_eq!(
+        removals.last().map(String::as_str),
+        Some(volume_rm.as_str()),
+        "{:?}",
+        docker.calls()
+    );
+    assert!(removals.contains(&"rm -v a1".to_owned()), "{removals:?}");
+    let notes = harness.system_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("compose cannot read the project"),
+        "{notes:?}"
+    );
+    assert!(notes[0].contains("active endpoints"), "{notes:?}");
+    only_own_volumes_went(&docker, &own);
+}
+
+/// An own project with a container left, as one from another worktree of the
+/// item, keeps its networks and volumes.
+#[tokio::test]
+async fn an_own_project_with_a_container_elsewhere_keeps_its_volumes() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let own = compose::own_project(&item);
+    let elsewhere = harness.ctx.paths.worktrees.join("app/qi_other");
+    docker.lists("ps", &[container("a1", &own, &elsewhere)]);
+    docker.lists("networks", &[format!("{own}\te1")]);
+    own_and_other_volumes(&docker, &own);
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    assert!(docker.removals().is_empty(), "{:?}", docker.calls());
+    assert!(harness.system_notes().await.is_empty());
 }
 
 /// A run that ends while another item, such as a restack fix or refresh,

@@ -1,0 +1,200 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GKRTVP3R88VVH6QFHHF7X3",
+      "repo": "repo_01M8GKQHK59BE1NKEJV4CAZ4AS",
+      "pipeline": "direct",
+      "title": "Implement the specified token bucket rate limiter",
+      "brief": "Implement the rate limiter in ratelimit.py according to the repository's SPEC.md, replacing all stubs. Follow every specified validation and edge case: positive capacity/refill rate; bucket starts full; continuous fractional refill capped at capacity; atomic failed acquisition; validate n <= 0 or n > capacity with ValueError; wait_time validates identically and never consumes; backward clock movement neither changes tokens nor moves the latest observed time backward. Implement KeyedLimiter with independent TokenBucket per hashable key, max_keys validation, LRU eviction on creation when full, and both try_acquire and wait_time counting as use; evicted keys restart full; len reports tracked keys. Keep standard-library-only and preserve the public API. Check behavior beyond the basic tests, including validation, fractional refill, backward time, non-consuming wait_time, and LRU ordering; run the relevant tests and commit the finished change as requested.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GKRTVP3R88VVH6QFHHF7X3",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:58.603921854Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:59.666449580Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:58.603921854Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GKRX0JSP76D67SADR9KTR7",
+        "summary": "Implemented and committed the token bucket and keyed LRU limiter with validation, fractional refill, backward-clock handling, and focused edge-case tests. Verification passed: 7 unittests, py_compile, and git diff --check. Commit 72031a4; no known gaps.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 72031a4b1acf2bd56cd8b7556895e97312daa3c3 on the run branch"
+      },
+      "created_at": "2026-11-28T08:18:57.526831337Z",
+      "updated_at": "2026-11-28T08:20:36.335939894Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GKRX0JSP76D67SADR9KTR7",
+        "item": "qi_01M8GKRTVP3R88VVH6QFHHF7X3",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GKRX7RVJAXAPAJSYBYKZPH",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/96979b8f9f51767cb89f1804/.archon/data/worktrees/feature-token-bucket/qi_01M8GKRTVP3R88VVH6QFHHF7X3",
+        "branch": "archon/qfhhf7x3-implement-the-specified-token-bucket-rat",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented and committed the token bucket and keyed LRU limiter with validation, fractional refill, backward-clock handling, and focused edge-case tests. Verification passed: 7 unittests, py_compile, and git diff --check. Commit 72031a4; no known gaps.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 72031a4b1acf2bd56cd8b7556895e97312daa3c3 on the run branch"
+        },
+        "cost_usd": 0.00977348,
+        "started_at": "2026-11-28T08:18:59.898596642Z",
+        "finished_at": "2026-11-28T08:20:36.335939894Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GKRX6Z1QW3R84GSRH1XMQG",
+        "run": "prun_01M8GKRX0JSP76D67SADR9KTR7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GKRX8E5A7NQDCYCND547HN",
+        "aether_task": "tsk_01M8GKRX8EE9QQGFDHSB43G3QY",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented and committed the token bucket and keyed LRU limiter with validation, fractional refill, backward-clock handling, and focused edge-case tests. Verification passed: 7 unittests, py_compile, and git diff --check. Commit 72031a4; no known gaps.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v",
+            "python -B -m unittest -v",
+            "python -B -m py_compile ratelimit.py test_ratelimit.py",
+            "git diff --check"
+          ],
+          "commit": "72031a4b1acf2bd56cd8b7556895e97312daa3c3",
+          "evidence": [
+            {
+              "after": "Ran 7 tests in 0.000s\nOK",
+              "before": "Ran 3 tests in 0.001s\nFAILED (errors=3)\nNotImplementedError in TokenBucket and KeyedLimiter constructors.",
+              "caption": "Baseline failed because the implementation consisted of stubs; after implementation, the full unittest suite passes.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "72031a4b1acf2bd56cd8b7556895e97312daa3c3",
+          "pr": {
+            "body": "Implemented continuous fractional refill capped at capacity, full initial buckets, atomic acquisition, validation, non-consuming wait_time, and monotonic handling of backward clock observations. KeyedLimiter uses independent buckets and LRU eviction, with both operations updating recency. Added edge-case unit tests. Checks: python -m unittest -v (7 passed), python -B -m py_compile ratelimit.py test_ratelimit.py, and git diff --check all passed. Assumptions: capacity and request sizes may be fractional, as the specification permits continuous fractional token balances.",
+            "summary": "Implemented token bucket and keyed LRU rate limiting. Callers can acquire tokens, inspect availability and wait time, and bound per-key state. Before: all methods were stubs and all three baseline tests errored; now: all seven tests pass.",
+            "title": "Implement token bucket rate limiter"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained runtime behavior change in ratelimit.py and focused tests in test_ratelimit.py. No concurrency, persistence, or public API shape changes. The implementation adds stateful rate limiting and LRU eviction; all seven focused tests pass."
+          },
+          "tree": "906b18d87e5f0e46ad0cc39916446f166f53f84c"
+        },
+        "cost_usd": 0.00977348,
+        "started_at": "2026-11-28T08:18:59.935575003Z",
+        "finished_at": "2026-11-28T08:20:36.084664331Z"
+      }
+    ],
+    "spent_usd": 0.00977348,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:58.603921854Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:59.666449580Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:58.603921854Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

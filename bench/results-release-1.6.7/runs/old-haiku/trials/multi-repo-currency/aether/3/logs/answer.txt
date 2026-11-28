@@ -1,0 +1,43 @@
+Added per-line currency to `ledger` and per-account/currency totals to `reports`, updated both READMEs and tests, and committed in both repos (ledger 7421621, reports fe3c8f4; both trees clean).
+
+ledger (Rust):
+- Lines take an optional 4th TSV column; the currency must be exactly three uppercase ASCII letters and defaults to USD.
+- Header is `date,account,amount_cents,currency`; every row carries its currency.
+- A malformed currency exits 2 with `line N: bad currency ...` on stderr; other input errors still exit 1. Implemented as a `ParseError` enum with `exit_code()`.
+- `cargo test`: 7 passed (the 2 original tests plus 5 new ones covering the default, an explicit EUR, rejected codes, exit-1 retention and the header). Binary checked by hand: EUR row, `eur` → exit 2, bad amount → exit 1.
+
+reports (Python):
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as USD.
+- A malformed currency prints `error: line N: bad currency ...` to stderr and exits 2 with no stdout.
+- `python3 -m unittest`: 3 passed (the original test updated for the new header, plus multi-currency sorting, old-format USD and the exit-2 path).
+- End-to-end pipeline (ledger → reports) checked by hand.
+
+Choices I made:
+- The ledger version stays at 0.3.0. The output format changed, so a bump to 0.4.0 may be wanted; I did not bump it.
+- Empty or missing currency values in reports are treated as malformed (exit 2), not as USD. Only a CSV with no `currency` column at all is treated as USD.
+- Commit messages have no Co-Authored-By trailer. The repo CLAUDE.md says not to put Claude attribution in commits, and that rule takes precedence over the attribution reminder.
+- Caveat: when ledger fails partway through a shell pipeline, downstream reports still runs on the partial output and exits 0 unless `pipefail` is set. This was already true for the old exit-1 errors.
+
+Both repositories now handle currency, and both test suites pass. The changes are committed: `ledger` at 7421621 and `reports` at fe3c8f4, each with a clean tree.
+
+**ledger (Rust)**
+- Input lines take an optional fourth column. The currency must be exactly three uppercase ASCII letters, and it defaults to `USD` when the column is missing.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- `cargo test`: 7 passed. I also ran the binary by hand: an EUR row came out correctly, `eur` exited 2, and a bad amount exited 1.
+
+**reports (Python)**
+- Output is `account,currency,total_cents`, sorted by account and then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed currency prints `error: line N: ...` to stderr and exits 2 with no stdout.
+- `python3 -m unittest`: 3 passed.
+- I also piped real ledger output into reports and got the expected totals.
+
+Both READMEs describe the new input, output and exit codes.
+
+Choices I made:
+- **Version:** ledger stays at 0.3.0 even though its output format changed. A bump to 0.4.0 may be wanted; I left it alone.
+- **Empty currency values:** in reports, an empty or short-row currency is treated as malformed (exit 2). Only a CSV with no `currency` column at all counts as `USD`.
+- **Commit trailer:** the commits have no Co-Authored-By line. The repo's CLAUDE.md says not to put Claude attribution in commits, and I followed that over the attribution reminder.
+- **Pipelines:** if ledger fails partway through a shell pipeline, reports still runs on the partial input and exits 0 unless `pipefail` is set. This was already true for the old exit-1 errors.

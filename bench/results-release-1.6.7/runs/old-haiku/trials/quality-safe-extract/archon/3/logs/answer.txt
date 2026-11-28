@@ -1,0 +1,11 @@
+I queued the `safe_extract.py` work as item `qi_01M8GTNG0SQYP8TS3WDVNE4D38` on the `quality-safe-extract` repo. It is queued, not finished. I'll report when it does.
+
+- **Pipeline:** `adaptive`, not `direct`. The spec covers symlink and path-traversal checks and validate-before-mutate rules, so it is security-sensitive.
+- **Review:** strict, with three reviewers.
+- **Model:** strong tier at high effort for the build stage.
+- **Merge:** manual. The repo ships locally and nothing is pushed or merged.
+- **Brief:** the agent gets your request, a summary of the `SPEC.md` contract, and the test coverage the spec calls for. It is told to use the repo's configured git identity and to add no Claude attribution, since your CLAUDE.md forbids it.
+
+The commit lands on the item's branch when the build succeeds. The item's outcome will arrive as an `item_finished` notice.
+
+Cancelled: Implement safe_extract.extract per SPEC.md with focused tests. archon-bench: trial timeout

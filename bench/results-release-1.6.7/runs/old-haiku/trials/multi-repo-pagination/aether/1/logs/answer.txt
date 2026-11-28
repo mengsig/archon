@@ -1,0 +1,16 @@
+Cursor pagination is in `inventory-api` and `inventory-client`, with each repo's README updated and a commit in each. Both suites pass: `python3 -m unittest` runs 9 tests and `npm test` runs 8. An end-to-end run of the client against the API returned all 57 items in order over 3 requests.
+
+Commits are on a new branch, `cursor-pagination`, in each repo, not on `main`. I branched because both repos were on `main`; to land it, merge or fast-forward the branch.
+- `inventory-api` `e8d570b`: "Paginate GET /items with limit and cursor"
+- `inventory-client` `5a32eed`: "Make listItems follow next_cursor across all pages"
+
+**What changed**
+- **API:** `limit` is 1–100 (default 20). `cursor` is the URL-safe base64 of the last id on the previous page, so clients treat it as opaque. Paging is keyset-based on `id`, so items added or removed between requests don't shift pages. Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`.
+- **Client:** `listItems` follows `next_cursor` until it is null or absent. The first request sends no `cursor` key at all, because the server treats a present-but-empty key as invalid. It throws on a non-200 response, on a body without an `items` array, and when the server returns the same cursor twice (so a misbehaving server can't loop forever).
+
+**Choices I made that you may want to change**
+- Cursor encoding is base64 of the id. Digit strings are capped at 18 characters so `int()` can't overflow, and non-ASCII digits such as `²` are rejected.
+- I did not bump the client's `package.json` version (1.4.0), since the change in `listItems` behaviour is a judgement call for you.
+- I did not add a `limit` option to the client; it uses the server default.
+
+**Pre-existing issue, not fixed:** `get_item` in `api.py` uses `str.isdigit()`, which accepts `²` and makes `int()` raise, so `GET /items/²` returns a 500 instead of 400. It's out of scope for this task, but it's a small follow-up.

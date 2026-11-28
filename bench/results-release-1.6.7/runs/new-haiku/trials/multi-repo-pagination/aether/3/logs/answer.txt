@@ -1,0 +1,29 @@
+Added cursor pagination to GET /items in inventory-api and made inventory-client's listItems follow next_cursor to the end. Both repos are committed (inventory-api 538a7e3, inventory-client 5845172) and both test suites pass: python3 -m unittest (9 tests) and npm test (7 tests). A throwaway end-to-end run of the client against the real API returned all 57 items in order.
+
+inventory-api:
+- GET /items takes limit (integer 1..100, default 20) and cursor. The body is {"items", "next_cursor"}; next_cursor is null on the last page.
+- The cursor is base64url of the last id returned, and paging is keyset on id. Invalid limit or cursor returns 400 {"error": ...}.
+- Tests cover full traversal, the last-page null, an exact multiple of limit, limit bounds, and invalid cursors. README documents the parameters and the response shape.
+
+inventory-client:
+- listItems sends no cursor on the first request, then passes next_cursor back unchanged until it is null or absent.
+- Added one guard the spec did not ask for: it throws if the server returns the same cursor twice, so a misbehaving server cannot cause an infinite loop.
+- Tests use a fake multi-page transport. README updated.
+
+Choices made without asking:
+- Cursor encoding is base64 of the id; the spec only requires it be opaque.
+- No package.json version bump.
+- Commits use the repo's configured mengsig identity with no Co-Authored-By trailer, because the project CLAUDE.md says not to mention Claude in commits and takes precedence over the attribution reminder.
+
+Pagination is in place on `GET /items` in `inventory-api`, and `inventory-client`'s `listItems` now follows `next_cursor` to the end. Both repos are committed and both test suites pass.
+
+- **inventory-api** (commit `538a7e3`): `limit` (1–100, default 20) and `cursor` are supported. The body is `{"items", "next_cursor"}`, with `next_cursor` null on the last page. Invalid `limit` or `cursor` returns 400 with `{"error": ...}`. `python3 -m unittest` passes with 9 tests.
+- **inventory-client** (commit `5845172`): the first request sends no cursor, and each later request passes the cursor back unchanged until it is null or absent. `npm test` passes with 7 tests.
+- **End-to-end:** a throwaway run of the client against the real API returned all 57 items in order.
+- **READMEs:** both document the change.
+
+Choices I made that you may want to change:
+- The cursor is base64 of the last id returned, and paging is keyed on `id`.
+- The client throws if the server returns the same cursor twice, so a broken server cannot make it loop forever. This was not in the spec.
+- I did not bump the client's package version.
+- The commits have no Co-Authored-By trailer. The project CLAUDE.md says not to mention Claude in commits, and I followed it over the attribution reminder.

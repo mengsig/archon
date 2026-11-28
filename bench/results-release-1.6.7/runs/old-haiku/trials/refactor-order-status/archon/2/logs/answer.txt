@@ -1,0 +1,18 @@
+I queued the refactor as item `qi_01M8GQ592KCR3PN7YXXYGF2EN0` on the `refactor-order-status` repository, using the `refactor` pipeline. It is queued, not yet run.
+
+- **Pipeline:** `refactor` characterises the current behaviour, refactors without changing it, verifies, and reviews before shipping. I chose it because your request is a behaviour-preserving refactor. The pipeline sets its own review level, so I did not override it.
+- **Brief:** the item carries your full spec, the requirement that parsing, errors, report output and ordering stay identical, and that status literals appear only in `src/status.rs`.
+- **Commit:** the repository ships locally, so the agent commits on a local branch and nothing is pushed.
+
+I'm assuming the `orders` crate lives in that repository, as the registered repo is the only one. I'll report when the item finishes.
+
+Done: Refactor orders crate: order status String to OrderStatus enum. Review of OrderStatus refactor (HEAD bdbc551, worktree clean). Structural goal met: Order::status is OrderStatus; src/status.rs holds the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to; status literals appear in no production file outside src/status.rs; pay, ship and cancel share one Order::transition_to. Preserved behaviour checked by reading the diff: refusal messages are identical, status_counts keeps alphabetical order via a name-keyed BTreeMap, from_line keeps check order and the exact "unknown status" text, and tests/orders.rs and Cargo files are unchanged. Ran cargo test --locked: unit 3/3, characterization 18/18, orders 3/3, all pass. Advisory only: rustfmt reflow of untouched lines in report.rs, and test fixtures keep literal status names. The public type change (Order::status, status_counts return type) is brief-authorized but breaks callers, so risk is high. VERDICT: PASS
+
+SHIPPED: commit bdbc551f9ef542936aa1303bd79fa2d2bff293f5 on the run branch
+Branch `archon/xygf2en0-refactor-orders-crate-order-status-strin` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/480a7c9fa714456d56f577e4/refactor-order-status holds it (7 files changed, 454 insertions(+), 31 deletions(-)). Review: `archon diff qi_01M8GQ592KCR3PN7YXXYGF2EN0`; land it in `main`: `archon merge qi_01M8GQ592KCR3PN7YXXYGF2EN0`.
+
+Freed 0.1 GiB of build output: item qi_01M8GQ592KCR3PN7YXXYGF2EN0 ended and its cargo target directory went.
+
+Review of OrderStatus refactor (HEAD bdbc551, worktree clean). Structural goal met: Order::status is OrderStatus; src/status.rs holds the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to; status literals appear in no production file outside src/status.rs; pay, ship and cancel share one Order::transition_to. Preserved behaviour checked by reading the diff: refusal messages are identical, status_counts keeps alphabetical order via a name-keyed BTreeMap, from_line keeps check order and the exact "unknown status" text, and tests/orders.rs and Cargo files are unchanged. Ran cargo test --locked: unit 3/3, characterization 18/18, orders 3/3, all pass. Advisory only: rustfmt reflow of untouched lines in report.rs, and test fixtures keep literal status names. The public type change (Order::status, status_counts return type) is brief-authorized but breaks callers, so risk is high. VERDICT: PASS
+
+SHIPPED: commit bdbc551f9ef542936aa1303bd79fa2d2bff293f5 on the run branch

@@ -80,15 +80,16 @@ fn design_resume_message(stage: &StageSpec, attempt: u32, feedback: &str) -> Str
          learned still holds.\n\n\
          ## Feedback on the previous session (for context)\n\n{feedback}\n\n\
          ## What to do\n\n\
-         1. From the run worktree, start the dev server in its own process group with `setsid` \
-         if needed. Record the actual server PID in `.archon/services/<name>.pid` before calling \
-         `design_preview` with its URL.\n\
+         1. From the run worktree, start the preview stack again if needed (`design_recipe` has \
+         what worked), each long-running process in its own process group with `setsid`. Record \
+         each actual PID in `.archon/services/<name>.pid` before calling `design_preview` with its \
+         URL.\n\
          2. Change the code only for a note. When the operator asked for changes on the design, \
          Archon sends that request as this session's first note; make it like any note: exactly \
          one commit with its `Archon-Note: D<n>` trailer, then `design_note` with \
          `status: \"done\"`. Otherwise wait for the operator's notes.\n\
          3. Keep calling `wait_for` and work through the notes one at a time, as before.\n\
-         4. On `finish`, stop the dev server by the PID you recorded and end your turn with a \
+         4. On `finish`, stop every server by the PIDs you recorded, and your Compose project, and end your turn with a \
          one-line summary. Your task is already recorded, so do not call `complete_task` or \
          `fail_task` again.\n\n\
          Archon refuses a commit outside a note and an end before `finish`.\n",

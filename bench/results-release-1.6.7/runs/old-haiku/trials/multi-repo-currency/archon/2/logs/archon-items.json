@@ -1,0 +1,667 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GNDQ8K47WTT20JNXTVY1TV",
+      "repo": "repo_01M8GND4GZZC934DRG4D12S7YR",
+      "pipeline": "direct",
+      "title": "reports: totals per account and currency",
+      "brief": "Change the Python `reports` tool (reads CSV on stdin, prints per-account totals) to total per account and currency. Output header becomes `account,currency,total_cents`, rows sorted by account then currency. CSV without a currency column (old ledger output) still works and counts as USD. A malformed currency code in the input (not exactly three uppercase ASCII letters) prints an error to stderr and exits with status 2. Keep `python3 -m unittest` passing, add tests for the per-currency totals, the USD fallback for old CSV, sort order, and the malformed-code exit, and update the README. Follow the shared contract exactly. Do not change the ledger repository.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GNDQ8K47WTT20JNXTVY1TV",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:47:50.550624321Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:47:50.550624321Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:47:50.550624321Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GNDQ57YJB8ZV034QE5T084",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GNDQGW3PE4PPH4QTGQJF3P",
+        "summary": "reports now totals per (account, currency). Header is account,currency,total_cents, sorted by account then currency. A CSV without a currency column counts as USD. A malformed currency code (not exactly three uppercase ASCII letters) prints an error to stderr and exits 2 with no stdout. Commit 41aeb559bed9a51d90de518b936c31e8092f4438 (tree 6c1af275a42c6c51867dfac6bb9bddc590fb70f0) on archon/nxtvy1tv-reports-totals-per-account-and-currency, based on 0454d4d. Checks: python3 -m unittest, 6 tests OK. Review: pass by two reviewers (agt_01M8GNF16HYNARNXTZFGZ3GX4J on 8687e2e, agt_01M8GNGSP0VW7HW2DETWF46AMY on the delta to 41aeb55); both findings from the first review were fixed in 41aeb55 and no blocking findings remain. Risk high: the CLI header and row shape change breaks callers parsing the old account,total_cents output, which the contract requires. Open: none blocking. Nothing is left running (the reviewer's process had already exited).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNF16HYNARNXTZFGZ3GX4J), claude-code/claude-haiku-5-5 (agent agt_01M8GNGSP0VW7HW2DETWF46AMY)\n\nSHIPPED: commit 41aeb559bed9a51d90de518b936c31e8092f4438 on the run branch"
+      },
+      "created_at": "2026-11-28T08:47:50.439004610Z",
+      "updated_at": "2026-11-28T08:50:21.563913409Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GNDQGW3PE4PPH4QTGQJF3P",
+        "item": "qi_01M8GNDQ8K47WTT20JNXTVY1TV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GNDQW22WA970F5R95X3EAG",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/f22a7b7794b7d61420fa0707/.archon/data/worktrees/reports/qi_01M8GNDQ8K47WTT20JNXTVY1TV",
+        "branch": "archon/nxtvy1tv-reports-totals-per-account-and-currency",
+        "state": {
+          "state": "succeeded",
+          "summary": "reports now totals per (account, currency). Header is account,currency,total_cents, sorted by account then currency. A CSV without a currency column counts as USD. A malformed currency code (not exactly three uppercase ASCII letters) prints an error to stderr and exits 2 with no stdout. Commit 41aeb559bed9a51d90de518b936c31e8092f4438 (tree 6c1af275a42c6c51867dfac6bb9bddc590fb70f0) on archon/nxtvy1tv-reports-totals-per-account-and-currency, based on 0454d4d. Checks: python3 -m unittest, 6 tests OK. Review: pass by two reviewers (agt_01M8GNF16HYNARNXTZFGZ3GX4J on 8687e2e, agt_01M8GNGSP0VW7HW2DETWF46AMY on the delta to 41aeb55); both findings from the first review were fixed in 41aeb55 and no blocking findings remain. Risk high: the CLI header and row shape change breaks callers parsing the old account,total_cents output, which the contract requires. Open: none blocking. Nothing is left running (the reviewer's process had already exited).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNF16HYNARNXTZFGZ3GX4J), claude-code/claude-haiku-5-5 (agent agt_01M8GNGSP0VW7HW2DETWF46AMY)\n\nSHIPPED: commit 41aeb559bed9a51d90de518b936c31e8092f4438 on the run branch"
+        },
+        "cost_usd": 0.04378458,
+        "started_at": "2026-11-28T08:47:51.047538917Z",
+        "finished_at": "2026-11-28T08:50:21.563913409Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GNDQV5H1BG9GGWGAMAPDZC",
+        "run": "prun_01M8GNDQGW3PE4PPH4QTGQJF3P",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GNDQY8SJ8BP6A6MGE7YB3D",
+        "aether_task": "tsk_01M8GNDQY8SJ8BP6A6MGE7YB3E",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "reports now totals per (account, currency). Header is account,currency,total_cents, sorted by account then currency. A CSV without a currency column counts as USD. A malformed currency code (not exactly three uppercase ASCII letters) prints an error to stderr and exits 2 with no stdout. Commit 41aeb559bed9a51d90de518b936c31e8092f4438 (tree 6c1af275a42c6c51867dfac6bb9bddc590fb70f0) on archon/nxtvy1tv-reports-totals-per-account-and-currency, based on 0454d4d. Checks: python3 -m unittest, 6 tests OK. Review: pass by two reviewers (agt_01M8GNF16HYNARNXTZFGZ3GX4J on 8687e2e, agt_01M8GNGSP0VW7HW2DETWF46AMY on the delta to 41aeb55); both findings from the first review were fixed in 41aeb55 and no blocking findings remain. Risk high: the CLI header and row shape change breaks callers parsing the old account,total_cents output, which the contract requires. Open: none blocking. Nothing is left running (the reviewer's process had already exited).",
+        "structured": {
+          "checks": [
+            "python3 -m unittest"
+          ],
+          "commit": "41aeb559bed9a51d90de518b936c31e8092f4438",
+          "evidence": [
+            {
+              "after": "account,currency,total_cents\ngroceries,EUR,-990\ngroceries,USD,-4510\nrent,EUR,-120000",
+              "before": "account,total_cents\ngroceries,-5500\nrent,-120000",
+              "caption": "Same 3-row input (EUR, USD, EUR) on base 0454d4d: the currency column is ignored, so EUR and USD merge.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "41aeb559bed9a51d90de518b936c31e8092f4438",
+          "pr": {
+            "body": "Approach: reports.py keys totals by (account, currency). row_currency reads the currency column when present, defaults to USD when absent, and raises MalformedCurrency unless the code matches [A-Z]{3}. main prints the error to stderr and exits 2 before any stdout is written. Files: reports.py, test_reports.py, README.md. Tests (6): per-currency totals, old CSV USD fallback, account-then-currency sort, malformed codes exit 2 with empty stdout, short row exits 2. Review: agt_01M8GNF16HYNARNXTZFGZ3GX4J passed 8687e2e with two non-blocking nits, both fixed in 41aeb55; agt_01M8GNGSP0VW7HW2DETWF46AMY passed the delta 8687e2e..41aeb55 and resolved both. Assumption: the header change is the contract's required output, so callers parsing account,total_cents will break. No open blocking follow-ups.",
+            "summary": "made reports total per account and currency. now: header account,currency,total_cents, sorted by account then currency; CSV without currency counts as USD; malformed currency exits 2. before: totals per account only, currency column ignored.",
+            "title": "reports: total per account and currency"
+          },
+          "review": {
+            "reviewed_head": "41aeb559bed9a51d90de518b936c31e8092f4438",
+            "reviewer_agents": [
+              "agt_01M8GNF16HYNARNXTZFGZ3GX4J",
+              "agt_01M8GNGSP0VW7HW2DETWF46AMY"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GNF16HYNARNXTZFGZ3GX4J",
+                "base": "0454d4d7cc181b9780a607b2ad5b5527227f7ef6",
+                "findings": 2,
+                "head": "8687e2ed7e504e4a42e9e0a82f084a86dc29879b",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GNGSP0VW7HW2DETWF46AMY",
+                "base": "8687e2ed7e504e4a42e9e0a82f084a86dc29879b",
+                "findings": 0,
+                "head": "41aeb559bed9a51d90de518b936c31e8092f4438",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GNF16HYNARNXTZFGZ3GX4J",
+              "agt_01M8GNGSP0VW7HW2DETWF46AMY"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GNF16HYNARNXTZFGZ3GX4J:1": {
+                "blocking": false,
+                "description": "A row with a missing currency value (short row, DictReader yields None) is reported as 'malformed currency None' and exits 2. This is defensible, but the message is unclear and the case is untested. at reports.py:26",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQV5H1BG9GGWGAMAPDZC"
+                },
+                "id": "agt_01M8GNF16HYNARNXTZFGZ3GX4J:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GNDQV5H1BG9GGWGAMAPDZC"
+                }
+              },
+              "agt_01M8GNF16HYNARNXTZFGZ3GX4J:2": {
+                "blocking": false,
+                "description": "The error message's row number counts data rows (header excluded), which is not stated. Minor clarity nit. at reports.py:26",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQV5H1BG9GGWGAMAPDZC"
+                },
+                "id": "agt_01M8GNF16HYNARNXTZFGZ3GX4J:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GNDQV5H1BG9GGWGAMAPDZC"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "8687e2ed7e504e4a42e9e0a82f084a86dc29879b",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GNF16HYNARNXTZFGZ3GX4J",
+                    "base": "0454d4d7cc181b9780a607b2ad5b5527227f7ef6",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GNF16HYNARNXTZFGZ3GX4J:1",
+                      "agt_01M8GNF16HYNARNXTZFGZ3GX4J:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "41aeb559bed9a51d90de518b936c31e8092f4438",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GNGSP0VW7HW2DETWF46AMY",
+                    "base": "8687e2ed7e504e4a42e9e0a82f084a86dc29879b",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "CLI output header and row shape change (account,total_cents becomes account,currency,total_cents; multi-currency accounts yield several rows), which breaks callers parsing the old output. The change is the contract's required behaviour. Both reviewers confirmed high."
+          },
+          "tree": "6c1af275a42c6c51867dfac6bb9bddc590fb70f0"
+        },
+        "cost_usd": 0.04378458,
+        "started_at": "2026-11-28T08:47:51.140790083Z",
+        "finished_at": "2026-11-28T08:50:18.405803577Z"
+      }
+    ],
+    "spent_usd": 0.04378458,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GNDQV5H1BG9GGWGAMAPDZC": {
+        "direct_usd": 0.029415289999999997,
+        "delegated_usd": 0.01436929,
+        "agents": [
+          {
+            "agent": "agt_01M8GNF16HYNARNXTZFGZ3GX4J",
+            "parent": "agt_01M8GNDQY8SJ8BP6A6MGE7YB3D",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00811988
+          },
+          {
+            "agent": "agt_01M8GNGSP0VW7HW2DETWF46AMY",
+            "parent": "agt_01M8GNDQY8SJ8BP6A6MGE7YB3D",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0062494099999999995
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:47:50.550624321Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:47:50.550624321Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:47:50.550624321Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GNDQ5VGFWKZA9GCS47JDNN",
+      "repo": "repo_01M8GND4FX0E16RV9AVJJDP9QP",
+      "pipeline": "direct",
+      "title": "ledger: currency column and currency validation",
+      "brief": "Change the Rust `ledger` tool (stdin TSV to stdout CSV) for multiple currencies. Input lines may have a fourth column, the ISO 4217 currency code; when missing, the currency is USD. Output header becomes `date,account,amount_cents,currency` and every row gets its currency. A malformed currency code (not exactly three uppercase ASCII letters) prints an error naming the line number to stderr and exits with status 2; other input errors keep exiting with status 1. Keep `cargo test` passing, add tests for the default currency, an explicit currency, and a malformed code, and update the README. Follow the shared contract exactly. Do not change the reports repository.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GNDQ5VGFWKZA9GCS47JDNN",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:47:50.479958369Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:47:50.479958369Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:47:50.479958369Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GNDQ57YJB8ZV034QE5T084",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GNDQGS9RCBH6QG4826CARJ",
+        "summary": "ledger: currency support is committed as 131fa47 on archon/cs47jdnn-ledger-currency-column-and-currency-vali (base f86fbdf). Changes: an optional 4th TSV column sets the currency (default USD); the output header is date,account,amount_cents,currency and every row carries its currency; a malformed currency (not exactly three uppercase ASCII letters) prints `line N: ...` to stderr and exits 2; other input errors still exit 1. Files: src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs, README.md. Checks run on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (9 tests: 6 unit, 3 CLI) all pass. Tree d58307c0e14cae29267a15b6809962097aaa8e2a. Review: one reviewer (agt_01M8GNG1886AQWZ1G5JHQ4P1PK), verdict pass, no blocking findings. Non-blocking follow-ups: whitespace around the currency is trimmed; an empty 4th column is exit 2, not USD; a line with both a bad amount and a bad currency exits 1; README says \"ISO 4217\" but only the shape is checked; Entry gained a public field with no version bump. Nothing is left running from this stage. The reviewer's leftover claude process (pid 3485767) is Aether's child and stops when this task ends. The operator checkout and the reports repository were not touched.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNG1886AQWZ1G5JHQ4P1PK)\n\nSHIPPED: commit 131fa47dac2c27adcd8413572b0fa627cbe16a99 on the run branch"
+      },
+      "created_at": "2026-11-28T08:47:50.439004610Z",
+      "updated_at": "2026-11-28T08:50:30.774293231Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GNDQGS9RCBH6QG4826CARJ",
+        "item": "qi_01M8GNDQ5VGFWKZA9GCS47JDNN",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GNDQWHHHVGRHN0XZH6H35T",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/f22a7b7794b7d61420fa0707/.archon/data/worktrees/ledger/qi_01M8GNDQ5VGFWKZA9GCS47JDNN",
+        "branch": "archon/cs47jdnn-ledger-currency-column-and-currency-vali",
+        "state": {
+          "state": "succeeded",
+          "summary": "ledger: currency support is committed as 131fa47 on archon/cs47jdnn-ledger-currency-column-and-currency-vali (base f86fbdf). Changes: an optional 4th TSV column sets the currency (default USD); the output header is date,account,amount_cents,currency and every row carries its currency; a malformed currency (not exactly three uppercase ASCII letters) prints `line N: ...` to stderr and exits 2; other input errors still exit 1. Files: src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs, README.md. Checks run on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (9 tests: 6 unit, 3 CLI) all pass. Tree d58307c0e14cae29267a15b6809962097aaa8e2a. Review: one reviewer (agt_01M8GNG1886AQWZ1G5JHQ4P1PK), verdict pass, no blocking findings. Non-blocking follow-ups: whitespace around the currency is trimmed; an empty 4th column is exit 2, not USD; a line with both a bad amount and a bad currency exits 1; README says \"ISO 4217\" but only the shape is checked; Entry gained a public field with no version bump. Nothing is left running from this stage. The reviewer's leftover claude process (pid 3485767) is Aether's child and stops when this task ends. The operator checkout and the reports repository were not touched.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNG1886AQWZ1G5JHQ4P1PK)\n\nSHIPPED: commit 131fa47dac2c27adcd8413572b0fa627cbe16a99 on the run branch"
+        },
+        "cost_usd": 0.04457173,
+        "started_at": "2026-11-28T08:47:51.068454601Z",
+        "finished_at": "2026-11-28T08:50:30.774293231Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS",
+        "run": "prun_01M8GNDQGS9RCBH6QG4826CARJ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GNDQYEGYR28DCD0EVY4X4N",
+        "aether_task": "tsk_01M8GNDQYER3FXPCRPXW56V7YS",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "ledger: currency support is committed as 131fa47 on archon/cs47jdnn-ledger-currency-column-and-currency-vali (base f86fbdf). Changes: an optional 4th TSV column sets the currency (default USD); the output header is date,account,amount_cents,currency and every row carries its currency; a malformed currency (not exactly three uppercase ASCII letters) prints `line N: ...` to stderr and exits 2; other input errors still exit 1. Files: src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs, README.md. Checks run on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (9 tests: 6 unit, 3 CLI) all pass. Tree d58307c0e14cae29267a15b6809962097aaa8e2a. Review: one reviewer (agt_01M8GNG1886AQWZ1G5JHQ4P1PK), verdict pass, no blocking findings. Non-blocking follow-ups: whitespace around the currency is trimmed; an empty 4th column is exit 2, not USD; a line with both a bad amount and a bad currency exits 1; README says \"ISO 4217\" but only the shape is checked; Entry gained a public field with no version bump. Nothing is left running from this stage. The reviewer's leftover claude process (pid 3485767) is Aether's child and stops when this task ends. The operator checkout and the reports repository were not touched.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo clippy --all-targets -- -D warnings",
+            "cargo test"
+          ],
+          "commit": "131fa47dac2c27adcd8413572b0fa627cbe16a99",
+          "evidence": [
+            {
+              "after": "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD\n2026-03-02,salary,100000,USD",
+              "before": "date,account,amount_cents\n2026-03-01,groceries,-4510\n2026-03-02,salary,100000",
+              "caption": "Binary output for the same input, before and after",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "131fa47dac2c27adcd8413572b0fa627cbe16a99",
+          "pr": {
+            "body": "Approach: Entry gains a currency field. parse_line accepts 3 or 4 tab-separated fields; a missing 4th field defaults to USD. parse_currency requires exactly three ASCII uppercase letters. ParseError distinguishes Input (exit 1) from Currency (exit 2); main maps the variant to the exit status and keeps the 'line N:' prefix on stderr.\n\nKey files: src/lib.rs, src/main.rs, tests/ledger.rs (unit tests: default USD, explicit EUR, malformed codes, other input errors), tests/cli.rs (binary exit codes and line number on stderr), README.md.\n\nChecks: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (9 tests) all pass. Review: pass, no blocking findings.\n\nAssumptions and limits: whitespace around the currency is trimmed, matching the other fields. An empty 4th column is a malformed currency (exit 2), not a missing one. Only the shape of the code is checked, not membership in the ISO 4217 list. Entry gained a public field, so struct-literal callers break. Crate version not bumped.",
+            "summary": "ledger: optional 4th TSV column sets currency (ISO 4217, default USD); output gains currency column. before: 3 columns, no currency. now: date,account,amount_cents,currency on every row; malformed currency exits 2, other input errors exit 1.",
+            "title": "ledger: add currency column and validate currency codes"
+          },
+          "review": {
+            "reviewed_head": "131fa47dac2c27adcd8413572b0fa627cbe16a99",
+            "reviewer_agents": [
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK",
+                "base": "f86fbdf7ddae033ebfd66025ed157c8cddb2029e",
+                "findings": 8,
+                "head": "131fa47dac2c27adcd8413572b0fa627cbe16a99",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:1": {
+                "blocking": false,
+                "description": "Currency is trimmed before validation, so ' EUR ' is accepted. The contract says exactly three A-Z letters and the README does not mention whitespace tolerance. This matches how date, account and amount are trimmed, so it is a decision to confirm or document, not a bug. at src/lib.rs:53",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:1",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:2": {
+                "blocking": false,
+                "description": "An empty 4th column (trailing tab, e.g. '...\\t1.00\\t') is rejected with exit 2 as a bad currency, not treated as missing (USD). The contract's 'missing means USD' is ambiguous here. The behaviour is pinned by tests/ledger.rs:38 but not stated in the README. Lines of this shape previously exited 1. at src/lib.rs:53",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:2",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:3": {
+                "blocking": false,
+                "description": "When a line has both a bad amount and a bad currency, the amount error wins and the exit is 1. A bad date with a bad currency also exits 1. The contract does not set precedence and the README does not document it. at src/lib.rs:51",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:3",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:4": {
+                "blocking": false,
+                "description": "The README calls the currency an 'ISO 4217 code', which suggests membership checking. Only the shape (three uppercase ASCII letters) is validated, so codes like ZZZ are accepted. Consider saying 'shaped like an ISO 4217 code'. at README.md:14",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:4",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:5": {
+                "blocking": false,
+                "description": "The author reported 11 passing tests. cargo test runs 9: 3 in tests/cli.rs and 6 in tests/ledger.rs. The code is fine, but the reported count is wrong. at tests/cli.rs:1",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:5",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:6": {
+                "blocking": false,
+                "description": "The malformed-currency test has no non-ASCII case (for example 'ÉUR'), and nothing pins the whitespace-trimming behaviour. The implementation handles non-ASCII correctly (I probed 'ÉUR' and 'EUÉ': exit 2). Both are gaps worth a test. at tests/ledger.rs:38",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:6",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:7": {
+                "blocking": false,
+                "description": "Entry gains a public currency field, which breaks any downstream struct-literal construction. Cargo.toml still says 0.3.0 despite the breaking CLI and API change. Nothing in the repo constructs Entry directly outside lib.rs. at src/lib.rs:10",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:7",
+                "resolved_in": null
+              },
+              "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:8": {
+                "blocking": false,
+                "description": "cargo fmt reflowed unrelated code (is_iso_date and the parse_cents whole-part parse) in the same commit. Behaviour is unchanged, but it adds diff noise to a functional change. at src/lib.rs:77",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNDQTGD72XFFVJ4MZKC8YS"
+                },
+                "id": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:8",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "131fa47dac2c27adcd8413572b0fa627cbe16a99",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK",
+                    "base": "f86fbdf7ddae033ebfd66025ed157c8cddb2029e",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:1",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:2",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:3",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:4",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:5",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:6",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:7",
+                      "agt_01M8GNG1886AQWZ1G5JHQ4P1PK:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the CLI output header and row shape consumed by the reports tool, and adds a public field to Entry. Behaviour change, plus new tests. Review found no blocking issues and confirmed high."
+          },
+          "tree": "d58307c0e14cae29267a15b6809962097aaa8e2a"
+        },
+        "cost_usd": 0.04457173,
+        "started_at": "2026-11-28T08:47:51.119823893Z",
+        "finished_at": "2026-11-28T08:50:26.847482753Z"
+      }
+    ],
+    "spent_usd": 0.04457173,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GNDQTGD72XFFVJ4MZKC8YS": {
+        "direct_usd": 0.027341,
+        "delegated_usd": 0.01723073,
+        "agents": [
+          {
+            "agent": "agt_01M8GNG1886AQWZ1G5JHQ4P1PK",
+            "parent": "agt_01M8GNDQYEGYR28DCD0EVY4X4N",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.01723073
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:47:50.479958369Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:47:50.479958369Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:47:50.479958369Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

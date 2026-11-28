@@ -1,0 +1,11 @@
+I queued the work as item `qi_01M8GPFBX52GM4JM5Z0FKPQSMA` on the `quality-safe-extract` repository. I have not written any code myself. Archon's agents will do it.
+
+- **Pipeline:** `adaptive`. The spec is security-sensitive filesystem code, so it goes to a single lead rather than the `direct` pipeline.
+- **Model:** strong tier at high effort for the build stage, because the spec has many edge cases and a risky diff.
+- **Review:** `strict`, which means three independent reviewers.
+- **Shipping:** the repository ships locally. The agent commits on a local branch and does not push. Merge stays manual, since you did not ask for auto-merge.
+- **Brief:** it contains your request and the full text of `SPEC.md`, plus acceptance criteria. The criteria cover every spec rule, a test that validation failures leave the filesystem unchanged, and no swallowed OS errors.
+
+I'll report back when the item finishes or fails. If the review finds problems, I'll say so rather than report it as ready.
+
+Cancelled: Implement safe_extract.py per SPEC.md with focused tests. archon-bench: trial timeout

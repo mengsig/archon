@@ -66,11 +66,8 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             name: args.optional_text("name")?,
             caller: None,
         },
-        "design_preview" => Request::DesignPreview {
-            url: archon_core::design::validate_preview_url(&args.required_text("url")?)
-                .map_err(|error| args.error("url", error))?,
-            caller: None,
-        },
+        "design_preview" => design_preview(args)?,
+        "design_recipe" => Request::DesignRecipe { caller: None },
         "design_note" => design_note(args)?,
         "design_history" => {
             let id = args.optional_text("id")?;
@@ -703,6 +700,21 @@ fn quoted(keys: &[&str]) -> String {
         .map(|k| format!("`{k}`"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// `design_preview`: a loopback URL and, once the stack is up, its recipe.
+fn design_preview(args: &mut Args) -> Result<Request, ToolError> {
+    let url = archon_core::design::validate_preview_url(&args.required_text("url")?)
+        .map_err(|error| args.error("url", error))?;
+    let recipe = args.optional::<archon_core::design::recipe::PreviewRecipe>("recipe")?;
+    if let Some(Err(why)) = recipe.as_ref().map(|r| r.check_reported()) {
+        return Err(args.error("recipe", why));
+    }
+    Ok(Request::DesignPreview {
+        url,
+        recipe: recipe.map(Box::new),
+        caller: None,
+    })
 }
 
 /// `design_note`: a note id, a status, and for `done` an exact commit id.

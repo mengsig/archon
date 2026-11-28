@@ -1,0 +1,34 @@
+I've queued the rate limiter as item `qi_01M8GM4W798XMCM7P54YF1JSME` in the `feature-token-bucket` repository, using the `direct` pipeline with standard review. I did not write the code myself; the item's agent will.
+
+- **Brief:** implement `SPEC.md` exactly in `ratelimit.py`, with standard library only. It is also to add tests for the spec's error and edge cases, including the clock-going-backwards and `max_keys` behaviour, and to run them.
+- **Commit:** the repository ships locally, so the item commits on its branch and does not push.
+- **Model:** balanced tier at medium effort, since this is a single module with a written spec.
+- **Notification:** the item is tagged `notify`, so you will hear when it finishes, as well as on failure.
+
+I read `SPEC.md` only to check for concurrency or locking requirements, and found none, so I did not route it to the stricter `adaptive` pipeline.
+
+Done: Implement rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 22 tests to test_ratelimit.py (validation, n bounds, fractional refill, cap, wait_time sufficiency incl. large clock values, backwards clock, LRU eviction, wait_time as a use, invalid request not evicting). Committed on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed. Final head c44a7c9ce14b6a1370f218bc8b17a9166160ff0b, tree 9978b7b2aa2c24f037fb84a530681c9ee3119a76. Check: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK (before: the 3 original tests errored on the stubs). Review: three reviewers. The first found a float-rounding bug in wait_time, fixed in 44eed50. The second found the fix incomplete at large clock values, fixed in c44a7c9. The third passed the head. Open follow-up (non-blocking): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. No processes left running; no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GM6WZC367FDHJ5CJJRPQ3W), claude-code/claude-haiku-5-5 (agent agt_01M8GMBJ46Y831QRMEXM6NN13V)
+
+SHIPPED: commit c44a7c9ce14b6a1370f218bc8b17a9166160ff0b on the run branch
+Branch `archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/46166e5b961dc1875e81845d/feature-token-bucket holds it (2 files changed, 246 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GM4W798XMCM7P54YF1JSME`; land it in `main`: `archon merge qi_01M8GM4W798XMCM7P54YF1JSME`.
+
+Done: Fix wait_time under a backwards clock per SPEC.md. Fixed TokenBucket.wait_time under a backwards clock in ratelimit.py, per SPEC.md: the wait now adds the gap between the latest seen time and the current clock to the token-deficit wait. Added 3 tests to test_ratelimit.py (deterministic gap case, zero wait with tokens available, randomized sleep-then-acquire under a backwards clock). `python3 -W error -B -m unittest -v test_ratelimit` runs 25 tests, all OK. The new randomized test fails on the pre-fix code. Committed as 9198a0c on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed; no attribution lines. Review: one reviewer (agt_01M8GMGCK101FH0TXRVNPWY54F) passed head 9198a0c; its non-blocking notes are a tiny forward-clock overestimate from the existing float margin and bool accepted by the max_keys check (pre-existing, left unchanged). Reviewer rated risk low; author rated medium. Nothing left running from this stage; the reviewer's leftover claude process (pid 3298906) stops when this agent ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMGCK101FH0TXRVNPWY54F)
+
+SHIPPED: commit 9198a0c791f06ebfcd1110cbd79c18683245e62c on the run branch
+Branch `archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/46166e5b961dc1875e81845d/feature-token-bucket holds it (2 files changed, 291 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GME8Z110RBNSGT2982STZ6`; land it in `main`: `archon merge qi_01M8GME8Z110RBNSGT2982STZ6`.
+
+Fixed TokenBucket.wait_time under a backwards clock in ratelimit.py, per SPEC.md: the wait now adds the gap between the latest seen time and the current clock to the token-deficit wait. Added 3 tests to test_ratelimit.py (deterministic gap case, zero wait with tokens available, randomized sleep-then-acquire under a backwards clock). `python3 -W error -B -m unittest -v test_ratelimit` runs 25 tests, all OK. The new randomized test fails on the pre-fix code. Committed as 9198a0c on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed; no attribution lines. Review: one reviewer (agt_01M8GMGCK101FH0TXRVNPWY54F) passed head 9198a0c; its non-blocking notes are a tiny forward-clock overestimate from the existing float margin and bool accepted by the max_keys check (pre-existing, left unchanged). Reviewer rated risk low; author rated medium. Nothing left running from this stage; the reviewer's leftover claude process (pid 3298906) stops when this agent ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMGCK101FH0TXRVNPWY54F)
+
+SHIPPED: commit 9198a0c791f06ebfcd1110cbd79c18683245e62c on the run branch
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 22 tests to test_ratelimit.py (validation, n bounds, fractional refill, cap, wait_time sufficiency incl. large clock values, backwards clock, LRU eviction, wait_time as a use, invalid request not evicting). Committed on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed. Final head c44a7c9ce14b6a1370f218bc8b17a9166160ff0b, tree 9978b7b2aa2c24f037fb84a530681c9ee3119a76. Check: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK (before: the 3 original tests errored on the stubs). Review: three reviewers. The first found a float-rounding bug in wait_time, fixed in 44eed50. The second found the fix incomplete at large clock values, fixed in c44a7c9. The third passed the head. Open follow-up (non-blocking): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. No processes left running; no services started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GM6WZC367FDHJ5CJJRPQ3W), claude-code/claude-haiku-5-5 (agent agt_01M8GMBJ46Y831QRMEXM6NN13V)
+
+SHIPPED: commit c44a7c9ce14b6a1370f218bc8b17a9166160ff0b on the run branch

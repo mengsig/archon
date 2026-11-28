@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":26,"client_name":"archon",
- "client_version":"1.6.6","features":["history_expired"]}
+ "client_version":"1.6.7","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -2788,8 +2788,10 @@ trigger, never `send_message`: Aether labels a message from Archon's socket
 an authenticated operator instruction, and the fleet pump would record it
 as the operator's words in that inbox. In each re-review the lead includes the
 open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
-`resolved_findings` and uses `findings[].id` for a finding still open. Any
-real blocker the reviewer discovers fails, including outside the delta.
+`resolved_findings` and uses `findings[].id` for a finding still open. A
+delta reviewer fails only on a defect in the commits it reads, or an open
+finding left unfixed: a new finding in code a pass already read is
+`"blocking": false`.
 Archon assigns each new finding an ID from its reviewer agent and ordinal.
 The stage's `structured.review_rounds` records each review's verdict, model
 and finding count by round, and when each finding was discovered and resolved.
@@ -6122,8 +6124,11 @@ proposal gate and `approve_intent` unchanged.
 owns the headless Chromium (a child with a cleared environment, a fresh profile
 and a debugging pipe), the CDP client, the session and note store and the frame
 relay. The agent gets no browser handle; it reports with the MCP tools
-`design_preview` and `design_note`, and reads its chains with
-`design_history`, accepted only from the live design stage's agent.
+`design_preview` and `design_note`, reads its chains with `design_history`
+and its repository's saved preview recipe with `design_recipe`, accepted only
+from the live design stage's agent. `design_preview` saves the recipe it
+carries in the `kv` table once the page and the recipe's readiness checks
+answer.
 
 **Commit check and Undo.** archond accepts a note's `done` only when HEAD is
 the reported commit, that commit has one parent and the parent is the note's

@@ -1,0 +1,13 @@
+Implemented the token-bucket rate limiter per SPEC.md in ratelimit.py (standard library only) and committed it as 4fb82fd on main with tests in test_ratelimit.py. All 20 unit tests pass (the 3 original plus 17 new ones covering validation errors, fractional refill, capping, wait_time, clock-going-backwards, LRU eviction, and float-rounding regression). Two choices beyond the literal spec:
+1. Float tolerance: a 1e-9 token tolerance is applied in try_acquire and wait_time. Without it, wait_time() could return a time after which try_acquire() still failed by ~3e-16 (reproduced in fuzzing, ~99% of multi-step trials). Balance is clamped at 0 after acquire.
+2. Extra validation: capacity/refill_per_sec that are infinite are rejected (spec only says <= 0), and max_keys must be an int >= 1 (a float would break the eviction bound). Invalid n is validated before a key is created or touched, so a bad call does not evict or create a key.
+Commit has no Co-Authored-By trailer, since CLAUDE.md says not to add Claude attribution and that takes precedence over the reminder. Working tree is clean.
+
+The rate limiter is implemented in `ratelimit.py` and committed as `4fb82fd` on `main`. All 20 unit tests pass: the 3 original tests plus 17 new ones.
+
+I made two choices beyond the literal spec, and you may want to review them:
+
+1. **Float tolerance (1e-9 tokens).** Without it, `wait_time()` could return a time after which `try_acquire()` still failed by about 3e-16. A randomized check reproduced this in roughly 99% of multi-step trials. With the tolerance, the same check shows 0 failures in 20,000 trials. The balance is also clamped at zero after an acquire, so the tolerance can't leave a tiny negative balance.
+2. **Stricter validation.** Infinite `capacity` or `refill_per_sec` is rejected, since the spec only covers `<= 0`. `max_keys` must be an int of at least 1, because a float would break the eviction bound. Invalid `n` is checked before a key is created or touched, so a bad call can't evict another key.
+
+I left out the `Co-Authored-By` trailer from the commit message. CLAUDE.md says not to add Claude attribution, and I treated it as taking precedence over the reminder that asked for the trailer. The working tree is clean.

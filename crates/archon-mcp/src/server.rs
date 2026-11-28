@@ -383,6 +383,7 @@ fn name_caller(
         | Request::DesignPreview { caller, .. }
         | Request::DesignNoteReport { caller, .. }
         | Request::DesignHistory { caller, .. }
+        | Request::DesignRecipe { caller }
         | Request::SubmitVerdict { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
         | Request::RequestAuthority { caller, .. } => (caller, true),
@@ -662,6 +663,7 @@ mod tests {
             ("design_preview", preview),
             ("design_note", note),
             ("design_history", json!({"id": "D1"})),
+            ("design_recipe", json!({})),
         ] {
             let refused = request_with_caller(tool, args.clone(), &json!({})).unwrap_err();
             assert!(
@@ -675,6 +677,7 @@ mod tests {
                 Request::DesignPreview { caller: Some(ref id), .. }
                     | Request::DesignNoteReport { caller: Some(ref id), .. }
                     | Request::DesignHistory { caller: Some(ref id), .. }
+                    | Request::DesignRecipe { caller: Some(ref id) }
                     if id.as_str() == "agt_1"
             ));
         }

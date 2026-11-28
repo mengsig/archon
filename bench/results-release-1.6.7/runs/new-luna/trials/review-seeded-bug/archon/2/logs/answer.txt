@@ -1,0 +1,5 @@
+## Finding
+
+- **Critical — forged session tokens.** `src/tokens.js`, `verify()`: the function accepts any signature that is a prefix of the expected HMAC, including an empty signature, because it checks `expected.startsWith(signature)`. An attacker can choose arbitrary claims and submit `base64url({"user":"root","exp":9000000000000000}) + "."`; verification accepts the empty signature and returns those claims. This can allow authentication as another user. Require a full-length signature match and compare the decoded MACs with a constant-time comparison.
+
+No code was changed.

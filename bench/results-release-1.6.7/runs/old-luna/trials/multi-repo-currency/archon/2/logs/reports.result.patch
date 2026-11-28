@@ -1,0 +1,111 @@
+diff --git a/README.md b/README.md
+index 25e668a..e4a3ed5 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,7 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`, with
++totals grouped by account and currency and rows sorted by account, then
++currency. CSV files without a `currency` column are treated as USD. Present
++currency codes must be exactly three uppercase ASCII letters; malformed codes
++print an error to stderr and exit with status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..90bfb2e 100644
+--- a/reports.py
++++ b/reports.py
+@@ -1,4 +1,4 @@
+-"""Per-account totals from the ledger's CSV export.
++"""Per-account and currency totals from the ledger's CSV export.
+ 
+ Usage: python3 reports.py < ledger.csv
+ """
+@@ -8,24 +8,34 @@ import sys
+ 
+ 
+ def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++    """{(account, currency): total_cents} from CSV dict rows."""
+     result = {}
+     for row in rows:
+         account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++        currency = row.get("currency")
++        if currency is None:
++            currency = "USD"
++        if len(currency) != 3 or not currency.isascii() or not currency.isupper() or not currency.isalpha():
++            raise ValueError(f"invalid currency code: {currency!r}")
++        key = (account, currency)
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
++    lines = ["account,currency,total_cents"]
++    for account, currency in sorted(result):
++        lines.append(f"{account},{currency},{result[(account, currency)]}")
+     return "\n".join(lines) + "\n"
+ 
+ 
+ def main():
+     rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        sys.stdout.write(render(totals(rows)))
++    except ValueError as error:
++        print(f"error: {error}", file=sys.stderr)
++        sys.exit(2)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/test_reports.py b/test_reports.py
+index f2f2322..fe9c218 100644
+--- a/test_reports.py
++++ b/test_reports.py
+@@ -14,7 +14,7 @@ def run(stdin):
+ 
+ 
+ class ReportsTest(unittest.TestCase):
+-    def test_totals_per_account_sorted(self):
++    def test_legacy_csv_defaults_to_usd(self):
+         csv_text = (
+             "date,account,amount_cents\n"
+             "2026-03-01,rent,-120000\n"
+@@ -23,11 +23,27 @@ class ReportsTest(unittest.TestCase):
+         )
+         out = run(csv_text)
+         self.assertEqual(out.returncode, 0, out.stderr)
+-        lines = out.stdout.splitlines()
+-        self.assertEqual(lines[1:], [line for line in sorted(lines[1:])])
+-        self.assertIn("groceries", lines[1])
+-        self.assertIn("-5500", lines[1])
+-        self.assertIn("rent", lines[2])
++        self.assertEqual(out.stdout, "account,currency,total_cents\ngroceries,USD,-5500\nrent,USD,-120000\n")
++
++    def test_totals_grouped_and_sorted_by_account_and_currency(self):
++        csv_text = (
++            "date,account,amount_cents,currency\n"
++            "2026-03-01,zeta,100,USD\n"
++            "2026-03-02,alpha,200,EUR\n"
++            "2026-03-03,alpha,300,USD\n"
++            "2026-03-04,alpha,400,EUR\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 0, out.stderr)
++        self.assertEqual(out.stdout, "account,currency,total_cents\nalpha,EUR,600\nalpha,USD,300\nzeta,USD,100\n")
++
++    def test_malformed_currency_exits_two_with_stderr_error(self):
++        for currency in ("usd", "US", "USDD", "U$D", "ÄBC"):
++            with self.subTest(currency=currency):
++                out = run(f"date,account,amount_cents,currency\n2026-03-01,a,1,{currency}\n")
++                self.assertEqual(out.returncode, 2)
++                self.assertEqual(out.stdout, "")
++                self.assertIn("invalid currency code", out.stderr)
+ 
+ 
+ if __name__ == "__main__":

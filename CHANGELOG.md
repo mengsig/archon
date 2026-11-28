@@ -2,42 +2,86 @@
 
 ## Unreleased
 
-Archon 1.6.7 requires **Aether 1.4.4**, the release with the Antigravity
-(`agy`) engine. Update Aether first with `aether update --version v1.4.4` and
-restart aetherd.
+## 1.6.7
+
+Released 2026-11-28.
+
+Archon 1.6.7 adds Google models through the Antigravity CLI, as an opt-in
+provider, and lets a live design session start any repository's preview
+stack and remember how. It requires **Aether 1.4.4**, the release with the
+Antigravity (`agy`) engine. Update Aether first with
+`aether update --version v1.4.4` and restart aetherd, then run
+`archon update --yes`. There is no store migration.
 
 ### Added
 
+- Design sessions start the preview stack of any repository. The design
+  agent tries the repository's saved preview recipe first, then its
+  documented preview or dev route, then infers the stack, and starts the
+  backends and databases the page calls. Each process is recorded so it is
+  stopped with the session, and each Compose stack runs under a project of
+  its own, `archon-<item>`. Before the preview is shown, `design_preview`
+  checks that the page and every step's readiness URL or port answer, and
+  names what does not. The agent sets a script's own project and state knobs
+  (such as `DEV_PREVIEW_PROJECT`, `DEV_PREVIEW_HOME`) to the run's, never
+  deletes state it did not create, and asks the operator about a failed
+  dependency install instead of working around it (#509).
+- The session remembers how: the working stack is saved per repository as a
+  recipe (commands, order, ports, readiness checks and env var names, never
+  values) for the next session. A port that differs per run is saved as how
+  to pick it (`port_pick`: `"free"` or `{"env": "NAME"}`), never one run's
+  number. The new `design_recipe` tool reads it; `archon settings --repo
+  NAME` shows it and `--clear-design-recipe` forgets it. New requests:
+  `design_recipe` and `clear_design_recipe` (#509).
 - Google models through the Antigravity CLI: the `antigravity` provider and
   `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
-  `gemini-4-argon` and `gemini-3.8-flash`. Archon places them in tiers, which
-  Aether leaves unset: Flash is `fast`, Carbon and Argon `balanced`, Neon and
-  Hydrogen `strong`. They are opt-in: Archon picks them only when a
-  `model_plan` or `[models] allow` names them, never by default, as a fallback
-  or by learned routing, and an unnamed `provider_weights` entry weighs at most
-  1. Secondary routes such as `antigravity/claude-opus-5-5` serve Archon's own
-  picks only while the vendor's own provider lists no model. See
-  [Antigravity](docs/configuration.md#antigravity-google-models).
+  `gemini-4-argon` and `gemini-3.8-flash`. The provider is opt-in: Archon
+  picks its models only when a `model_plan` or `[models] allow` names them,
+  never by default, as a fallback or by learned routing, and an unnamed
+  `provider_weights` entry weighs at most 1. Archon places them in tiers,
+  which Aether leaves unset: Flash is `fast`, Carbon and Argon `balanced`,
+  Neon and Hydrogen `strong`. The model's original provider stays preferred:
+  a secondary route such as `antigravity/claude-opus-5-5` serves Archon's own
+  picks only while the vendor's own provider lists no model. It needs Aether
+  1.4.4 and a signed-in `agy`. See
+  [Antigravity](docs/configuration.md#antigravity-google-models) (#508).
 
 ### Changed
 
 - The required Aether release is 1.4.4 (`archon doctor`, `archon update` and
-  the installer).
+  the installer) (#508).
+- Review rounds again follow the 1.6.4 rule for delta reviews: a delta
+  reviewer fails only on a defect in the commits it reads or an open finding
+  left unfixed, and a new finding in code a passing review already read is
+  non-blocking. A fail no longer follows from any blocker anywhere, so a fix
+  round no longer reopens code that already passed. Finding IDs,
+  `Review-Fix` trailers, `resolved_findings`, carried-forward omissions and
+  the final confirmation after three rounds are unchanged.
 
 ### Fixed
 
+- Tearing down a design session's Compose stack removes only what belongs to
+  the run. It takes the item's own project `archon-<item>` down with plain
+  `docker compose down --remove-orphans` from the files it started from; when
+  Compose cannot read those files (a repo script's variables unset), the
+  project's containers are removed with their anonymous volumes. Then, also
+  when its containers were already gone, only the networks and volumes
+  labelled `com.docker.compose.project=archon-<item>` are removed. Compose's
+  `down --volumes` is never used, as it removes a declared volume by its
+  configured name whoever's it is: every other project and external volume
+  keeps its volumes (#509).
 - Stage leads no longer stall or loop in review, the cause of the 1.6.5 and
-  1.6.6 bench timeouts. The findings note now lists only open blocking
-  findings and is not sent when none is open, so follow-ups no longer read as
-  an order to fix them and review again. It is sent once Aether lists the
-  reviewer completed, so it carries that review's own blockers rather than
-  the previous list. A blocker in it counts as resolved as the gate counts
-  it, by commit ancestry, whatever order parallel reviewers came in.
-  Review notes reach the lead as Archon's own trigger, no
+  1.6.6 bench timeouts where Archon trailed plain Aether. The findings note
+  now lists only open blocking findings and is not sent when none is open, so
+  follow-ups no longer read as an order to fix them and review again. It is
+  sent once Aether lists the reviewer completed, so it carries that review's
+  own blockers rather than the previous list. A blocker in it counts as
+  resolved as the gate counts it, by commit ancestry, whatever order parallel
+  reviewers came in. Review notes reach the lead as Archon's own trigger, no
   longer labelled an authenticated operator instruction. The note about an
   unreadable reviewer result no longer interrupts the lead, which left Codex
-  leads parked on their inbox. The contract says a lead's Aether parent, a run node, never
-  replies, so leads ask with `question`.
+  leads parked on their inbox. The contract says a lead's Aether parent, a run
+  node, never replies, so leads ask with `question` (#511).
 
 ## 1.6.6
 
@@ -73,6 +117,13 @@ and restart aetherd.
   (#503).
 
 ### Fixed
+
+- A design screen open while the agent starts the app switches to the live
+  preview on its own when the dev server accepts connections late, as Vite
+  does while it compiles its first page: archond waits up to three seconds
+  for the accept before refusing the preview's connection, and a preview that
+  still does not start is told on the screen instead of waiting on
+  "Starting" until a reload.
 
 - JavaScript dialogs in the design preview show the page's message and a
   prompt's suggested answer, and still wait for the operator's answer. A page

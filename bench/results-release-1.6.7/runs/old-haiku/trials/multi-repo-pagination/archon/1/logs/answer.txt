@@ -1,0 +1,45 @@
+The pagination change is queued as one initiative (`ini_01M8GHDTFDAQGZEKF1SMTX8APC`) with two items, both queued to run now:
+
+- **`inventory-api`** (`qi_01M8GHDTFXHB7GRVJH8X9TTJNX`): adds `limit` and `cursor` to `GET /items`, the `{"items", "next_cursor"}` body, and 400 errors for bad values, with tests and a README update. It uses strict review, since this changes a public response shape.
+- **`inventory-client`** (`qi_01M8GHDTGYJ4PY3H2BSSKZ43WJ`): makes `listItems(transport)` follow `next_cursor` until it is null or absent, with tests and a README update. It uses standard review.
+
+Both items build against one shared contract, so neither waits for the other. The repositories ship as local commits, so nothing is pushed. I have not run the test suites or edited either repository myself.
+
+I'll report the outcome when each item finishes.
+
+Done: Make listItems follow next_cursor. listItems in inventory-client now follows next_cursor: it requests /items with no cursor, passes each next_cursor back unchanged until it is null or absent, and resolves to all items in order. A response without an items array throws. Committed on archon/sskz43wj-make-listitems-follow-next-cursor as c63db78 (not pushed). Tests use a fake transport for single page, multi-page, missing next_cursor, and cursor passthrough. README documents pagination. npm test: 7 pass, 0 fail. On the old client the new tests give 4 pass, 3 fail. Review: reviewer agt_01M8GHF36HXTDHHCXYSC8Q62K6 passed head c63db78 with no blocking findings. Non-blocking follow-ups: no guard against a server that repeats the same cursor forever; items.push(...page) could hit argument limits on very large pages. Nothing left running from this stage; the reviewer's leftover claude -p process (pid 616468) was not started by me and I did not stop it. review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHF36HXTDHHCXYSC8Q62K6)
+
+SHIPPED: commit c63db7872f06723151ff560227b652823a7201c4 on the run branch
+Branch `archon/sskz43wj-make-listitems-follow-next-cursor` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/793c21eed8f955e8c139032b/inventory-client holds it (3 files changed, 66 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GHDTGYJ4PY3H2BSSKZ43WJ`; land it in `main`: `archon merge qi_01M8GHDTGYJ4PY3H2BSSKZ43WJ`.
+
+Done: Add cursor pagination to GET /items. Added cursor pagination to GET /items in inventory-api on archon/8x9ttjnx-add-cursor-pagination-to-get-items. Commits d58e0b6 (feature) and 6d60429 (fix), both local, nothing pushed. limit is an integer 1..100, default 20. cursor is an opaque base64url token encoding the last id returned. The response is {"items", "next_cursor"}, with next_cursor null on the last page. Invalid limit or cursor returns 400 {"error": ...}. README documents the new params and response shape. Checks: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest` runs 13 tests, OK, at head 6d60429. Before: GET /items returned all 57 items with no pagination fields. The review found an uncaught ValueError on oversized digit strings (over Python's 4300-digit int limit). Fixed in 6d60429 with length-bounded digit parsing and regression tests. Review: whole-change reads by review-1 and review-2 failed on that defect; review-3 passed the whole change at d58e0b6; review-delta passed the delta to 6d60429 and verified the fix. Open non-blocking follow-ups: get_item has the same pre-existing int overflow on huge ids; non-string query values (JSON int or null via api_cli.py) raise AttributeError; leading-zero limits such as "0100" are accepted; two decorative asserts in list_items. The default page size of 20 changes the response for existing GET /items callers, which the contract approves. inventory-client is a sibling item and was not touched. No processes were started. The untracked .archon/ directory in the worktree is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHG9CJVG9XXJ8ENF2Q5AMX), claude-code/claude-haiku-5-5 (agent agt_01M8GHGF9JM11ZS5HZ7F72HGHP), claude-code/claude-haiku-5-5 (agent agt_01M8GHGPFSVZZCPQ8G1FPJVXDS), claude-code/claude-haiku-5-5 (agent agt_01M8GHJXW3XSR3XJ034YQCC379)
+
+SHIPPED: commit 6d60429d743d29f09d36205f57bbc33ee70ff454 on the run branch
+Branch `archon/8x9ttjnx-add-cursor-pagination-to-get-items` in /home/me…
+
+Initiative finished; coordinated result queued.
+
+Cursor pagination for GET /items is done in both repositories; both items passed review and are committed locally, nothing pushed.
+
+- inventory-api (qi_01M8GHDTFXHB7GRVJH8X9TTJNX): commit 6d60429 on archon/8x9ttjnx-add-cursor-pagination-to-get-items. `python3 -m unittest` runs 13 tests, all OK. A review finding (uncaught ValueError on oversized digit strings) was fixed with regression tests.
+- inventory-client (qi_01M8GHDTGYJ4PY3H2BSSKZ43WJ): commit c63db78 on archon/sskz43wj-make-listitems-follow-next-cursor. `npm test` shows 7 pass, 0 fail. listItems follows next_cursor and resolves to all items in order.
+
+Decision for you: the default page size of 20 changes the response for existing GET /items callers, which the approved contract allows. Existing callers will now see only the first 20 items unless they follow next_cursor.
+
+Non-blocking follow-ups left open: get_item has the same int overflow on huge ids; non-string query values raise AttributeError; leading-zero limits like "0100" are accepted; the client has no guard against a server that repeats a cursor forever.
+
+listItems in inventory-client now follows next_cursor: it requests /items with no cursor, passes each next_cursor back unchanged until it is null or absent, and resolves to all items in order. A response without an items array throws. Committed on archon/sskz43wj-make-listitems-follow-next-cursor as c63db78 (not pushed). Tests use a fake transport for single page, multi-page, missing next_cursor, and cursor passthrough. README documents pagination. npm test: 7 pass, 0 fail. On the old client the new tests give 4 pass, 3 fail. Review: reviewer agt_01M8GHF36HXTDHHCXYSC8Q62K6 passed head c63db78 with no blocking findings. Non-blocking follow-ups: no guard against a server that repeats the same cursor forever; items.push(...page) could hit argument limits on very large pages. Nothing left running from this stage; the reviewer's leftover claude -p process (pid 616468) was not started by me and I did not stop it. review: pass.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHF36HXTDHHCXYSC8Q62K6)
+
+SHIPPED: commit c63db7872f06723151ff560227b652823a7201c4 on the run branch
+
+Added cursor pagination to GET /items in inventory-api on archon/8x9ttjnx-add-cursor-pagination-to-get-items. Commits d58e0b6 (feature) and 6d60429 (fix), both local, nothing pushed. limit is an integer 1..100, default 20. cursor is an opaque base64url token encoding the last id returned. The response is {"items", "next_cursor"}, with next_cursor null on the last page. Invalid limit or cursor returns 400 {"error": ...}. README documents the new params and response shape. Checks: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest` runs 13 tests, OK, at head 6d60429. Before: GET /items returned all 57 items with no pagination fields. The review found an uncaught ValueError on oversized digit strings (over Python's 4300-digit int limit). Fixed in 6d60429 with length-bounded digit parsing and regression tests. Review: whole-change reads by review-1 and review-2 failed on that defect; review-3 passed the whole change at d58e0b6; review-delta passed the delta to 6d60429 and verified the fix. Open non-blocking follow-ups: get_item has the same pre-existing int overflow on huge ids; non-string query values (JSON int or null via api_cli.py) raise AttributeError; leading-zero limits such as "0100" are accepted; two decorative asserts in list_items. The default page size of 20 changes the response for existing GET /items callers, which the contract approves. inventory-client is a sibling item and was not touched. No processes were started. The untracked .archon/ directory in the worktree is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHG9CJVG9XXJ8ENF2Q5AMX), claude-code/claude-haiku-5-5 (agent agt_01M8GHGF9JM11ZS5HZ7F72HGHP), claude-code/claude-haiku-5-5 (agent agt_01M8GHGPFSVZZCPQ8G1FPJVXDS), claude-code/claude-haiku-5-5 (agent agt_01M8GHJXW3XSR3XJ034YQCC379)
+
+SHIPPED: commit 6d60429d743d29f09d36205f57bbc33ee70ff454 on the run branch

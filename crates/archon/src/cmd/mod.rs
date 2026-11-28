@@ -88,7 +88,15 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             since,
         } => cost::evidence(repo, pipeline, stage, since.as_deref(), json).await,
         Command::Autonomy(args) => autonomy::run(args, json).await,
-        Command::Settings { repo, set, reset } => settings::run(repo, set, reset, json).await,
+        Command::Settings {
+            repo,
+            set,
+            reset,
+            clear_design_recipe,
+        } => {
+            let change = settings::Change::of(set, reset, clear_design_recipe);
+            settings::run(repo, change, json).await
+        }
         Command::Github { command } => github::run(command, json).await,
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
         Command::Remote { command } => remote::run(command, json).await,

@@ -1,0 +1,9 @@
+## Findings
+
+- **High — signature prefixes are accepted as valid.** In [`src/tokens.js`](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/7fee61d24b0589ed1a4968bd/review-seeded-bug/src/tokens.js:27), `verify` uses `expected.startsWith(signature)` instead of requiring the complete HMAC. An empty signature passes for every body. For example, a base64url-encoded JSON payload with `user: "admin"` and a future `exp`, followed by `.`, is accepted without knowing the secret. This lets an attacker forge session claims.
+
+- **Medium — malformed tokens can throw instead of returning `null`.** In `verify`, [`JSON.parse`]( /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/7fee61d24b0589ed1a4968bd/review-seeded-bug/src/tokens.js:28) is unguarded. For example, `verify("not-json.", secret)` passes the empty-signature check and throws a `SyntaxError`. If callers don’t catch it, an attacker can turn an invalid token into a request failure. The signature-prefix flaw makes this input reachable.
+
+- **Low — extra token segments are ignored.** In `verify`, [`token.split(".")`](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/7fee61d24b0589ed1a4968bd/review-seeded-bug/src/tokens.js:24) keeps only the first two segments. A valid token with `.junk` appended still verifies. This creates multiple strings for the same authenticated token, which can cause inconsistencies if downstream systems key revocation or caching by the raw token string.
+
+No files were changed.

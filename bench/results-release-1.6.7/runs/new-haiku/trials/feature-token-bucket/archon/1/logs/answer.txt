@@ -1,0 +1,21 @@
+I've queued the rate limiter as one item, `qi_01M8GGDXEHQFV85585XSGP3W50`, on the `feature-token-bucket` repository. I did not edit the repository myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. This is a single module with a clear spec, so it doesn't need the adaptive or swarm pipelines.
+- **Review:** `standard`. The error and edge-case handling could hide a slip, so it gets one reviewer.
+- **Model:** balanced tier at high effort, because the spec has many error cases where a silent deviation would be easy to miss.
+- **Shipping:** the repository is registered as `ship: local`, so the work lands as a local commit on the item's branch and nothing is pushed.
+
+The agent is told to read `SPEC.md` in full, implement every stated error and edge case, add tests for those cases, keep the standard library only, and commit. I haven't read the spec myself, so I can't yet confirm it covers everything you care about. I'll report the outcome when the item finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, committed on archon/xsgp3w50-implement-rate-limiter-in-ratelimit-py-p as ac28fc6 (tree 27910124d7dfc778c495210375a8d38a2abcba08). Added 21 tests for the spec's error and edge cases to test_ratelimit.py; the 3 existing tests still pass. Before the change, all 3 tests errored on NotImplementedError. After it, `python3 -m unittest -v` runs 24 tests, all OK (run on the final head, foreground). Standard library only, nothing pushed. One reviewer (agt_01M8GGGVMCQW4ZE7CY2HFT10EH, claude-haiku-5-5, medium) passed the branch head with no blocking findings; it confirmed risk medium. Non-blocking follow-ups, left unchanged: a clock failure on a new key evicts the LRU key before the constructor raises; max_keys=True is accepted as 1; capacity=inf is accepted and gives an unlimited bucket. The classes are not thread-safe, which SPEC does not require. No processes or services were started by this stage. No lint config exists in the repo, so no linter ran. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGGVMCQW4ZE7CY2HFT10EH)
+
+SHIPPED: commit ac28fc6868791ad6221fd3166dfa5bc3127f6af8 on the run branch
+Branch `archon/xsgp3w50-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3fe9e4fe5659e87410a0f901/feature-token-bucket holds it (2 files changed, 247 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GGDXEHQFV85585XSGP3W50`; land it in `main`: `archon merge qi_01M8GGDXEHQFV85585XSGP3W50`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, committed on archon/xsgp3w50-implement-rate-limiter-in-ratelimit-py-p as ac28fc6 (tree 27910124d7dfc778c495210375a8d38a2abcba08). Added 21 tests for the spec's error and edge cases to test_ratelimit.py; the 3 existing tests still pass. Before the change, all 3 tests errored on NotImplementedError. After it, `python3 -m unittest -v` runs 24 tests, all OK (run on the final head, foreground). Standard library only, nothing pushed. One reviewer (agt_01M8GGGVMCQW4ZE7CY2HFT10EH, claude-haiku-5-5, medium) passed the branch head with no blocking findings; it confirmed risk medium. Non-blocking follow-ups, left unchanged: a clock failure on a new key evicts the LRU key before the constructor raises; max_keys=True is accepted as 1; capacity=inf is accepted and gives an unlimited bucket. The classes are not thread-safe, which SPEC does not require. No processes or services were started by this stage. No lint config exists in the repo, so no linter ran. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGGVMCQW4ZE7CY2HFT10EH)
+
+SHIPPED: commit ac28fc6868791ad6221fd3166dfa5bc3127f6af8 on the run branch

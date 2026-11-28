@@ -204,6 +204,14 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ("list_artifacts", json!({"item": qi()})),
         ("design_preview", json!({"url": "http://127.0.0.1:5173/"})),
         (
+            "design_preview",
+            json!({"url": "http://127.0.0.1:5173/", "recipe": {"source": "README.md",
+                "steps": [{"name": "web", "command": "npm run dev", "dir": "web", "run": "service",
+                    "port": 5173, "ready": "http://127.0.0.1:5173/"}],
+                "env": ["DB_PASSWORD"], "notes": "open /settings"}}),
+        ),
+        ("design_recipe", json!({})),
+        (
             "design_note",
             json!({"id": "D2", "status": "done", "reply": "Done.", "commit": "b".repeat(40),
                 "no_change": false, "path": "/settings",
@@ -1573,8 +1581,11 @@ fn the_tool_list_stays_within_its_budget() {
     // `design_preview` and `design_note` (live design sessions), with the
     // `steps` that put a note's pictures in the state that shows its change.
     const DESIGN_TOOLS_BYTES: usize = 3 * 1024;
+    // `design_preview`'s `recipe` and `design_recipe`, the saved preview stack (1.6.7).
+    const DESIGN_RECIPE_BYTES: usize = 1024;
     const BUDGET_BYTES: usize = 33 * 1024
         + DESIGN_TOOLS_BYTES
+        + DESIGN_RECIPE_BYTES
         + INTENT_BINDING_BYTES
         + INTENT_RECORD_BYTES
         + VERDICT_CHECK_BYTES
@@ -1751,6 +1762,7 @@ fn design_preview_maps_to_its_request() {
         request,
         Request::DesignPreview {
             url: "http://localhost:3000/x".into(),
+            recipe: None,
             caller: None
         }
     );

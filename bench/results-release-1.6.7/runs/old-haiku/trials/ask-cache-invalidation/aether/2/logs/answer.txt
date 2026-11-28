@@ -1,0 +1,32 @@
+Root cause: category listings are cached under listing:<category>:<page> with a 600 s TTL (src/config.js:7), and updatePrice (src/pricing.js:6-13) only deletes the product:<sku> key. Nothing invalidates the listing entries, so category pages serve the old priceCents until the entry expires, up to 10 minutes. Product pages read product:<sku>, which is invalidated, so they update at once. Confirmed by a read-only repro: after updatePrice, product() returns 4500 while listing() still returns 5000 at t=599,999 ms and returns 4500 only at t=600,000 ms. Existing tests pass (3/3) but do not cover listing staleness. No files were changed. Recommended fix: cache only the SKU order per category and hydrate name and price from the product cache or store on each read, so there is no duplicated price to go stale. Alternative: on price update, delete all listing:<category>:* keys for the product's category. Caveat: the cache is an in-process Map, so a multi-instance deployment would also leave other nodes stale.
+
+The ten-minute delay on category pages comes from the listing cache. `updatePrice` never invalidates it. I did not change any code.
+
+**Root cause**
+
+- `updatePrice` in `src/pricing.js:6-13` updates the store, then deletes only `product:<sku>` (`productKey(sku)`).
+- Category pages are served by `Catalog.listing()` in `src/catalog.js:22-33`. Those rows are cached under `listing:<category>:<page>` (`src/keys.js:4`), and each cached row copies `priceCents`.
+- Nothing deletes those listing keys, so the old price stays until the entry expires.
+- The expiry is `LISTING_TTL_SECONDS: 600` in `src/config.js:7`, which is the ten minutes support sees.
+- Product pages call `Catalog.product()`, which reads `product:<sku>`. That key is deleted on update, so product pages are fresh immediately.
+
+**Why the TTL is 600 seconds**
+
+The comment in `src/config.js:5-6` says listings are cached separately because building them is expensive (join and sort). The TTL is the only mechanism that bounds listing staleness, and it was not paired with invalidation on price change.
+
+**Repro (read-only, run inline, no files written)**
+
+- Before the update, both `product()` and `listing()` return 5000.
+- After `updatePrice(c, 'A1', 4500)`, `product()` returns 4500 and `listing()` still returns 5000.
+- With the clock at 599,999 ms the listing is still 5000. At 600,000 ms it becomes 4500.
+- The existing test suite passes (3/3), but none of its tests cover listing staleness.
+
+**Suggested fix**
+
+1. Preferred: cache only the SKU order per category, and fill name and price from the product cache or store on every read. There is then no duplicated price to go stale, and the product cache's invalidation already covers listings.
+2. Smaller alternative: in `updatePrice`, look up the product's category and delete the `listing:<category>:*` keys. The cache has no prefix delete today, so this needs a per-category index or a generation number in the listing key.
+3. Either way, add a test that updates a price and then reads the listing.
+
+**Caveat**
+
+The cache is an in-process `Map`. If `catalog-service` runs as several instances, `updatePrice` only clears the cache of the instance that handled the write. The other instances would then be stale for up to the product TTL (one hour) as well as the listing TTL. I have not verified the deployment topology, so treat this as a risk to check, not a confirmed cause of the report.

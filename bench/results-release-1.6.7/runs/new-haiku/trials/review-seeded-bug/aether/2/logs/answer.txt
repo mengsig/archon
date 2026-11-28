@@ -1,0 +1,47 @@
+Review of src/tokens.js (HMAC-SHA256 session tokens) is complete. Do NOT ship: verify() has a forgery bypass and a prefix-only signature check, and the existing test suite (4/4 passing) misses both. No code was changed; probes were run in-memory via node -e and wrote no files.
+
+CRITICAL 1 - src/tokens.js:24-25,27 (verify). An empty signature is accepted. The guard `signature === undefined` lets '' through, and `expected.startsWith('')` is always true. Input: base64url('{"user":"root","exp":9e15}') + '.' returns { user: 'root', exp: 9e15 } with no key. Fix: reject falsy signatures, i.e. `if (!body || !signature) return null`.
+
+CRITICAL 2 - src/tokens.js:27 (verify). The signature check is a prefix match (`expected.startsWith(signature)`), not equality, and it is not constant-time. Each accept/reject answer reveals whether the next character guessed is correct. Demonstrated: for an attacker-chosen body, the full MAC was recovered byte by byte using only verify() in 1331 calls, and the forged token was then accepted. A one-character signature also passes for about 1 in 64 random guesses. Fix: compare the full expected MAC with crypto.timingSafeEqual on equal-length Buffers, after a length check.
+
+MEDIUM 3 - src/tokens.js:22,26 (verify). verify() does not validate the secret, but sign() enforces length >= 32. verify(attackerToken, '') accepts a token whose HMAC key was the empty string. This needs an empty secret to reach verify, e.g. an empty env var. Fix: apply the same secret check in verify, ideally via a shared helper.
+
+MEDIUM 4 - src/tokens.js:28-29 (verify). Contract says "payload or null", but verify throws. Malformed base64 JSON throws SyntaxError (`!!!.` gives "Unexpected end of JSON input"). A body that decodes to `null` throws TypeError on payload.exp. With bug 1 these are reachable before authentication, so they are a crash/500 vector. Fix: wrap the parse, check that the payload is a plain object, and return null.
+
+LOW 5 - src/tokens.js:24 (verify). split('.') ignores extra segments, so `<valid token>.junk` verifies. Token strings are therefore malleable, which matters if tokens are used as revocation, cache or dedupe keys. Fix: require exactly two parts.
+
+LOW 6 - src/tokens.js:16 (sign). iat and exp are milliseconds (Date.now()), while the JWT convention and most consumers use seconds. Observed exp for a 3600 s TTL is 3601000. Any consumer that reads these as seconds will never expire the token. Severity depends on whether other services read this format.
+
+LOW 7 - src/tokens.js:14-16 (sign). ttlSeconds is not validated. NaN yields exp: null, so a token is issued that can never verify (verify returns null, silently). Zero or negative TTL yields tokens that are already expired. Also, the secret guard only checks .length, so it accepts 32 characters of low entropy (e.g. 'a'.repeat(32)). Fix: validate ttlSeconds as a positive finite number and check secret type and entropy.
+
+NIT 8 - test/tokens.test.js. The suite has no test for an empty or truncated signature, extra segments, non-object or malformed payloads, or an empty secret in verify. The 'tampered payloads' test reuses the real signature with a different body, so it never exercises signature semantics. Add regression tests for bugs 1-5 before merge.
+
+Ruled out: no algorithm-confusion path (no alg header is parsed), and the MAC is computed over the exact base64url body string as transmitted, so there is no re-encoding ambiguity.
+
+Do not ship `src/tokens.js` as it stands. `verify()` accepts forged tokens in two independent ways, and the existing suite (4/4 passing) misses both. I changed no code; the probes below ran in memory via `node -e` and wrote no files.
+
+**Critical**
+
+1. **Empty signature bypasses authentication.** `src/tokens.js:24-27`, `verify()`. The guard `signature === undefined` lets `''` through, and `expected.startsWith('')` is always true. Input: `base64url('{"user":"root","exp":9e15}') + '.'` returns `{ user: 'root', exp: 9e15 }` with no key. Fix: `if (!body || !signature) return null`.
+
+2. **Signature check is a prefix match, not equality.** `src/tokens.js:27`, `verify()`. `expected.startsWith(signature)` also isn't constant-time, so each accept/reject answer leaks whether a guessed character is right. I recovered the full MAC for an attacker-chosen body byte by byte using only `verify()`, in 1331 calls, and the forged token was then accepted. Fixing bug 1 alone does not close this. Fix: compare the full expected MAC with `crypto.timingSafeEqual` on equal-length Buffers.
+
+**Medium**
+
+3. **Secret is not validated in `verify()`.** `src/tokens.js:22,26`. `sign()` enforces length ≥ 32, but `verify(token, '')` accepts tokens whose HMAC key was empty. This needs an empty secret to reach `verify`, for example an empty env var. Fix: apply the same secret check in `verify`.
+
+4. **`verify()` throws instead of returning `null`.** `src/tokens.js:28-29`. Malformed base64 JSON throws a `SyntaxError`, and a body that decodes to `null` throws a `TypeError` on `payload.exp`. With bug 1 these are reachable before authentication, which makes them a crash/500 vector. Fix: wrap the parse, check that the payload is a plain object, and return `null`.
+
+**Low**
+
+5. **Extra token segments are accepted.** `src/tokens.js:24`. `split('.')` ignores anything after the second segment, so `<valid token>.junk` verifies. Tokens are therefore malleable, which matters if they are used as revocation, cache or dedupe keys. Fix: require exactly two parts.
+
+6. **Timestamps are in milliseconds.** `src/tokens.js:16`. `iat` and `exp` use `Date.now()` units. The JWT convention is seconds; observed `exp` for a 3600 s TTL is `3601000`. Any consumer reading these as seconds will never expire the token. Severity depends on whether other services read this format.
+
+7. **`sign()` input validation is thin.** `src/tokens.js:14-15`. `ttlSeconds: NaN` produces `exp: null`, so a token is issued that can never verify, with no error. Zero or negative TTLs give already-expired tokens. The secret guard checks only `.length`, so `'a'.repeat(32)` passes. Fix: validate TTL as a positive finite number and check secret type and entropy.
+
+**Test gap**
+
+8. `test/tokens.test.js`. There is no test for an empty or truncated signature, extra segments, malformed or non-object payloads, or an empty secret in `verify`. The "tampered payloads" test reuses the real signature with a different body, so it never exercises signature semantics. Add regression tests for items 1–5 before merge.
+
+**Ruled out:** there is no algorithm-confusion path, since no `alg` header is parsed. The MAC covers the exact base64url body string as transmitted, so there is no re-encoding ambiguity.

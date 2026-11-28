@@ -1,0 +1,44 @@
+{
+  "stamp": "20261128T072014Z",
+  "started_at": "2026-11-28T07:20:14.601655583Z",
+  "finished_at": "2026-11-28T10:44:48.558365917Z",
+  "archon_commit": "acaad050ea30db9449bfb3821173d76d5a87bf57",
+  "versions": {
+    "aetherd": "1.4.3",
+    "archon": "archon 1.6.6"
+  },
+  "models": {
+    "aether": "claude-code/claude-haiku-5-5",
+    "archon": "claude-code/claude-haiku-5-5"
+  },
+  "effort": "high",
+  "arms": [
+    "archon",
+    "aether"
+  ],
+  "tasks": [
+    "ask-cache-invalidation",
+    "feature-token-bucket",
+    "fix-off-by-one",
+    "long-backlog",
+    "multi-repo-currency",
+    "multi-repo-pagination",
+    "quality-ledger-transfer",
+    "quality-retry-budget",
+    "quality-safe-extract",
+    "refactor-order-status",
+    "review-seeded-bug"
+  ],
+  "trials": 3,
+  "parallel": 3,
+  "timeout_factor": 1.0,
+  "max_usd": 37.0,
+  "max_trials": 100,
+  "planned": 66,
+  "completed": 66,
+  "skipped": 0,
+  "spent_usd": 5.072743150000001,
+  "spent_bound": "floor",
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

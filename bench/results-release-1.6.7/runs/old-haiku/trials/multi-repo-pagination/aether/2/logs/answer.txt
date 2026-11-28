@@ -1,0 +1,31 @@
+Added cursor pagination to GET /items in inventory-api and updated inventory-client's listItems to follow it. Both changes are committed (no push) and both suites pass.
+
+inventory-api (commit 086b8df, branch main):
+- GET /items takes optional limit (integer 1..100, default 20) and cursor. Body is {"items": [...], "next_cursor": <string|null>}, ordered by id; next_cursor is null on the last page.
+- Invalid limit or cursor returns 400 {"error": "..."}.
+- Cursor is keyset-based: base64url of the last returned id, so each page is the items with id greater than that. Clients treat it as opaque. A cursor past the end returns an empty page with a null cursor.
+- Tests: `python3 -m unittest` → 10 passed (3 original + 7 new covering default limit, full traversal, last page, exact multiple, limit bounds, bad cursors, cursor past end).
+- README documents the parameters, the null cursor, the 400 cases, and a breaking-change note (no-arg GET now returns 20 items).
+
+inventory-client (commit a1a0b8b, branch main):
+- listItems sends the first request with no cursor, passes next_cursor back unchanged, and stops when it is null or absent. It rejects if a page fails, if the response has no items array, or if the server repeats a cursor (guards against an infinite loop).
+- Tests: `npm test` → 7 passed (3 original + 4 new covering multi-page, failure mid-pagination, non-advancing cursor, missing items array).
+- Also ran listItems against the real api_cli.py once (outside the repos): 57 items, ids 1..57 in order.
+- README updated to describe the paging behaviour.
+
+Choices I made:
+- Commit identity: the repos' configured git user (mengsig). No Co-Authored-By or "Generated with Claude Code" lines, because the CLAUDE.md rule forbids mentioning Claude Code in commits, and that rule overrides the attribution reminder.
+- package.json version was not bumped (not requested).
+- Working trees are clean; __pycache__ was removed and not committed.
+
+Cursor pagination is in place for `GET /items` in `inventory-api`, and `listItems` in `inventory-client` now follows it. Both changes are committed on `main` in their repos (not pushed). `python3 -m unittest` passes 10 tests and `npm test` passes 7.
+
+- **API (`086b8df`):** `limit` (1..100, default 20) and `cursor` are optional. The body is `{"items": [...], "next_cursor": ...}`, ordered by `id`, with `next_cursor` null on the last page. Invalid values return 400 with `{"error": "..."}`. The cursor is a base64url-encoded last id, so each page is the items after it.
+- **Client (`a1a0b8b`):** the first request sends no cursor, and each later request passes `next_cursor` back unchanged until it is null or absent. It rejects if a page fails, if the response has no `items` array, or if the server repeats a cursor.
+- **READMEs:** both document the change. The API README also notes that a bare `GET /items` now returns only the first 20 items, which is a breaking change for any caller that expects everything.
+
+I also ran `listItems` against the real `api_cli.py` once, outside the repos. It returned all 57 items in order.
+
+Choices I made:
+- **Commit identity:** I used the repos' configured `mengsig` git user and left out the Co-Authored-By and "Generated with Claude Code" lines. The CLAUDE.md rule against mentioning Claude Code in commits overrides the attribution reminder.
+- **Version:** I did not bump `package.json`, since it wasn't requested.

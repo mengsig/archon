@@ -1,0 +1,7 @@
+The stale category price comes from the **listing cache**. `Catalog.listing()` caches each category and page under its own `listing:<category>:<page>` key ([catalog.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/47b19c80c4a64a181a76e65c/ask-cache-invalidation/src/catalog.js:22)). Those cached rows include `priceCents`.
+
+When a merchant changes a price, `updatePrice()` updates the store and evicts only `product:<sku>` ([pricing.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/47b19c80c4a64a181a76e65c/ask-cache-invalidation/src/pricing.js:10)). So the product page reloads the updated product, while the category page keeps serving its cached listing.
+
+The listing TTL is **600 seconds (10 minutes)** ([config.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/47b19c80c4a64a181a76e65c/ask-cache-invalidation/src/config.js:7)). The stale period lasts until that cached page expires, measured from when it was populated.
+
+**Fix:** when updating a price, invalidate every cached listing page for the product’s category as well as its product key. The current cache only supports deleting one exact key, so add category listing invalidation (or use category versioning/tagging) and invoke it after the store update. No code was changed.

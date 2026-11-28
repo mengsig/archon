@@ -1,0 +1,102 @@
+diff --git a/ratelimit.py b/ratelimit.py
+index f5b6ddd..eb96b85 100644
+--- a/ratelimit.py
++++ b/ratelimit.py
+@@ -1,31 +1,89 @@
+ """Token-bucket rate limiting. See SPEC.md."""
+ 
+ import time
++from collections import OrderedDict
+ 
+ 
+ class TokenBucket:
+     def __init__(self, capacity, refill_per_sec, clock=time.monotonic):
+-        raise NotImplementedError
++        if not capacity > 0:
++            raise ValueError("capacity must be greater than zero")
++        if not refill_per_sec > 0:
++            raise ValueError("refill_per_sec must be greater than zero")
++        self.capacity = capacity
++        self.refill_per_sec = refill_per_sec
++        self._clock = clock
++        self._tokens = capacity
++        self._last_time = clock()
++
++    def _refill(self):
++        now = self._clock()
++        if now > self._last_time:
++            elapsed = now - self._last_time
++            self._tokens = min(
++                self.capacity, self._tokens + elapsed * self.refill_per_sec
++            )
++            self._last_time = now
++
++    def _validate_request(self, n):
++        if n <= 0 or n > self.capacity:
++            raise ValueError("requested tokens must be positive and at most capacity")
+ 
+     def try_acquire(self, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        self._refill()
++        if self._tokens >= n:
++            self._tokens -= n
++            return True
++        return False
+ 
+     def available(self):
+-        raise NotImplementedError
++        self._refill()
++        return self._tokens
+ 
+     def wait_time(self, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        self._refill()
++        if self._tokens >= n:
++            return 0.0
++        return (n - self._tokens) / self.refill_per_sec
+ 
+ 
+ class KeyedLimiter:
+     def __init__(self, capacity, refill_per_sec, max_keys=1024, clock=time.monotonic):
+-        raise NotImplementedError
++        if not capacity > 0:
++            raise ValueError("capacity must be greater than zero")
++        if not refill_per_sec > 0:
++            raise ValueError("refill_per_sec must be greater than zero")
++        if max_keys < 1:
++            raise ValueError("max_keys must be at least one")
++        self.capacity = capacity
++        self.refill_per_sec = refill_per_sec
++        self.max_keys = max_keys
++        self._clock = clock
++        self._buckets = OrderedDict()
++
++    def _bucket_for(self, key):
++        try:
++            bucket = self._buckets.pop(key)
++        except KeyError:
++            if len(self._buckets) >= self.max_keys:
++                self._buckets.popitem(last=False)
++            bucket = TokenBucket(
++                self.capacity, self.refill_per_sec, clock=self._clock
++            )
++        self._buckets[key] = bucket
++        return bucket
+ 
+     def try_acquire(self, key, n=1):
+-        raise NotImplementedError
++        if n <= 0 or n > self.capacity:
++            raise ValueError("requested tokens must be positive and at most capacity")
++        return self._bucket_for(key).try_acquire(n)
+ 
+     def wait_time(self, key, n=1):
+-        raise NotImplementedError
++        if n <= 0 or n > self.capacity:
++            raise ValueError("requested tokens must be positive and at most capacity")
++        return self._bucket_for(key).wait_time(n)
+ 
+     def __len__(self):
+-        raise NotImplementedError
++        return len(self._buckets)

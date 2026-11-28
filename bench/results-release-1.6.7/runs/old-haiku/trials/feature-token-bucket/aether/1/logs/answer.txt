@@ -1,0 +1,12 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, with edge-case tests added, and committed as `e05de5e` on `main`. All 18 tests pass.
+
+**One deliberate deviation from the spec's exact wording:** I added a 1e-9 token tolerance, used by both `try_acquire` and `wait_time`. Without it, a bucket waited out for exactly its predicted `wait_time` could still reject the request by about 5e-16 tokens, because float rounding in the refill arithmetic and the clock addition doesn't round-trip. In a 20,000-trial random sweep, that broke the prediction in most trials. With the tolerance, the sweep had zero mismatches. The cost is that a request can succeed up to 1e-9 tokens short of `n`. If you'd rather keep the exact comparison and accept that `wait_time` is only approximate, that's a one-line revert.
+
+Other choices I made where the spec was silent:
+- **`wait_time` on a new key creates its bucket** and counts as a use, since the spec says it counts as a use.
+- **Invalid `n` is rejected before any LRU state changes.** A bad call on a new key does not create the bucket or evict another key.
+- **NaN is rejected** for capacity, refill rate, `max_keys`, and `n`.
+- **Clock handling:** the bucket tracks the latest time it has seen. A stalled or backwards clock adds no tokens, and accrual resumes from that latest time.
+- **Tests:** I extended `test_ratelimit.py` with edge-case coverage for each spec clause, beyond the basics that were already there.
+
+**Commit attribution:** the commit has no Co-Authored-By line. The project's CLAUDE.md says not to put Claude attribution in commits, and it takes precedence over the reminder's request. The commit uses the configured `mengsig` git identity.

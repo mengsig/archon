@@ -116,21 +116,48 @@ impl DesignService {
         bound_agent_session(ctx, &session, Some(caller)).await
     }
 
+    /// Point the preview at `url` once its server is the worktree's and the
+    /// stack answers. `recipe` is saved first, so a failed save exposes nothing,
+    /// and a request overtaken while it checked changes nothing.
     pub(crate) async fn design_preview(
         &self,
         ctx: &DaemonContext,
         url: &str,
+        recipe: Option<archon_core::design::recipe::PreviewRecipe>,
         caller: Option<&AetherAgentId>,
     ) -> Result<Reply, ArchonError> {
         let url = validate_preview_url(url)?;
+        if let Some(recipe) = &recipe {
+            recipe.check_reported().map_err(ArchonError::Invalid)?;
+        }
         let session = self.agent_session(ctx, caller).await?;
+        let seen = match &recipe {
+            Some(_) => {
+                let repo = super::recipe::repo_of(ctx, &session.item).await?;
+                let revision = super::recipe::revision(&*ctx.store.lock().await, &repo)?;
+                Some((repo, revision))
+            }
+            None => None,
+        };
         let wt = self.worktree_of(ctx, &session).await?;
         self.factory().verify_server(&wt.worktree, &url).await?;
+        self.factory().check_stack(&url, recipe.as_ref()).await?;
         let lock = self.item_lock(&session.item);
         let held = lock.lock().await;
         let current = bound_agent_session(ctx, &session, caller).await?;
         if !matches!(current.state, SessionState::Starting | SessionState::Live) {
             return Err(super::finishing());
+        }
+        if current.preview_url != session.preview_url {
+            return Err(overtaken("another design_preview finished"));
+        }
+        if let (Some(recipe), Some((repo, revision))) = (recipe, seen) {
+            let mut store = ctx.store.lock().await;
+            if super::recipe::revision(&store, &repo)? != revision {
+                return Err(overtaken("the saved recipe was replaced or cleared"));
+            }
+            super::recipe::save(&mut store, &repo, &session.item, recipe)?;
+            tracing::info!(%repo, item = %session.item, "design: the preview recipe was saved");
         }
         let request = self.register_preview(ctx, &current, &url).await?;
         self.update_preview_browser(&current, &url).await?;
@@ -223,6 +250,12 @@ impl DesignService {
         tokio::spawn(async move {
             if let Err(error) = arc.design.subscriber_joined(&arc, &session).await {
                 tracing::warn!(%error, %session, "design: the watched preview did not start");
+                // The open screen would wait on "Starting" with no word of why.
+                let message = format!("The preview did not start: {error}. Reload to try again.");
+                let toast = archon_core::protocol::DesignEvent::Toast { message };
+                if arc.design.runtime(&session).events.send(toast).is_err() {
+                    tracing::debug!(%session, "design: no screen is left to tell");
+                }
             }
         });
     }
@@ -790,4 +823,12 @@ fn thread(from: ReplyAuthor, text: String) -> ThreadEntry {
         from,
         text,
     }
+}
+
+/// A `design_preview` that something else overtook while its stack was checked.
+fn overtaken(what: &str) -> ArchonError {
+    ArchonError::Invalid(format!(
+        "{what} while this design_preview checked the stack, so nothing was previewed or saved; \
+         call design_preview again if this page and recipe are still the ones to show"
+    ))
 }

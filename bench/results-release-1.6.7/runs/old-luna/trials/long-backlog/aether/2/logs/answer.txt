@@ -1,0 +1,10 @@
+Implemented TT-101 through TT-104, with tests added for each ticket. The requested suite passes: **14 tests**.
+
+Commits:
+
+- `5e94862` Fix due date validation
+- `de765c1` Write RFC 4180 CSV exports
+- `8805ca7` Add task search query syntax
+- `a8fed78` Add LIFO task operation undo
+
+Working tree is clean.

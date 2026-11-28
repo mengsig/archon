@@ -1,0 +1,14 @@
+Queued as **qi_01M8GGK5ZKYGBG7265BFS4T3Y4** on the `direct` pipeline. It will implement the `SPEC.md` edge cases, use only the standard library, and commit the work.
+
+Done: Implement spec-compliant token bucket rate limiter. Implemented spec-compliant token buckets and keyed LRU limiting in ratelimit.py, with edge-case tests in test_ratelimit.py. Baseline: all 3 tests errored on stubs; after: all 8 tests pass. Reviewer passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGPK0FM36REYTNBGN2QJBD)
+
+SHIPPED: commit aa32eb103a1d6b410407d6379362082d36f9b9af on the run branch
+Branch `archon/bfs4t3y4-implement-spec-compliant-token-bucket-ra` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/62fbd21558d7a269b4125603/feature-token-bucket holds it (2 files changed, 117 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GGK5ZKYGBG7265BFS4T3Y4`; land it in `main`: `archon merge qi_01M8GGK5ZKYGBG7265BFS4T3Y4`.
+
+Implemented spec-compliant token buckets and keyed LRU limiting in ratelimit.py, with edge-case tests in test_ratelimit.py. Baseline: all 3 tests errored on stubs; after: all 8 tests pass. Reviewer passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGPK0FM36REYTNBGN2QJBD)
+
+SHIPPED: commit aa32eb103a1d6b410407d6379362082d36f9b9af on the run branch

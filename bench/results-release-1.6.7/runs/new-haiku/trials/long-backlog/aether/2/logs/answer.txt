@@ -1,0 +1,27 @@
+Implemented TT-101 to TT-104 in the tasktracker repo, one commit each, on main: 45186bc (TT-101 due dates), c232eaa (TT-102 RFC 4180 CSV), 66662fa (TT-103 query language), daad406 (TT-104 LIFO undo). Standard library only. Test suite grew from 4 to 40 tests and passes with `python3 -m unittest discover -s tests -t .`. New test files: tests/test_dates.py, tests/test_export.py, tests/test_search.py, tests/test_undo.py. Working tree is clean (__pycache__ removed).
+
+Judgment calls, all within the ticket text:
+- TT-101: offsets too large for a date (e.g. +99999999999d) also raise InvalidDate. ISO digits use [0-9] rather than \d, so Unicode digits are rejected.
+- TT-102: quoting is delegated to csv.writer with lineterminator CRLF.
+- TT-103: quoted text is always literal, so "Re: notes" matches the title rather than parsing as a field. Field names and status values are case-insensitive. An empty tag value (tag:) raises QueryError. An empty phrase ("") matches every task.
+- TT-104: complete records the previous status. Completing an already-done task and then undoing it leaves it done; the next undo reopens it. delete stores a deep copy taken at deletion time, so undo restores equal field values as a new object, not the original instance. undo() returns None.
+- Commits carry no Co-Authored-By or "generated with" lines, because the repo CLAUDE.md forbids attributing work to Claude Code. The reminder's attribution line was not added for that reason.
+- README and BACKLOG.md were not changed.
+
+All four tickets are implemented, each in its own commit on `main`. The suite runs 40 tests, all passing with `python3 -m unittest discover -s tests -t .`. The baseline was 4.
+
+| Ticket | Commit | Change |
+|---|---|---|
+| TT-101 | `45186bc` | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms and out-of-range offsets. It no longer clamps. |
+| TT-102 | `c232eaa` | `to_csv` uses the `csv` module with CRLF line endings, so commas, quotes and newlines are quoted per RFC 4180. |
+| TT-103 | `66662fa` | `search` parses a small query language: quoted phrases, AND-ed terms, `tag:NAME`, `status:open|done`. Bad fields, unknown statuses and unterminated quotes raise `QueryError`. |
+| TT-104 | `daad406` | `TaskStore.undo()` walks back LIFO over add, complete and delete. Undoing a delete restores the task under its original id. Failed operations are not recorded. `NothingToUndo` is raised when there is nothing left. |
+
+Each ticket has its own test file: `tests/test_dates.py`, `tests/test_export.py`, `tests/test_search.py`, `tests/test_undo.py`.
+
+Judgment calls within the ticket text:
+- **TT-101:** offsets too large for a date (e.g. `+99999999999d`) also raise `InvalidDate`. Digits match `[0-9]` rather than `\d`, so Unicode digits are rejected.
+- **TT-103:** quoted text is always literal, so `"Re: notes"` matches the title instead of being read as a field. Field names and status values are case-insensitive. `tag:` with an empty value raises `QueryError`. An empty phrase `""` matches every task.
+- **TT-104:** `complete` records the previous status. Completing an already-done task and then undoing it leaves the task done; a second undo reopens it. `delete` stores a copy taken at deletion time, so the restored task has equal fields but is a new object, not the original instance. `undo()` returns `None`.
+
+I left out the `Co-Authored-By` and "generated with" lines the reminder asked for. The repo's `CLAUDE.md` forbids attributing work to Claude Code, and that rule takes precedence. Commits use the configured `mengsig` identity. `README.md` and `BACKLOG.md` are unchanged.

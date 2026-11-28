@@ -1,0 +1,20 @@
+Queued as **`qi_01M8GT266R4W2XTWT5K4JQ2EYY`** on the `direct` pipeline. It covers `SPEC.md` compliance, focused error and boundary tests, running the relevant tests, and committing the work.
+
+Failed: Implement ledger.py to SPEC with focused tests — implement: ESCALATE: re-queue on adaptive. Full detail: archon queue show qi_01M8GT266R4W2XTWT5K4JQ2EYY --full
+
+From build (agt_01M8GT4N77B7EZZE2WS68Q71Y5; escalation): The required SPEC.md implementation includes linearizable cross-thread transfer/snapshot behavior and deadlock-safe opposite transfers. The adaptive pipeline stage contract requires concurrency/locking work to commit nothing and be escalated. I confirmed the branch is clean at 912834fc499bc6fead3efb4da7de17ba5aa1b10b; ledger.py is a stub and test_ledger.py has two basic tests. No files changed and no checks run. Please re-queue this item on a pipeline that permits concurrency/locking implementation and review.
+
+Failed: Implement ledger.py to SPEC with focused tests — build: ESCALATE: SPEC.md requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers. Full detail: archon queue show qi_01M8GT266R4W2XTWT5K4JQ2EYY --full
+
+Done: Implement ledger.py to SPEC with focused tests. Implemented the bounded thread-safe ledger in ledger.py and expanded test_ledger.py from 2 to 10 tests. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passed (10 tests); `git diff --check` passed. Reviewer passed the full change with no findings. Commit: 69b4309695e1defdd45f9fcf3a74d485d15cf521.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTA7B9JAB1G64F94RQ7M3M)
+
+SHIPPED: commit 69b4309695e1defdd45f9fcf3a74d485d15cf521 on the run branch
+Branch `archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/980c5eb7061182282ac0b648/quality-ledger-transfer holds it (2 files changed, 141 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GT266R4W2XTWT5K4JQ2EYY`; land it in `main`: `archon merge qi_01M8GT266R4W2XTWT5K4JQ2EYY`.
+
+Implemented the bounded thread-safe ledger in ledger.py and expanded test_ledger.py from 2 to 10 tests. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passed (10 tests); `git diff --check` passed. Reviewer passed the full change with no findings. Commit: 69b4309695e1defdd45f9fcf3a74d485d15cf521.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTA7B9JAB1G64F94RQ7M3M)
+
+SHIPPED: commit 69b4309695e1defdd45f9fcf3a74d485d15cf521 on the run branch

@@ -1,0 +1,16 @@
+All four backlog tickets are implemented and committed separately on `main`. The suite runs 45 tests and passes with `python3 -m unittest discover -s tests -t .`. Standard library only, and the working tree is clean.
+
+**Commits**
+- `493ac85` **TT-101**: `parse_due` raises `InvalidDate` (a `ValueError` subclass in `tasktracker.dates`) for impossible calendar dates, malformed text, and offsets past the date range. The silent clamping is gone. Tests are in `tests/test_dates.py`.
+- `c052ae0` **TT-102**: `to_csv` uses the `csv` module with CRLF terminators, so quoting and doubling follow RFC 4180. Tests are in `tests/test_export.py`.
+- `21c7b28` **TT-103**: `search` understands quoted phrases, `tag:NAME`, and `status:open|done`, ANDed together. Unknown fields or statuses, empty tag values, and unterminated quotes raise `QueryError`. Tests are in `tests/test_search.py`.
+- `d4934e9` **TT-104**: `TaskStore.undo()` walks a LIFO history of add, complete, and delete. Failed operations are not recorded, ids are never reused, and an empty history raises `NothingToUndo`. Tests are in `tests/test_undo.py`.
+
+**Choices I made where the ticket was open**
+- **Re-completing a done task (TT-104):** undo restores the status the task had before the complete, so a done→done complete undoes back to done. The ticket says "open again", which is only right for the normal open→done case.
+- **Quoted field values (TT-103):** `tag:"to do"` matches the tag `to do`. A quoted term such as `"meeting: notes"` is always a title phrase, never a field.
+- **Empty phrase (TT-103):** `""` is accepted and matches every task, the same as a blank query.
+- **Offset overflow (TT-101):** `+99999999999d` raises `InvalidDate` instead of leaking `OverflowError`.
+- **Commit trailer:** I left out the `Co-Authored-By` line that the attribution reminder suggested. The project's CLAUDE.md says not to add Claude attribution to commits, and it takes precedence.
+
+I did not add a `.gitignore`, so `__pycache__` directories will show up as untracked after any test run. I deleted them before finishing.

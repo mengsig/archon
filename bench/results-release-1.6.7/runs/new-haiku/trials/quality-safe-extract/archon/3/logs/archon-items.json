@@ -1,0 +1,608 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GRMNDBBGMWT3HB7G9RKEEE",
+      "repo": "repo_01M8GRM5ECEWAHQG0WEY18Z7EN",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md",
+      "brief": "Operator request (verbatim): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement safe_extract.py exactly as specified in SPEC.md in the repository root (locate it if it lives elsewhere).\n\nContext: this is archive extraction, so path traversal, absolute paths, symlinks/hardlinks and resource limits are security-sensitive. Reject unsafe members rather than silently sanitising them, unless SPEC.md says otherwise.\n\nConstraints:\n- Preserve the documented public API and signatures from SPEC.md.\n- Handle every error and boundary case the spec names; failures must stay visible (raise the specified exceptions, no silent swallowing).\n- Use only the Python standard library.\n- Keep functions under 60 lines, with clear single responsibilities; follow the repository's existing style.\n- Add focused tests covering each specified error and boundary case, beyond the existing basic tests. Run the test suite and make it pass.\n- Commit the work on the item's branch with a clear message. Do not add attribution lines.\n\nAcceptance criteria: every requirement in SPEC.md is implemented and covered by a test; the full test suite passes; no new third-party dependencies; the public API matches SPEC.md.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "spec"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GRMNDBBGMWT3HB7G9RKEEE",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:44:04.527968275Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:44:04.527968275Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:44:04.527968275Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "Security-sensitive archive extraction: one lead keeps context through fixes and tests, so the build stage gets high effort."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GRMPAYRKKEAXMAQ5M4W6NY",
+        "summary": "Implemented safe_extract.extract per SPEC.md with focused stdlib unittest coverage. Final head 8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5 (tree 776db234abd03797a1b951e67d255b69dee4fc12) on archon/7g9rkeee-implement-safe-extract-py-per-spec-md, committed under the configured mengsig identity with no attribution. Changes: safe_extract.py (validation of root, batch, names, duplicates and collisions, then lstat checks of ancestors and targets, then exclusive writes) and test_safe_extract.py (36 tests; the two original tests are unchanged). Checks: python3 -m unittest test_safe_extract -> Ran 36 tests, OK (before: stub gave FAILED, errors=70 on the same tests). ruff check -> only three TRY004 hits, which are deliberate because the spec requires ValueError. Review: whole-change reads by review-spec-api (pass), review-security (pass) and review-tests-edges (fail on colon-rule coverage, fixed in 8cb3090 with Review-Fix trailer); delta read by review-delta-fix on 8cb3090 (pass). All four reviewers are completed and no child is running. Non-blocking follow-ups are listed in pr.body: a comment that overstates the length check, a 99-character line, symlinked ancestors above root accepted, and a few test and message gaps. Nothing was pushed, and no servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRSWP8NFAER66G5R3CVYPW), claude-code/claude-haiku-5-5 (agent agt_01M8GRT3WE1YWB1GMCBVH3ZEC6), claude-code/claude-haiku-5-5 (agent agt_01M8GRTBF0AS23SXD6JDYJ1J6B), claude-code/claude-haiku-5-5 (agent agt_01M8GS22Z1P1TXVMJQCS43T9P3)\n\nSHIPPED: commit 8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5 on the run branch"
+      },
+      "created_at": "2026-11-28T09:44:03.755510518Z",
+      "updated_at": "2026-11-28T09:53:03.149513438Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GRMPAYRKKEAXMAQ5M4W6NY",
+        "item": "qi_01M8GRMNDBBGMWT3HB7G9RKEEE",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8GRMPH91XDZ1N7BDA4Z7FJE",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/392a152d24e791f7065e4a8d/.archon/data/worktrees/quality-safe-extract/qi_01M8GRMNDBBGMWT3HB7G9RKEEE",
+        "branch": "archon/7g9rkeee-implement-safe-extract-py-per-spec-md",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md with focused stdlib unittest coverage. Final head 8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5 (tree 776db234abd03797a1b951e67d255b69dee4fc12) on archon/7g9rkeee-implement-safe-extract-py-per-spec-md, committed under the configured mengsig identity with no attribution. Changes: safe_extract.py (validation of root, batch, names, duplicates and collisions, then lstat checks of ancestors and targets, then exclusive writes) and test_safe_extract.py (36 tests; the two original tests are unchanged). Checks: python3 -m unittest test_safe_extract -> Ran 36 tests, OK (before: stub gave FAILED, errors=70 on the same tests). ruff check -> only three TRY004 hits, which are deliberate because the spec requires ValueError. Review: whole-change reads by review-spec-api (pass), review-security (pass) and review-tests-edges (fail on colon-rule coverage, fixed in 8cb3090 with Review-Fix trailer); delta read by review-delta-fix on 8cb3090 (pass). All four reviewers are completed and no child is running. Non-blocking follow-ups are listed in pr.body: a comment that overstates the length check, a 99-character line, symlinked ancestors above root accepted, and a few test and message gaps. Nothing was pushed, and no servers were started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRSWP8NFAER66G5R3CVYPW), claude-code/claude-haiku-5-5 (agent agt_01M8GRT3WE1YWB1GMCBVH3ZEC6), claude-code/claude-haiku-5-5 (agent agt_01M8GRTBF0AS23SXD6JDYJ1J6B), claude-code/claude-haiku-5-5 (agent agt_01M8GS22Z1P1TXVMJQCS43T9P3)\n\nSHIPPED: commit 8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5 on the run branch"
+        },
+        "cost_usd": 0.24902361,
+        "started_at": "2026-11-28T09:44:04.880201217Z",
+        "finished_at": "2026-11-28T09:53:03.149513438Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GRMPH2CRK8V07VZEYHGWQH",
+        "run": "prun_01M8GRMPAYRKKEAXMAQ5M4W6NY",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "high",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GRMPHGB26KRCJJJKJDZHY0",
+        "aether_task": "tsk_01M8GRMPHGB26KRCJJJKJDZHY1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins high",
+        "summary": "Implemented safe_extract.extract per SPEC.md with focused stdlib unittest coverage. Final head 8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5 (tree 776db234abd03797a1b951e67d255b69dee4fc12) on archon/7g9rkeee-implement-safe-extract-py-per-spec-md, committed under the configured mengsig identity with no attribution. Changes: safe_extract.py (validation of root, batch, names, duplicates and collisions, then lstat checks of ancestors and targets, then exclusive writes) and test_safe_extract.py (36 tests; the two original tests are unchanged). Checks: python3 -m unittest test_safe_extract -> Ran 36 tests, OK (before: stub gave FAILED, errors=70 on the same tests). ruff check -> only three TRY004 hits, which are deliberate because the spec requires ValueError. Review: whole-change reads by review-spec-api (pass), review-security (pass) and review-tests-edges (fail on colon-rule coverage, fixed in 8cb3090 with Review-Fix trailer); delta read by review-delta-fix on 8cb3090 (pass). All four reviewers are completed and no child is running. Non-blocking follow-ups are listed in pr.body: a comment that overstates the length check, a 99-character line, symlinked ancestors above root accepted, and a few test and message gaps. Nothing was pushed, and no servers were started.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_safe_extract (Ran 36 tests, OK)",
+            "ruff check safe_extract.py test_safe_extract.py (only 3x TRY004, deliberate per spec)"
+          ],
+          "commit": "8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5",
+          "evidence": [
+            {
+              "after": "Ran 36 tests in 0.016s\n\nOK",
+              "before": "Ran 34 tests in 0.038s\n\nFAILED (errors=70)",
+              "caption": "Test suite before the change (HEAD stub, same test file)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5",
+          "pr": {
+            "body": "Approach: extract() validates the root (real directory, not a symlink), then the batch (list of (name, bytes) tuples; names are relative POSIX paths with no leading slash, backslash, colon, NUL, empty, '.' or '..' component, no surrogates, components at most 255 bytes; no duplicates; no file/directory collisions in either order). Only then does it lstat every ancestor and target (no symlinks, no non-directory ancestors, no existing target). Only after all checks does it create parents and write each file with open(path, 'xb') so existing files and links are never followed or overwritten. Key file: safe_extract.py; tests: test_safe_extract.py (36 tests; the two original tests are unchanged).\n\nChecks: python3 -m unittest test_safe_extract -> Ran 36 tests, OK. ruff check -> only TRY004 (ValueError is required by the spec for malformed input).\n\nReview: whole-change reads by review-spec-api (pass), review-security (pass), review-tests-edges (fail: colon rule coverage, fixed in 8cb3090 with Review-Fix trailer); delta read by review-delta-fix on 8cb3090 (pass, resolves the blocking finding).\n\nAssumptions: the 255-byte per-component limit is our addition (NAME_MAX), not a SPEC rule; root's own ancestors are not checked (caller-trusted); the 'xb' open and lstat checks are not protection against concurrent changes, which the spec puts out of scope.\n\nFollow-ups (non-blocking, not fixed): the comment near the name-length check overstates what is prevented (total PATH_MAX is not checked, so a deep name can still fail mid-batch with ENAMETOOLONG); line 72 is 99 characters (E501 only under explicit select); a root reached through symlinked ancestors above root is accepted; a root below a regular file reports 'does not exist' rather than 'not a directory'; mkdir(exist_ok=True) follows symlinks (reachable only under concurrent mutation); no dedicated test for a symlink target inside root (the code rejects it; probed) or for lstat PermissionError propagation; tests use TemporaryDirectory(dir='.') like the existing tests, and the I/O-error test is skipped when run as root; duplicate detection is exact-string, so NFC and NFD names are distinct and could collide on normalizing filesystems; some helpers are below the 2-assertion guideline.",
+            "summary": "Made safe extraction of regular-file batches happen. Now validates the whole batch, root and existing filesystem before any write, rejecting traversal, symlinks, collisions and overwrites. Before: extract raised NotImplementedError. Now: writes exact bytes under root, or rejects the batch with ValueError and changes nothing.",
+            "title": "feat: implement safe extract of regular-file batches"
+          },
+          "review": {
+            "reviewed_head": "8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5",
+            "reviewer_agents": [
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW",
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6",
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B",
+              "agt_01M8GS22Z1P1TXVMJQCS43T9P3"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GRSWP8NFAER66G5R3CVYPW",
+                "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                "findings": 6,
+                "head": "0074a7bfa763936623d47a86f12f26726975f982",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6",
+                "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                "findings": 6,
+                "head": "0074a7bfa763936623d47a86f12f26726975f982",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B",
+                "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                "findings": 6,
+                "head": "0074a7bfa763936623d47a86f12f26726975f982",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GS22Z1P1TXVMJQCS43T9P3",
+                "base": "0074a7bfa763936623d47a86f12f26726975f982",
+                "findings": 2,
+                "head": "8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW",
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6",
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B",
+              "agt_01M8GS22Z1P1TXVMJQCS43T9P3"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:1": {
+                "blocking": false,
+                "description": "A name with a component longer than 255 bytes passes validation. _check_target stops at the first absent ancestor and never lstat()s the long component, so the ENAMETOOLONG OSError only surfaces during _write_file, after earlier entries were already created. at safe_extract.py:82 (remedy: Either reject components over the filesystem NAME_MAX (255 bytes) in _validate_name as malformed, or document ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:1",
+                "resolved_in": null
+              },
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:2": {
+                "blocking": false,
+                "description": "No test covers a symlink target that points to a location inside root (the spec says 'even links to locations inside root'). Only outside-root and dangling targets are tested; the ancestor variant is tested at line 252. at test_safe_extract.py:265 (remedy: Add a test: symlink t.txt inside root pointing to an existing real.txt inside root; extract([('t.txt', b'x')]) raises ValueError and real.txt i",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:2",
+                "resolved_in": null
+              },
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:3": {
+                "blocking": false,
+                "description": "_validate_root only lstat()s the final root component. A root reached through a symlinked ancestor outside root (e.g. base/ln/r where ln -> real) is accepted. at safe_extract.py:25 (remedy: Keep as is and state the assumption in the spec or docstring, or resolve root and compare against the lstat result if the stricter reading is wanted.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:3",
+                "resolved_in": null
+              },
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:4": {
+                "blocking": false,
+                "description": "_lstat_or_none maps NotADirectoryError to 'absent', so a root such as file.txt/child is reported as 'root does not exist'. at safe_extract.py:100 (remedy: Report 'root is not a directory' for that case, or let NotADirectoryError propagate from the root check.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:4",
+                "resolved_in": null
+              },
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:5": {
+                "blocking": false,
+                "description": "Tests create temp dirs with tempfile.TemporaryDirectory(dir='.'), so they depend on a writable cwd and leave debris in the repo if interrupted. There is also no test for a name whose NFD and NFC forms differ, which would show that names are not normalized. at test_safe_extract.py:11 (remedy: Use the default temp directory, and add an NFD/NFC round-trip assertion to test_unusual_but_legal_names_wri",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:5",
+                "resolved_in": null
+              },
+              "agt_01M8GRSWP8NFAER66G5R3CVYPW:6": {
+                "blocking": false,
+                "description": "Code-guidance nits: most functions carry 0-1 assertions (extract, _validate_root, _validate_entry), against the >=2 guideline. Three ruff TRY004 hits are reported (lines 12, 27, 47-57), which the spec makes deliberate (ValueError is required). Test IoErrors is silently skipped when run as root. at safe_extract.py:1 (remedy: Optional: add boundary asserts or a ruff per-file ignore for TRY004 with a",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRSWP8NFAER66G5R3CVYPW:6",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:1": {
+                "blocking": false,
+                "description": "_check_target returns early when an ancestor is missing, so the full target path (and any over-long later component) is never lstat'ed during validation. A batch such as [('ok.txt', b'1'), ('missing/' + 'a'*300, b'x')] passes validation and then fails with OSError(ENAMETOOLONG) mid-write, leaving ok.txt and an empty 'missing' directory behind (verified in an experiment copy). at safe_extract.py:86",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:1",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:2": {
+                "blocking": false,
+                "description": "path.parent.mkdir(parents=True, exist_ok=True) relies on Path.is_dir(), which follows symlinks, so an existing symlink-to-directory at a parent would be accepted silently. at safe_extract.py:108 (remedy: Create directories component by component with os.mkdir and an lstat check, or document that the stable-filesystem assumption covers this case.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:2",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:3": {
+                "blocking": false,
+                "description": "_validate_root only lstat's the final root component. A root spelled through a symlink component (for example 'link/..') is accepted, and the writes then land wherever that path resolves. at safe_extract.py:28 (remedy: Optionally resolve root with os.path.realpath and compare to the lexical path, or document that caller-supplied root paths are trusted.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:3",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:4": {
+                "blocking": false,
+                "description": "_lstat_or_none maps NotADirectoryError to None. In _validate_root, a root below a regular file is therefore reported as 'root does not exist', which is misleading (the error is still raised as ValueError). at safe_extract.py:103 (remedy: Report 'ancestor is not a directory' distinctly for NotADirectoryError, or let it propagate as ValueError with the original cause.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:4",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:5": {
+                "blocking": false,
+                "description": "The I/O-error test is skipped when running as root, and no test covers over-long names, dangling root symlinks, or special files as targets. Tests also create temp directories in the current directory (dir='.') instead of the system temp directory. at test_safe_extract.py:281 (remedy: Add tests for over-long names and a dangling root symlink, and use the default temp directory. Consider a non-root",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:5",
+                "resolved_in": null
+              },
+              "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:6": {
+                "blocking": false,
+                "description": "Assert density is below the repo guidance of at least 2 meaningful assertions per non-trivial function: _check_target and _write_file each have one assertion. Ruff also reports TRY004 on the ValueError for wrong types, which the builder notes is deliberate. at safe_extract.py:84 (remedy: Add a meaningful invariant to each helper, for example that root is a directory and that the target is absent b",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:6",
+                "resolved_in": null
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:1": {
+                "blocking": true,
+                "description": "Colon rule is only tested at drive-letter and trailing positions ('C:/x', 'c:'). No case has a colon in the middle of a name such as 'a:b'. at test_safe_extract.py:137 (remedy: Add 'a:b' and 'a/b:c' to the bad_names list in test_invalid_names_rejected.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                }
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:2": {
+                "blocking": false,
+                "description": "Visible-I/O-error requirement is tested only on the open/write path. No test checks that an lstat error (e.g. EACCES on a target under an unsearchable parent) propagates. at test_safe_extract.py:283 (remedy: Add a test: chmod a subdirectory to 0o000, extract a batch entry under it, assert PermissionError, restore the mode in addCleanup.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:2",
+                "resolved_in": null
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:3": {
+                "blocking": false,
+                "description": "No filesystem name-length check. A 256-byte component with a missing parent makes _write_file create the parent directory before open() fails with OSError ENAMETOOLONG (verified: root/dir is left behind). at safe_extract.py:55 (remedy: Decide whether names above 255 bytes per component are malformed. If so, reject them in _validate_name with ValueError; otherwise document the behaviour and add a b",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:3",
+                "resolved_in": null
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:4": {
+                "blocking": false,
+                "description": "Tests create their temp directories with tempfile.TemporaryDirectory(dir=\".\"), so they depend on and write into the current working directory. at test_safe_extract.py:26 (remedy: Drop dir=\".\" so the default temp directory is used; keep the cleanup in setUp.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:4",
+                "resolved_in": null
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:5": {
+                "blocking": false,
+                "description": "test_unexpected_io_error_propagates is skipped whenever the suite runs as root, with no other coverage of the 'failures stay visible' requirement. at test_safe_extract.py:281 (remedy: Use a non-root-independent failure (e.g. a path whose parent is a regular file, or a mocked os.open raising PermissionError) so the test runs everywhere.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:5",
+                "resolved_in": null
+              },
+              "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:6": {
+                "blocking": false,
+                "description": "Duplicate and collision detection is exact-string only. 'é' (NFC) and 'é' (NFD) are both accepted as distinct names and written as two files on Linux. at safe_extract.py:70 (remedy: Note the platform limitation in the module docstring or SPEC; no code change needed for Linux.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:6",
+                "resolved_in": null
+              },
+              "agt_01M8GS22Z1P1TXVMJQCS43T9P3:1": {
+                "blocking": false,
+                "description": "Line is 99 characters long, longer than the rest of the file. ruff E501 flags it only when selected explicitly; the default ruff run does not flag it. at safe_extract.py:72 (remedy: Wrap the f-string or shorten the message to fit the project line length.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GS22Z1P1TXVMJQCS43T9P3:1",
+                "resolved_in": null
+              },
+              "agt_01M8GS22Z1P1TXVMJQCS43T9P3:2": {
+                "blocking": false,
+                "description": "The new comment says the limit keeps ENAMETOOLONG from surfacing mid-batch. Only the per-component limit is checked. The total path length (PATH_MAX) is not, so a deeply nested name can still fail mid-batch. at safe_extract.py:8 (remedy: Either narrow the comment to per-component NAME_MAX, or add a total-length check in _validate_name with a test.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GRMPH2CRK8V07VZEYHGWQH"
+                },
+                "id": "agt_01M8GS22Z1P1TXVMJQCS43T9P3:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "0074a7bfa763936623d47a86f12f26726975f982",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GRSWP8NFAER66G5R3CVYPW",
+                    "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:1",
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:2",
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:3",
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:4",
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:5",
+                      "agt_01M8GRSWP8NFAER66G5R3CVYPW:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6",
+                    "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:1",
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:2",
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:3",
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:4",
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:5",
+                      "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B",
+                    "base": "3a3511228f029daa5bf7c98e03097ed812a65006",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:1",
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:2",
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:3",
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:4",
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:5",
+                      "agt_01M8GRTBF0AS23SXD6JDYJ1J6B:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "8cb3090d70c7c6a9e418dd4659c180a6cfb9b0e5",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GS22Z1P1TXVMJQCS43T9P3",
+                    "base": "0074a7bfa763936623d47a86f12f26726975f982",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GS22Z1P1TXVMJQCS43T9P3:1",
+                      "agt_01M8GS22Z1P1TXVMJQCS43T9P3:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M8GS22Z1P1TXVMJQCS43T9P3",
+            "why": "Security-sensitive archive extraction: the validator gates every filesystem write, and the change covers path traversal, symlink handling, no-overwrite and validate-before-create. Reviewers confirmed high."
+          },
+          "tree": "776db234abd03797a1b951e67d255b69dee4fc12"
+        },
+        "cost_usd": 0.24902361,
+        "started_at": "2026-11-28T09:44:04.898183921Z",
+        "finished_at": "2026-11-28T09:52:59.282193159Z"
+      }
+    ],
+    "spent_usd": 0.24902361,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GRMPH2CRK8V07VZEYHGWQH": {
+        "direct_usd": 0.14507576,
+        "delegated_usd": 0.10394785,
+        "agents": [
+          {
+            "agent": "agt_01M8GRSWP8NFAER66G5R3CVYPW",
+            "parent": "agt_01M8GRMPHGB26KRCJJJKJDZHY0",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.02457464
+          },
+          {
+            "agent": "agt_01M8GRT3WE1YWB1GMCBVH3ZEC6",
+            "parent": "agt_01M8GRMPHGB26KRCJJJKJDZHY0",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.02360229
+          },
+          {
+            "agent": "agt_01M8GRTBF0AS23SXD6JDYJ1J6B",
+            "parent": "agt_01M8GRMPHGB26KRCJJJKJDZHY0",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.04234029
+          },
+          {
+            "agent": "agt_01M8GS22Z1P1TXVMJQCS43T9P3",
+            "parent": "agt_01M8GRMPHGB26KRCJJJKJDZHY0",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.01343063
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:44:04.527968275Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:44:04.527968275Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:44:04.527968275Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

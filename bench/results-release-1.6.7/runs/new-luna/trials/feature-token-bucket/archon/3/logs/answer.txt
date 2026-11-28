@@ -1,0 +1,14 @@
+Queued as `qi_01M8GRFNQ1GXMQECWK5QZ2J5YF` on the direct pipeline. It will implement the spec, run the tests and edge-case checks, and commit the change.
+
+Done: Implement specified token bucket and keyed rate limiter. Implemented token bucket refill, validation, rollback handling, and keyed LRU limiting in ratelimit.py; added focused coverage in test_ratelimit.py. All 7 unittest cases and git diff --check pass on the final commit. The full-change review’s blocking wait_time rollback finding was fixed and passed a delta re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRK4109E65P0PFH7JDRT00), codex/gpt-6-luna (agent agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK)
+
+SHIPPED: commit 5f1b861b67f2be9eec584a7069c29bdf4b6d1692 on the run branch
+Branch `archon/5qz2j5yf-implement-specified-token-bucket-and-key` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0398a3d9a7530b65914028a1/feature-token-bucket holds it (2 files changed, 127 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GRFNQ1GXMQECWK5QZ2J5YF`; land it in `main`: `archon merge qi_01M8GRFNQ1GXMQECWK5QZ2J5YF`.
+
+Implemented token bucket refill, validation, rollback handling, and keyed LRU limiting in ratelimit.py; added focused coverage in test_ratelimit.py. All 7 unittest cases and git diff --check pass on the final commit. The full-change review’s blocking wait_time rollback finding was fixed and passed a delta re-review. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRK4109E65P0PFH7JDRT00), codex/gpt-6-luna (agent agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK)
+
+SHIPPED: commit 5f1b861b67f2be9eec584a7069c29bdf4b6d1692 on the run branch

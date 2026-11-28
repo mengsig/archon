@@ -983,6 +983,8 @@ them.
 
 `archon settings [--repo NAME]` shows the stored overlay and each effective
 value's source. `--set JSON` replaces that scope's overlay; `--reset` clears it.
+For a repository it also shows the saved design preview recipe, which
+`--clear-design-recipe` forgets ([design sessions](design-sessions.md#how-the-agent-starts-your-app)).
 The same controls are available through verified TUI/GitHub authority and the
 orchestrator's `request_authority`; its read-only `settings` tool reads them.
 See [operator authority](operator-authority.md) for commands and confirmations.

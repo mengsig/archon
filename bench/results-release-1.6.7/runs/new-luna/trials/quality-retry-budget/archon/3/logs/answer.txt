@@ -1,0 +1,14 @@
+Queued as [qi_01M8GTFVRQ9H1PAGMEJXB4ST51] for `quality-retry-budget`. It will implement against `SPEC.md`, add focused edge case tests, run the tests, and commit the work on its local branch.
+
+Done: Implement retry_budget.py from SPEC.md with edge case tests. Implemented retry_delay per SPEC.md with strict argument validation, capped backoff that handles huge attempt values efficiently, Retry-After minimum waits, and strict budget boundaries. Added focused edge tests; all 11 tests and diff checks pass. Committed as 7ceb308e4d038652bed1e533e3b3788e13ab7127. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTJHS5PASN9GWFQ2EQHAPV)
+
+SHIPPED: commit 7ceb308e4d038652bed1e533e3b3788e13ab7127 on the run branch
+Branch `archon/jxb4st51-implement-retry-budget-py-from-spec-md-w` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/102ba726952fec714309234f/quality-retry-budget holds it (2 files changed, 103 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GTFVRQ9H1PAGMEJXB4ST51`; land it in `main`: `archon merge qi_01M8GTFVRQ9H1PAGMEJXB4ST51`.
+
+Implemented retry_delay per SPEC.md with strict argument validation, capped backoff that handles huge attempt values efficiently, Retry-After minimum waits, and strict budget boundaries. Added focused edge tests; all 11 tests and diff checks pass. Committed as 7ceb308e4d038652bed1e533e3b3788e13ab7127. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTJHS5PASN9GWFQ2EQHAPV)
+
+SHIPPED: commit 7ceb308e4d038652bed1e533e3b3788e13ab7127 on the run branch

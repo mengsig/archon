@@ -1,0 +1,25 @@
+Implemented ledger.py per SPEC.md and expanded test_ledger.py; committed as ce9d71e ("Implement thread-safe atomic ledger") on main, authored as the configured git user mengsig. All 27 tests pass with `python3 -m unittest`.
+
+Implementation choices:
+- One threading.Lock per ledger guards transfer and snapshot. A single lock means opposite transfers cannot deadlock, and snapshots never see a half-applied transfer.
+- Construction copies the input dict first, then validates the copy. Names must be nonempty str; balances must be type int (bools rejected) in [0, MAX_BALANCE]. Non-dict input raises ValueError.
+- transfer validates the amount before any account lookup. Unknown or non-string account names raise KeyError. Insufficient funds or destination overflow returns False with no writes.
+- Same-account transfers return True iff the balance covers the amount, with no overflow check and no change.
+- snapshot returns a fresh dict copy.
+- A private _move helper carries the invariant asserts.
+
+Tests cover construction, validation, boundary values, copy isolation, KeyError paths, overflow, self-transfers, and two lock-based concurrency tests. The concurrency tests use join(timeout=60) as a deadlock guard, not as a timing measurement.
+
+No Co-Authored-By trailer was added, because CLAUDE.md forbids Claude attribution and takes precedence over the attribution reminder. The work tree is clean (the __pycache__ directory was removed).
+
+I implemented `ledger.py` to the spec and expanded `test_ledger.py`. The work is committed as `ce9d71e` on `main`, authored as `mengsig`. All 27 tests pass with `python3 -m unittest`.
+
+- **Locking:** each ledger has one `threading.Lock` around `transfer` and `snapshot`. Snapshots never see a half-applied transfer, and opposite transfers cannot deadlock because there is only one lock.
+- **Construction:** the input dict is copied, then the copy is validated. Names must be nonempty strings. Balances must be plain `int` (bools are rejected) in `[0, MAX_BALANCE]`. Non-dict input raises `ValueError`.
+- **Transfers:** the amount is validated before any account lookup. Unknown or non-string account names raise `KeyError`. Insufficient funds or destination overflow return `False` with no writes.
+- **Self-transfers:** these return `True` iff the balance covers the amount, and never change it, even at `MAX_BALANCE`.
+- **Snapshots:** each call returns a fresh copy.
+
+The concurrency tests use `join(timeout=60)` as a deadlock guard. That is a timeout, not a timing measurement, but it is a wall-clock value, so say if you want it removed.
+
+I did not add the `Co-Authored-By` trailer from the attribution reminder. CLAUDE.md forbids Claude attribution and takes precedence over that reminder.

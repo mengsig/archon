@@ -1,0 +1,1275 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMTQABAMQ4CQ1VKQSXQKXS",
+      "repo": "repo_01M8GMSXCRN3JNNEN5KMPGKG8M",
+      "pipeline": "direct",
+      "title": "TT-104: Undo",
+      "brief": "Implement ticket TT-104 exactly as written in BACKLOG.md at the repository root (section \"TT-104: Undo\"), following its acceptance criteria exactly. Scope: tasktracker/store.py, adding TaskStore.undo() that reverts the most recent not-yet-undone add, complete or delete (LIFO across all three kinds): undoing add removes the task; undoing complete reopens it; undoing delete restores it exactly under the same id; ids are never reused; with nothing to undo raise NothingToUndo (defined in tasktracker.store); failed operations are not recorded. Add new unit tests for it. Keep existing tests passing with `python3 -m unittest discover -s tests -t .`. Use only the Python standard library. Commit this ticket as one commit with a clear message; do not push. Do not change other tickets' files (dates.py, export.py, search.py) beyond what this ticket needs. Follow the repository's style and the maintainability rules: short functions, explicit validation, no silent fallback.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "tasktracker",
+        "TT-104"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMTQABAMQ4CQ1VKQSXQKXS",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:28.033236301Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:28.052007123Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:28.033236301Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMTQHX8GA3MAYB52JGQ3H3",
+        "summary": "TT-104 (undo) is implemented and committed as d0c4c2f on archon/kqsxqkxs-tt-104-undo, not pushed. TaskStore.undo() reverts the most recent unreverted add, complete or delete (LIFO across kinds): add removes the task, complete restores the prior status, delete restores the task under the same id. Ids are never reused. With nothing to undo it raises NothingToUndo, defined in tasktracker/store.py. Failed operations are not recorded. Checks: `python3 -m unittest discover -s tests -t .` gives 15 tests OK (baseline 4 OK before the change, 11 new tests in tests/test_undo.py). Review: one reviewer, agt_01M8GMWC652BHK7V8GVJGMJ5EK, verdict pass with no blocking findings. Left open: the undo log is unbounded for the store's lifetime (non-blocking follow-up). Assumption: undoing a complete on an already-done task keeps it done. The reviewer's leftover process (pid 3376331) had already exited; nothing is left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMWC652BHK7V8GVJGMJ5EK)\n\nSHIPPED: commit d0c4c2fd5c2412a2f3de7ee34271e23a85996992 on the run branch"
+      },
+      "created_at": "2026-11-28T08:37:28.011184460Z",
+      "updated_at": "2026-11-28T08:39:21.698737819Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMTQHX8GA3MAYB52JGQ3H3",
+        "item": "qi_01M8GMTQABAMQ4CQ1VKQSXQKXS",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMTQSX4FT2BBG62JSA3QER",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3ff9f31105e362d6d12b8944/.archon/data/worktrees/long-backlog/qi_01M8GMTQABAMQ4CQ1VKQSXQKXS",
+        "branch": "archon/kqsxqkxs-tt-104-undo",
+        "state": {
+          "state": "succeeded",
+          "summary": "TT-104 (undo) is implemented and committed as d0c4c2f on archon/kqsxqkxs-tt-104-undo, not pushed. TaskStore.undo() reverts the most recent unreverted add, complete or delete (LIFO across kinds): add removes the task, complete restores the prior status, delete restores the task under the same id. Ids are never reused. With nothing to undo it raises NothingToUndo, defined in tasktracker/store.py. Failed operations are not recorded. Checks: `python3 -m unittest discover -s tests -t .` gives 15 tests OK (baseline 4 OK before the change, 11 new tests in tests/test_undo.py). Review: one reviewer, agt_01M8GMWC652BHK7V8GVJGMJ5EK, verdict pass with no blocking findings. Left open: the undo log is unbounded for the store's lifetime (non-blocking follow-up). Assumption: undoing a complete on an already-done task keeps it done. The reviewer's leftover process (pid 3376331) had already exited; nothing is left running.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMWC652BHK7V8GVJGMJ5EK)\n\nSHIPPED: commit d0c4c2fd5c2412a2f3de7ee34271e23a85996992 on the run branch"
+        },
+        "cost_usd": 0.03157011999999999,
+        "started_at": "2026-11-28T08:37:28.391504458Z",
+        "finished_at": "2026-11-28T08:39:21.698737819Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMTQRFCGG3NSCY6MB8M2ZZ",
+        "run": "prun_01M8GMTQHX8GA3MAYB52JGQ3H3",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMTQW3DSVGWP8W2EAZBKEK",
+        "aether_task": "tsk_01M8GMTQW3R51QTEZFE7Z6XG7Z",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "TT-104 (undo) is implemented and committed as d0c4c2f on archon/kqsxqkxs-tt-104-undo, not pushed. TaskStore.undo() reverts the most recent unreverted add, complete or delete (LIFO across kinds): add removes the task, complete restores the prior status, delete restores the task under the same id. Ids are never reused. With nothing to undo it raises NothingToUndo, defined in tasktracker/store.py. Failed operations are not recorded. Checks: `python3 -m unittest discover -s tests -t .` gives 15 tests OK (baseline 4 OK before the change, 11 new tests in tests/test_undo.py). Review: one reviewer, agt_01M8GMWC652BHK7V8GVJGMJ5EK, verdict pass with no blocking findings. Left open: the undo log is unbounded for the store's lifetime (non-blocking follow-up). Assumption: undoing a complete on an already-done task keeps it done. The reviewer's leftover process (pid 3376331) had already exited; nothing is left running.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (15 tests OK)",
+            "python3 -m py_compile tasktracker/store.py (ok)"
+          ],
+          "commit": "d0c4c2fd5c2412a2f3de7ee34271e23a85996992",
+          "evidence": [
+            {
+              "after": "Ran 15 tests in 0.000s OK",
+              "before": "Ran 4 tests in 0.000s OK",
+              "caption": "Unit test run before and after the change",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "d0c4c2fd5c2412a2f3de7ee34271e23a85996992",
+          "pr": {
+            "body": "Approach: TaskStore keeps an in-memory undo log; each successful add, complete or delete appends an entry after validation, so failed operations are not recorded. undo() pops the last entry. Delete entries store a copy of the task (dataclasses.replace with a copied tags list). Complete entries store the prior status, which is open in normal use. Ids are never reused. Files: tasktracker/store.py, tests/test_undo.py (new). Checks: unittest discover, 15 OK (4 existing, 11 new). Review: one reviewer, pass, one non-blocking follow-up: the undo log is unbounded for the store's lifetime. Assumption: undoing a complete on an already-done task keeps it done (restores prior status) rather than reopening it.",
+            "summary": "Made undo happen. Now can revert the latest add, complete or delete (LIFO), raising NothingToUndo when empty. Before: no undo, now: undo reverts add (removes task), complete (restores prior status) and delete (restores same id).",
+            "title": "TT-104: add TaskStore.undo() for add, complete and delete"
+          },
+          "review": {
+            "reviewed_head": "d0c4c2fd5c2412a2f3de7ee34271e23a85996992",
+            "reviewer_agents": [
+              "agt_01M8GMWC652BHK7V8GVJGMJ5EK"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GMWC652BHK7V8GVJGMJ5EK",
+                "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                "findings": 1,
+                "head": "d0c4c2fd5c2412a2f3de7ee34271e23a85996992",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GMWC652BHK7V8GVJGMJ5EK"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GMWC652BHK7V8GVJGMJ5EK:1": {
+                "blocking": false,
+                "description": "Undo log is unbounded: every successful add/complete/delete is retained for the life of the store. Non-blocking follow-up; acceptable for an in-memory tracker. at tasktracker/store.py:22",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTQRFCGG3NSCY6MB8M2ZZ"
+                },
+                "id": "agt_01M8GMWC652BHK7V8GVJGMJ5EK:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "d0c4c2fd5c2412a2f3de7ee34271e23a85996992",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMWC652BHK7V8GVJGMJ5EK",
+                    "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GMWC652BHK7V8GVJGMJ5EK:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behaviour change: one new public method and exception, undo bookkeeping on existing mutators. Existing return values and errors unchanged. Reviewer confirmed medium."
+          },
+          "tree": "29d4eb675b1469ae1edd3773e1bafe5a5c6b0ca1"
+        },
+        "cost_usd": 0.03157011999999999,
+        "started_at": "2026-11-28T08:37:28.462971430Z",
+        "finished_at": "2026-11-28T08:39:20.214751066Z"
+      }
+    ],
+    "spent_usd": 0.03157011999999999,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMTQRFCGG3NSCY6MB8M2ZZ": {
+        "direct_usd": 0.024728369999999996,
+        "delegated_usd": 0.006841750000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8GMWC652BHK7V8GVJGMJ5EK",
+            "parent": "agt_01M8GMTQW3DSVGWP8W2EAZBKEK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.006841750000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:28.033236301Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:28.052007123Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:28.033236301Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMTPF3B6T6KZMG3QRGDAM0",
+      "repo": "repo_01M8GMSXCRN3JNNEN5KMPGKG8M",
+      "pipeline": "direct",
+      "title": "TT-103: Search query syntax",
+      "brief": "Implement ticket TT-103 exactly as written in BACKLOG.md at the repository root (section \"TT-103: Search query syntax\"), following its acceptance criteria exactly. Scope: tasktracker/search.py (search(tasks, query) with whitespace-split terms, double-quoted phrases, AND semantics, bare terms matched case-insensitively against titles, tag:NAME, status:open/status:done, unknown field:value terms, unknown statuses and unterminated quotes raise QueryError defined in tasktracker.search; empty/blank query matches all; input order preserved) and new unit tests for it. Keep existing tests passing with `python3 -m unittest discover -s tests -t .`. Use only the Python standard library. Commit this ticket as one commit with a clear message; do not push. Do not change other tickets' files (dates.py, export.py, store.py) beyond what this ticket needs. Follow the repository's style and the maintainability rules: short functions, explicit validation, no silent fallback.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "tasktracker",
+        "TT-103"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMTPF3B6T6KZMG3QRGDAM0",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:27.925783631Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:27.968760932Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:27.925783631Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMTQCM8WE4TJAY0AHSBSPQ",
+        "summary": "TT-103 search query syntax: one commit, c6454677dbdcf86b8ab03f377cba9ac29a1cb15e (tree a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d), on archon/3qrgdam0-tt-103-search-query-syntax, not pushed. The commit is unchanged from attempt 1; no code was changed in this repair turn. Checks: python3 -m unittest discover -s tests -t . -> Ran 19 tests OK. Review: agt_01M8GMY7WXFWWQSXMPHS3ZB1J8 (reviewer, claude-haiku-5-5, medium) read the whole change from base 4d9c9eb516ef712488eb184afb7486ec3cd673ec and passed it with no blocking findings. Open non-blocking follow-ups, not in the spec and not tested: an empty quoted phrase \"\" matches every task; a quote inside a bare word is accepted with quotes stripped; text glued after a closing quote merges into one phrase; field and status names are case-sensitive. Nothing was started, so no processes need stopping.\nREVIEW: pass by agt_01M8GMY7WXFWWQSXMPHS3ZB1J8\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMY7WXFWWQSXMPHS3ZB1J8)\n\nSHIPPED: commit c6454677dbdcf86b8ab03f377cba9ac29a1cb15e on the run branch"
+      },
+      "created_at": "2026-11-28T08:37:27.139111889Z",
+      "updated_at": "2026-11-28T08:40:35.865590215Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMTQCM8WE4TJAY0AHSBSPQ",
+        "item": "qi_01M8GMTPF3B6T6KZMG3QRGDAM0",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMTQT65DHRCBQ9AVNK06MP",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3ff9f31105e362d6d12b8944/.archon/data/worktrees/long-backlog/qi_01M8GMTPF3B6T6KZMG3QRGDAM0",
+        "branch": "archon/3qrgdam0-tt-103-search-query-syntax",
+        "state": {
+          "state": "succeeded",
+          "summary": "TT-103 search query syntax: one commit, c6454677dbdcf86b8ab03f377cba9ac29a1cb15e (tree a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d), on archon/3qrgdam0-tt-103-search-query-syntax, not pushed. The commit is unchanged from attempt 1; no code was changed in this repair turn. Checks: python3 -m unittest discover -s tests -t . -> Ran 19 tests OK. Review: agt_01M8GMY7WXFWWQSXMPHS3ZB1J8 (reviewer, claude-haiku-5-5, medium) read the whole change from base 4d9c9eb516ef712488eb184afb7486ec3cd673ec and passed it with no blocking findings. Open non-blocking follow-ups, not in the spec and not tested: an empty quoted phrase \"\" matches every task; a quote inside a bare word is accepted with quotes stripped; text glued after a closing quote merges into one phrase; field and status names are case-sensitive. Nothing was started, so no processes need stopping.\nREVIEW: pass by agt_01M8GMY7WXFWWQSXMPHS3ZB1J8\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMY7WXFWWQSXMPHS3ZB1J8)\n\nSHIPPED: commit c6454677dbdcf86b8ab03f377cba9ac29a1cb15e on the run branch"
+        },
+        "cost_usd": 0.04527571999999999,
+        "started_at": "2026-11-28T08:37:28.235630446Z",
+        "finished_at": "2026-11-28T08:40:35.865590215Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMTQQBEHEF5013B9KHE5MH",
+        "run": "prun_01M8GMTQCM8WE4TJAY0AHSBSPQ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMTQW737Y3AHT0PAR63QHX",
+        "aether_task": "tsk_01M8GMTQW7Q78GAVAF3HH8J3S0",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "TT-103 done in one commit, c6454677dbdcf86b8ab03f377cba9ac29a1cb15e (tree a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d), on archon/3qrgdam0-tt-103-search-query-syntax, not pushed. tasktracker/search.py now parses queries: whitespace-split terms with double-quoted phrases, AND semantics, case-insensitive title matching, tag:NAME (exact, case-insensitive), status:open/status:done. Unknown fields, unknown statuses, empty tag names and unterminated quotes raise QueryError (ValueError subclass, defined in tasktracker.search); blank query matches all; input order is kept. Added tests/test_search.py (15 tests). Check: python3 -m unittest discover -s tests -t . -> 19 tests OK (4 existing + 15 new), run on the final head. Review: one reviewer (agt_01M8GMWC5A3D4M0X438SVEYEFT) passed the head with no blocking findings. Non-blocking follow-ups: an empty quoted phrase \"\" matches every task; a quote inside a bare word (foo\"bar baz\") is accepted with quotes stripped; neither is in the spec and neither is pinned by a test. Assumptions: empty tag name (tag:) raises QueryError; a non-string query raises TypeError. No servers or processes were started. Review: pass by agt_01M8GMWC5A3D4M0X438SVEYEFT.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t ."
+          ],
+          "commit": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+          "evidence": {
+            "none": "Pure library logic with no visible or measurable output; behaviour is covered by unit tests."
+          },
+          "pr": {
+            "body": "Approach: search() splits the query into terms (whitespace, quotes group), builds one predicate per term, and keeps tasks matching all of them in input order. Key files: tasktracker/search.py, tests/test_search.py (new). Checks: python3 -m unittest discover -s tests -t . -> 19 tests OK (4 existing, 15 new). Assumptions: empty tag name raises QueryError; non-string query raises TypeError; field and status names are case-sensitive; tag names are case-insensitive. Known gaps (non-blocking, from review): empty phrase \"\" matches all tasks; a quote inside a bare word is accepted with the quotes removed.",
+            "summary": "search() now parses a small query language. now can: quoted phrases, AND terms, tag:NAME, status:open/done. before: case-sensitive substring on titles only; now: case-insensitive title match plus tag and status filters, QueryError on bad input.",
+            "title": "TT-103: Search query syntax"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GMWC5A3D4M0X438SVEYEFT:1": {
+                "blocking": false,
+                "description": "An empty quoted phrase (\"\") is parsed as a title term with empty text, which matches every task. Consider rejecting it as an empty phrase, or leave as is since it is harmless. at tasktracker/search.py",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTQQBEHEF5013B9KHE5MH"
+                },
+                "id": "agt_01M8GMWC5A3D4M0X438SVEYEFT:1",
+                "resolved_in": null
+              },
+              "agt_01M8GMWC5A3D4M0X438SVEYEFT:2": {
+                "blocking": false,
+                "description": "A quote in the middle of a bare word (e.g. foo\"bar baz\") is accepted and treated as a non-phrase term with the quotes removed; the spec does not cover this case, and no test pins it. at tasktracker/search.py",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTQQBEHEF5013B9KHE5MH"
+                },
+                "id": "agt_01M8GMWC5A3D4M0X438SVEYEFT:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMWC5A3D4M0X438SVEYEFT",
+                    "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GMWC5A3D4M0X438SVEYEFT:1",
+                      "agt_01M8GMWC5A3D4M0X438SVEYEFT:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "Only tasktracker/search.py (replaces naive substring search) and a new test file change; no persistence, security or concurrency impact; 19 tests pass; one reviewer passed with no blocking findings."
+          },
+          "tree": "a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d"
+        },
+        "cost_usd": 0.026467259999999992,
+        "started_at": "2026-11-28T08:37:28.427636842Z",
+        "finished_at": "2026-11-28T08:39:08.239039642Z"
+      },
+      {
+        "id": "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9",
+        "run": "prun_01M8GMTQCM8WE4TJAY0AHSBSPQ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 2,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "spent",
+        "aether_agent": "agt_01M8GMXSA5NSAR5GRSSD3R9WHC",
+        "aether_task": "tsk_01M8GMXSA5NSAR5GRSSD3R9WHD",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "TT-103 search query syntax: one commit, c6454677dbdcf86b8ab03f377cba9ac29a1cb15e (tree a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d), on archon/3qrgdam0-tt-103-search-query-syntax, not pushed. The commit is unchanged from attempt 1; no code was changed in this repair turn. Checks: python3 -m unittest discover -s tests -t . -> Ran 19 tests OK. Review: agt_01M8GMY7WXFWWQSXMPHS3ZB1J8 (reviewer, claude-haiku-5-5, medium) read the whole change from base 4d9c9eb516ef712488eb184afb7486ec3cd673ec and passed it with no blocking findings. Open non-blocking follow-ups, not in the spec and not tested: an empty quoted phrase \"\" matches every task; a quote inside a bare word is accepted with quotes stripped; text glued after a closing quote merges into one phrase; field and status names are case-sensitive. Nothing was started, so no processes need stopping.\nREVIEW: pass by agt_01M8GMY7WXFWWQSXMPHS3ZB1J8",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t ."
+          ],
+          "commit": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+          "evidence": {
+            "none": "Pure parser with no visible or measurable change; behaviour is pinned by unit tests."
+          },
+          "local_commit": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+          "pr": {
+            "body": "Approach: search(tasks, query) splits on whitespace, honours double-quoted phrases, ANDs all terms. Bare terms match titles case-insensitively. tag:NAME matches exactly (case-insensitive). status:open|done filters. Unknown fields, unknown statuses, empty tag names and unterminated quotes raise QueryError (ValueError subclass, defined in tasktracker.search). A blank query matches all. Input order is kept. Files: tasktracker/search.py, tests/test_search.py (15 new tests). Checks: python3 -m unittest discover -s tests -t . -> 19 tests OK (4 existing + 15 new). Assumptions: a non-string query raises TypeError. Open non-blocking follow-ups (spec silent, untested): an empty quoted phrase matches every task; a quote inside a bare word is accepted with quotes stripped; text glued after a closing quote merges into one phrase; field and status names are case-sensitive.",
+            "summary": "Made search accept query syntax. Now can filter by tag:NAME, status:open/done and quoted phrases, with AND between terms. Before: bare-word search only; now: field, status and phrase terms, with QueryError for bad input.",
+            "title": "Add search query syntax (TT-103)"
+          },
+          "review": {
+            "reviewed_head": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+            "reviewer_agents": [
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8",
+                "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                "findings": 4,
+                "head": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GMWC5A3D4M0X438SVEYEFT:1": {
+                "blocking": false,
+                "description": "An empty quoted phrase (\"\") is parsed as a title term with empty text, which matches every task. Consider rejecting it as an empty phrase, or leave as is since it is harmless. at tasktracker/search.py",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTQQBEHEF5013B9KHE5MH"
+                },
+                "id": "agt_01M8GMWC5A3D4M0X438SVEYEFT:1",
+                "resolved_in": null
+              },
+              "agt_01M8GMWC5A3D4M0X438SVEYEFT:2": {
+                "blocking": false,
+                "description": "A quote in the middle of a bare word (e.g. foo\"bar baz\") is accepted and treated as a non-phrase term with the quotes removed; the spec does not cover this case, and no test pins it. at tasktracker/search.py",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTQQBEHEF5013B9KHE5MH"
+                },
+                "id": "agt_01M8GMWC5A3D4M0X438SVEYEFT:2",
+                "resolved_in": null
+              },
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:1": {
+                "blocking": false,
+                "description": "Empty quoted phrase \"\" becomes a title term with empty text and matches every task (previous finding 1, still applies; spec silent).",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9"
+                },
+                "id": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:1",
+                "resolved_in": null
+              },
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:2": {
+                "blocking": false,
+                "description": "A quote inside a bare word (foo\"bar baz\") is accepted with quotes stripped, yielding title term \"foobar baz\"; untested (previous finding 2, still applies; spec silent).",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9"
+                },
+                "id": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:2",
+                "resolved_in": null
+              },
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:3": {
+                "blocking": false,
+                "description": "Text directly after a closing quote (\"login\"bug) is silently merged into one phrase term \"loginbug\" with no error.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9"
+                },
+                "id": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:3",
+                "resolved_in": null
+              },
+              "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:4": {
+                "blocking": false,
+                "description": "Field names and status values are case-sensitive (STATUS:open raises unknown field, status:OPEN raises unknown status); spec is silent on case here.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9"
+                },
+                "id": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "c6454677dbdcf86b8ab03f377cba9ac29a1cb15e",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8",
+                    "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:1",
+                      "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:2",
+                      "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:3",
+                      "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "Pure stdlib parser function in tasktracker/search.py plus tests; no persistence, concurrency or API break. The reviewer confirmed low."
+          },
+          "tree": "a7e7c2df8a9b8a278cfcd2e10d4b91440f114b5d"
+        },
+        "cost_usd": 0.01880846,
+        "started_at": "2026-11-28T08:39:08.344804306Z",
+        "finished_at": "2026-11-28T08:40:35.578470307Z"
+      }
+    ],
+    "spent_usd": 0.04527571999999999,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMTQQBEHEF5013B9KHE5MH": {
+        "direct_usd": 0.02034689999999999,
+        "delegated_usd": 0.00612036,
+        "agents": [
+          {
+            "agent": "agt_01M8GMWC5A3D4M0X438SVEYEFT",
+            "parent": "agt_01M8GMTQW737Y3AHT0PAR63QHX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "low",
+            "cost_usd": 0.00612036
+          }
+        ]
+      },
+      "stg_01M8GMXS9S9GVHWGT89Y6G6AZ9": {
+        "direct_usd": 0.0109161,
+        "delegated_usd": 0.00789236,
+        "agents": [
+          {
+            "agent": "agt_01M8GMY7WXFWWQSXMPHS3ZB1J8",
+            "parent": "agt_01M8GMXSA5NSAR5GRSSD3R9WHC",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00789236
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:27.925783631Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:27.968760932Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:27.925783631Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMTMA97434WQD48G9PBMPX",
+      "repo": "repo_01M8GMSXCRN3JNNEN5KMPGKG8M",
+      "pipeline": "direct",
+      "title": "TT-102: RFC 4180 CSV export",
+      "brief": "Implement ticket TT-102 exactly as written in BACKLOG.md at the repository root (section \"TT-102: RFC 4180 CSV export\"), following its acceptance criteria exactly. Scope: tasktracker/export.py (to_csv producing RFC 4180 CSV: header id,title,tags,status,due; tags joined with ';'; due as ISO date or empty; quote fields containing comma, double quote, CR or LF with doubled quotes; CRLF line endings on every line) and new unit tests for it. Keep existing tests passing with `python3 -m unittest discover -s tests -t .`. Use only the Python standard library. Commit this ticket as one commit with a clear message; do not push. Do not change other tickets' files (dates.py, search.py, store.py) beyond what this ticket needs. Follow the repository's style and the maintainability rules: short functions, explicit validation, no silent fallback.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "tasktracker",
+        "TT-102"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMTMA97434WQD48G9PBMPX",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:25.040574015Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:26.697800808Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:25.040574015Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMTPEHRC39KFJ26H7PWRXR",
+        "summary": "TT-102 (RFC 4180 CSV export) is done as one commit, 1ed86e5, on archon/8g9pbmpx-tt-102-rfc-4180-csv-export, on top of main at 4d9c9eb. Nothing was pushed.\n\nWhat changed: tasktracker/export.py now builds CSV with the stdlib csv module and CRLF line endings. Fields with commas, quotes, CR or LF are quoted with doubled quotes. Tags containing ';' raise ValueError instead of silently splitting on import. New tests are in tests/test_export.py (9 tests).\n\nBefore: a title with a comma or newline broke its row, and lines ended in LF. After: the same tasks export as valid RFC 4180.\n\nChecks: `python3 -m unittest discover -s tests -t .` gives 13 tests, OK (4 existing, 9 new), run on tree b951c7c. py_compile passes. No linter is configured in the repo, so none was run.\n\nReview: one independent reviewer (agt_01M8GMW01SNQP0X27CS70FVSHD) passed head 1ed86e5 with no blocking findings. Non-blocking follow-ups: raise ValueError instead of assert for status validation; add a test for comma/quote inside a tag; add assertions directly in to_csv. Risk is medium, since this changes export output for special characters. Its reviewer process left running (pid 3374865) had already exited when I checked.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMW01SNQP0X27CS70FVSHD)\n\nSHIPPED: commit 1ed86e509328de0ee35dc026ef9f4aefe99ffdd3 on the run branch"
+      },
+      "created_at": "2026-11-28T08:37:24.937741705Z",
+      "updated_at": "2026-11-28T08:39:26.036847906Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMTPEHRC39KFJ26H7PWRXR",
+        "item": "qi_01M8GMTMA97434WQD48G9PBMPX",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMTQ9EVCPDERR2X1JTFRGQ",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3ff9f31105e362d6d12b8944/.archon/data/worktrees/long-backlog/qi_01M8GMTMA97434WQD48G9PBMPX",
+        "branch": "archon/8g9pbmpx-tt-102-rfc-4180-csv-export",
+        "state": {
+          "state": "succeeded",
+          "summary": "TT-102 (RFC 4180 CSV export) is done as one commit, 1ed86e5, on archon/8g9pbmpx-tt-102-rfc-4180-csv-export, on top of main at 4d9c9eb. Nothing was pushed.\n\nWhat changed: tasktracker/export.py now builds CSV with the stdlib csv module and CRLF line endings. Fields with commas, quotes, CR or LF are quoted with doubled quotes. Tags containing ';' raise ValueError instead of silently splitting on import. New tests are in tests/test_export.py (9 tests).\n\nBefore: a title with a comma or newline broke its row, and lines ended in LF. After: the same tasks export as valid RFC 4180.\n\nChecks: `python3 -m unittest discover -s tests -t .` gives 13 tests, OK (4 existing, 9 new), run on tree b951c7c. py_compile passes. No linter is configured in the repo, so none was run.\n\nReview: one independent reviewer (agt_01M8GMW01SNQP0X27CS70FVSHD) passed head 1ed86e5 with no blocking findings. Non-blocking follow-ups: raise ValueError instead of assert for status validation; add a test for comma/quote inside a tag; add assertions directly in to_csv. Risk is medium, since this changes export output for special characters. Its reviewer process left running (pid 3374865) had already exited when I checked.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMW01SNQP0X27CS70FVSHD)\n\nSHIPPED: commit 1ed86e509328de0ee35dc026ef9f4aefe99ffdd3 on the run branch"
+        },
+        "cost_usd": 0.03081043,
+        "started_at": "2026-11-28T08:37:27.370682268Z",
+        "finished_at": "2026-11-28T08:39:26.036847906Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMTPR1YYD0ZZK12WHWP66A",
+        "run": "prun_01M8GMTPEHRC39KFJ26H7PWRXR",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMTQA93FHN9NXQTDFKPPMK",
+        "aether_task": "tsk_01M8GMTQA93FHN9NXQTDFKPPMM",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "TT-102 (RFC 4180 CSV export) is done as one commit, 1ed86e5, on archon/8g9pbmpx-tt-102-rfc-4180-csv-export, on top of main at 4d9c9eb. Nothing was pushed.\n\nWhat changed: tasktracker/export.py now builds CSV with the stdlib csv module and CRLF line endings. Fields with commas, quotes, CR or LF are quoted with doubled quotes. Tags containing ';' raise ValueError instead of silently splitting on import. New tests are in tests/test_export.py (9 tests).\n\nBefore: a title with a comma or newline broke its row, and lines ended in LF. After: the same tasks export as valid RFC 4180.\n\nChecks: `python3 -m unittest discover -s tests -t .` gives 13 tests, OK (4 existing, 9 new), run on tree b951c7c. py_compile passes. No linter is configured in the repo, so none was run.\n\nReview: one independent reviewer (agt_01M8GMW01SNQP0X27CS70FVSHD) passed head 1ed86e5 with no blocking findings. Non-blocking follow-ups: raise ValueError instead of assert for status validation; add a test for comma/quote inside a tag; add assertions directly in to_csv. Risk is medium, since this changes export output for special characters. Its reviewer process left running (pid 3374865) had already exited when I checked.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (13 tests, OK)",
+            "python3 -m py_compile tasktracker/export.py tests/test_export.py (OK)"
+          ],
+          "commit": "1ed86e509328de0ee35dc026ef9f4aefe99ffdd3",
+          "evidence": [
+            {
+              "caption": "Export of a title with comma and quotes and a multi-line title, before the change",
+              "kind": "output",
+              "text": "'id,title,tags,status,due\\n1,fix login, then \"ship\",a;x,open,2026-04-01\\n2,line1\\nline2,,open,\\n'"
+            },
+            {
+              "caption": "Same tasks after the change: quoted fields, doubled quotes and CRLF line endings",
+              "kind": "output",
+              "text": "'id,title,tags,status,due\\r\\n1,\"fix login, then \"\"ship\"\"\",a;x,open,2026-04-01\\r\\n2,\"line1\\nline2\",,open,\\r\\n'"
+            }
+          ],
+          "local_commit": "1ed86e509328de0ee35dc026ef9f4aefe99ffdd3",
+          "pr": {
+            "body": "Approach: to_csv uses the stdlib csv module (lineterminator CRLF) with a small _row helper that builds the fields. Key files: tasktracker/export.py, tests/test_export.py (new, 9 tests). Checks: python3 -m unittest discover -s tests -t . passes 13/13. Assumptions: the ';' tag check is a validation addition beyond the ticket text; it raises ValueError rather than silently splitting. Follow-ups from review (non-blocking): use ValueError instead of assert for status validation; add a test for comma/quote inside a tag; add assertions directly in to_csv.",
+            "summary": "to_csv output is now RFC 4180 CSV. Before: titles with commas, quotes or newlines broke rows and lines ended in LF. Now: fields are quoted and escaped correctly, every line ends CRLF, and tags containing ';' are rejected.",
+            "title": "TT-102: export tasks as RFC 4180 CSV"
+          },
+          "review": {
+            "reviewed_head": "1ed86e509328de0ee35dc026ef9f4aefe99ffdd3",
+            "reviewer_agents": [
+              "agt_01M8GMW01SNQP0X27CS70FVSHD"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GMW01SNQP0X27CS70FVSHD",
+                "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                "findings": 4,
+                "head": "1ed86e5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GMW01SNQP0X27CS70FVSHD"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GMW01SNQP0X27CS70FVSHD:1": {
+                "blocking": false,
+                "description": "Tags containing ';' now raise ValueError in _row. The ticket does not specify this case, so it is a behaviour addition beyond the spec. It is tested and does not break any documented behaviour, so it is not blocking.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTPR1YYD0ZZK12WHWP66A"
+                },
+                "id": "agt_01M8GMW01SNQP0X27CS70FVSHD:1",
+                "resolved_in": null
+              },
+              "agt_01M8GMW01SNQP0X27CS70FVSHD:2": {
+                "blocking": false,
+                "description": "Status is validated with a bare assert (AssertionError), which is stripped under python -O. Explicit validation with a raised error would match the repo's no-silent-failure rule better. Not blocking.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTPR1YYD0ZZK12WHWP66A"
+                },
+                "id": "agt_01M8GMW01SNQP0X27CS70FVSHD:2",
+                "resolved_in": null
+              },
+              "agt_01M8GMW01SNQP0X27CS70FVSHD:3": {
+                "blocking": false,
+                "description": "No test covers a tag containing a comma or quote, even though the quoting rule applies to every field, including the tags field. The same csv mechanism is exercised by the title tests, so this is a coverage gap only. Not blocking.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTPR1YYD0ZZK12WHWP66A"
+                },
+                "id": "agt_01M8GMW01SNQP0X27CS70FVSHD:3",
+                "resolved_in": null
+              },
+              "agt_01M8GMW01SNQP0X27CS70FVSHD:4": {
+                "blocking": false,
+                "description": "to_csv has no assertions of its own. The repo guideline asks for at least two meaningful assertions per non-trivial function. Maintainability nit only. Not blocking.",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMTPR1YYD0ZZK12WHWP66A"
+                },
+                "id": "agt_01M8GMW01SNQP0X27CS70FVSHD:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "1ed86e5",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMW01SNQP0X27CS70FVSHD",
+                    "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GMW01SNQP0X27CS70FVSHD:1",
+                      "agt_01M8GMW01SNQP0X27CS70FVSHD:2",
+                      "agt_01M8GMW01SNQP0X27CS70FVSHD:3",
+                      "agt_01M8GMW01SNQP0X27CS70FVSHD:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Changes the export output format for titles with special characters and CRLF line endings for all exports. Contained to tasktracker/export.py; only in-repo caller is test_export_simple, which passes. Independent reviewer confirmed medium."
+          },
+          "tree": "b951c7c63db9b7ae92519bd6f3f27a6351855cf7"
+        },
+        "cost_usd": 0.03081043,
+        "started_at": "2026-11-28T08:37:27.425450962Z",
+        "finished_at": "2026-11-28T08:39:22.478884742Z"
+      }
+    ],
+    "spent_usd": 0.03081043,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMTPR1YYD0ZZK12WHWP66A": {
+        "direct_usd": 0.02349825,
+        "delegated_usd": 0.00731218,
+        "agents": [
+          {
+            "agent": "agt_01M8GMW01SNQP0X27CS70FVSHD",
+            "parent": "agt_01M8GMTQA93FHN9NXQTDFKPPMK",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00731218
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:25.040574015Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:26.697800808Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:25.040574015Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMTJ85QA4G4CBM4BT974ZV",
+      "repo": "repo_01M8GMSXCRN3JNNEN5KMPGKG8M",
+      "pipeline": "direct",
+      "title": "TT-101: Reject impossible due dates",
+      "brief": "Implement ticket TT-101 exactly as written in BACKLOG.md at the repository root (section \"TT-101: Reject impossible due dates\"), following its acceptance criteria exactly. Scope: tasktracker/dates.py (parse_due, new InvalidDate ValueError subclass whose message contains the original text) and new unit tests for it. Keep existing tests passing with `python3 -m unittest discover -s tests -t .`. Use only the Python standard library. Commit this ticket as one commit with a clear message; do not push. Do not change other tickets' files (search.py, export.py, store.py) beyond what this ticket needs. Follow the repository's style and the maintainability rules: short functions, explicit validation, no silent fallback.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "tasktracker",
+        "TT-101"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMTJ85QA4G4CBM4BT974ZV",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:23.654166376Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:23.672571623Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:37:23.654166376Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMTK3DY5170GDY9KZB33FA",
+        "summary": "TT-101 done: parse_due in tasktracker/dates.py now raises InvalidDate (new ValueError subclass; message contains the original text) for impossible calendar dates (2026-02-30, 2025-02-29, 2026-04-31, 2026-13-01, 2026-00-10), out-of-range offsets, and unsupported forms (-3d, 3d, bad formats, empty). +Nd/+0d, today/tomorrow, case-insensitivity and whitespace handling are unchanged. Tests: new tests/test_dates.py (7 tests); python3 -m unittest discover -s tests -t . gives 11 OK. Committed once as 8ee274c on archon/4bt974zv-tt-101-reject-impossible-due-dates, not pushed. Review: one reviewer (agt_01M8GMWJ8893TCCR23QJ4EK6TR) passed the head with no findings. Open: none. Nothing left running (the reviewer's leftover process had already exited).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMWJ8893TCCR23QJ4EK6TR)\n\nSHIPPED: commit 8ee274cd33999867252e538eb1cc0be92411b759 on the run branch"
+      },
+      "created_at": "2026-11-28T08:37:22.821492951Z",
+      "updated_at": "2026-11-28T08:39:26.460714534Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMTK3DY5170GDY9KZB33FA",
+        "item": "qi_01M8GMTJ85QA4G4CBM4BT974ZV",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMTKB0JX4EDDQXHF0VBH53",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3ff9f31105e362d6d12b8944/.archon/data/worktrees/long-backlog/qi_01M8GMTJ85QA4G4CBM4BT974ZV",
+        "branch": "archon/4bt974zv-tt-101-reject-impossible-due-dates",
+        "state": {
+          "state": "succeeded",
+          "summary": "TT-101 done: parse_due in tasktracker/dates.py now raises InvalidDate (new ValueError subclass; message contains the original text) for impossible calendar dates (2026-02-30, 2025-02-29, 2026-04-31, 2026-13-01, 2026-00-10), out-of-range offsets, and unsupported forms (-3d, 3d, bad formats, empty). +Nd/+0d, today/tomorrow, case-insensitivity and whitespace handling are unchanged. Tests: new tests/test_dates.py (7 tests); python3 -m unittest discover -s tests -t . gives 11 OK. Committed once as 8ee274c on archon/4bt974zv-tt-101-reject-impossible-due-dates, not pushed. Review: one reviewer (agt_01M8GMWJ8893TCCR23QJ4EK6TR) passed the head with no findings. Open: none. Nothing left running (the reviewer's leftover process had already exited).\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMWJ8893TCCR23QJ4EK6TR)\n\nSHIPPED: commit 8ee274cd33999867252e538eb1cc0be92411b759 on the run branch"
+        },
+        "cost_usd": 0.03556499,
+        "started_at": "2026-11-28T08:37:23.874129850Z",
+        "finished_at": "2026-11-28T08:39:26.460714534Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMTKA8NJ58NGE4SQCV55BC",
+        "run": "prun_01M8GMTK3DY5170GDY9KZB33FA",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMTKC48WBM47FMWGKH3BRE",
+        "aether_task": "tsk_01M8GMTKC4AFNPWJ1Z8PSB26M1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "TT-101 done: parse_due in tasktracker/dates.py now raises InvalidDate (new ValueError subclass; message contains the original text) for impossible calendar dates (2026-02-30, 2025-02-29, 2026-04-31, 2026-13-01, 2026-00-10), out-of-range offsets, and unsupported forms (-3d, 3d, bad formats, empty). +Nd/+0d, today/tomorrow, case-insensitivity and whitespace handling are unchanged. Tests: new tests/test_dates.py (7 tests); python3 -m unittest discover -s tests -t . gives 11 OK. Committed once as 8ee274c on archon/4bt974zv-tt-101-reject-impossible-due-dates, not pushed. Review: one reviewer (agt_01M8GMWJ8893TCCR23QJ4EK6TR) passed the head with no findings. Open: none. Nothing left running (the reviewer's leftover process had already exited).",
+        "structured": {
+          "checks": [
+            "python3 -m unittest discover -s tests -t . (11 tests OK)"
+          ],
+          "commit": "8ee274cd33999867252e538eb1cc0be92411b759",
+          "evidence": [
+            {
+              "after": "'2026-02-30' -> InvalidDate : impossible calendar date: 2026-02-30\n'2025-02-29' -> InvalidDate : impossible calendar date: 2025-02-29\n'2026-13-01' -> InvalidDate : impossible calendar date: 2026-13-01\n'-3d' -> InvalidDate : unrecognised due date: -3d\n'+0d' -> 2026-03-10\n'+999999999d' -> InvalidDate : due date out of range: +999999999d",
+              "before": "'2026-02-30' -> 2026-02-28\n'2025-02-29' -> 2025-02-28\n'2026-13-01' -> 2026-12-01\n'-3d' -> ValueError : unrecognised due date: -3d\n'+0d' -> 2026-03-10\n'+999999999d' -> OverflowError : date value out of range",
+              "caption": "parse_due before (HEAD) vs after",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "8ee274cd33999867252e538eb1cc0be92411b759",
+          "pr": {
+            "body": "Approach: parse_due in tasktracker/dates.py validates via date() and converts ValueError/OverflowError into InvalidDate (a ValueError subclass) with the original text in the message, preserving the cause. Helpers _add_days and _calendar_date keep functions short. Unsupported forms (-3d, 3d, bad formats, empty) raise InvalidDate. Tests: new tests/test_dates.py (7 tests), existing tests unchanged. Checks: python3 -m unittest discover -s tests -t . -> 11 OK. Review: one reviewer, no findings. Assumptions: the ticket's clamping removal is an intended public behaviour change; no in-repo callers depend on clamping.",
+            "summary": "parse_due no longer clamps impossible dates. now raises InvalidDate. before: 2026-02-30 -> 2026-02-28; now: InvalidDate naming the text.",
+            "title": "Reject impossible due dates in parse_due"
+          },
+          "review": {
+            "reviewed_head": "8ee274cd33999867252e538eb1cc0be92411b759",
+            "reviewer_agents": [
+              "agt_01M8GMWJ8893TCCR23QJ4EK6TR"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GMWJ8893TCCR23QJ4EK6TR",
+                "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                "findings": 0,
+                "head": "8ee274cd33999867252e538eb1cc0be92411b759",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GMWJ8893TCCR23QJ4EK6TR"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "8ee274cd33999867252e538eb1cc0be92411b759",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMWJ8893TCCR23QJ4EK6TR",
+                    "base": "4d9c9eb516ef712488eb184afb7486ec3cd673ec",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Changes behaviour of the public parse_due (clamp -> raise). Touches tasktracker/dates.py and tests/test_dates.py only. No security, persistence or concurrency. Reviewer confirmed medium."
+          },
+          "tree": "7ba00c9c923836e87926bf6fe8c1ed997725581d"
+        },
+        "cost_usd": 0.03556499,
+        "started_at": "2026-11-28T08:37:23.912187960Z",
+        "finished_at": "2026-11-28T08:39:22.892151368Z"
+      }
+    ],
+    "spent_usd": 0.03556499,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMTKA8NJ58NGE4SQCV55BC": {
+        "direct_usd": 0.029492799999999996,
+        "delegated_usd": 0.00607219,
+        "agents": [
+          {
+            "agent": "agt_01M8GMWJ8893TCCR23QJ4EK6TR",
+            "parent": "agt_01M8GMTKC48WBM47FMWGKH3BRE",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00607219
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:23.654166376Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:23.672571623Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:37:23.654166376Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

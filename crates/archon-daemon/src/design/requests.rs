@@ -423,9 +423,16 @@ pub(crate) async fn handle(
                 .await
         }
         Request::DesignFinishCancel { session } => service.finish_cancel(ctx, &session).await,
-        Request::DesignPreview { url, caller } => {
-            service.design_preview(ctx, &url, caller.as_ref()).await
+        Request::DesignPreview {
+            url,
+            recipe,
+            caller,
+        } => {
+            service
+                .design_preview(ctx, &url, recipe.map(|r| *r), caller.as_ref())
+                .await
         }
+        Request::DesignRecipe { caller } => service.recipe(ctx, caller.as_ref()).await,
         Request::DesignNoteReport {
             id,
             status,

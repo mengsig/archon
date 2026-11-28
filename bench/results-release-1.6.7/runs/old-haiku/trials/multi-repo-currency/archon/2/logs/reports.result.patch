@@ -1,0 +1,178 @@
+diff --git a/README.md b/README.md
+index 25e668a..be6ea53 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,10 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`, one
++row per (account, currency) pair, sorted by account and then currency, from the
++CSV that `ledger` exports.
++
++- The input's optional `currency` column is read per row. A CSV without that
++  column (old ledger output) counts every row as `USD`.
++- A currency must be exactly three uppercase ASCII letters (ISO 4217, e.g.
++  `EUR`). A malformed code prints an error to stderr and exits with status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..8d1bb2e 100644
+--- a/reports.py
++++ b/reports.py
+@@ -1,31 +1,60 @@
+-"""Per-account totals from the ledger's CSV export.
++"""Per-account, per-currency totals from the ledger's CSV export.
+ 
+ Usage: python3 reports.py < ledger.csv
++
++CSV without a currency column (old ledger output) counts every row as USD.
++A malformed currency code exits with status 2.
+ """
+ 
+ import csv
++import re
+ import sys
+ 
++DEFAULT_CURRENCY = "USD"
++CURRENCY_PATTERN = re.compile(r"[A-Z]{3}")
++
++
++class MalformedCurrency(ValueError):
++    """A row's currency is not exactly three uppercase ASCII letters."""
++
++
++def row_currency(row, data_row_number):
++    """Currency of a CSV dict row; rows without a currency column are USD."""
++    if "currency" not in row:
++        return DEFAULT_CURRENCY
++    currency = row["currency"]
++    if not isinstance(currency, str) or not CURRENCY_PATTERN.fullmatch(currency):
++        raise MalformedCurrency(
++            f"data row {data_row_number}: missing or malformed currency "
++            f"{currency!r}, expected three uppercase letters"
++        )
++    return currency
++
+ 
+ def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++    """{(account, currency): total_cents} from CSV dict rows."""
+     result = {}
+-    for row in rows:
+-        account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++    for data_row_number, row in enumerate(rows, start=1):
++        key = (row["account"], row_currency(row, data_row_number))
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
++    lines = ["account,currency,total_cents"]
++    for account, currency in sorted(result):
++        lines.append(f"{account},{currency},{result[(account, currency)]}")
+     return "\n".join(lines) + "\n"
+ 
+ 
+ def main():
+     rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        result = totals(rows)
++    except MalformedCurrency as error:
++        print(f"reports: {error}", file=sys.stderr)
++        sys.exit(2)
++    sys.stdout.write(render(result))
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/test_reports.py b/test_reports.py
+index f2f2322..73236c6 100644
+--- a/test_reports.py
++++ b/test_reports.py
+@@ -4,6 +4,7 @@ import unittest
+ from pathlib import Path
+ 
+ HERE = Path(__file__).resolve().parent
++HEADER = "date,account,amount_cents,currency\n"
+ 
+ 
+ def run(stdin):
+@@ -24,10 +25,70 @@ class ReportsTest(unittest.TestCase):
+         out = run(csv_text)
+         self.assertEqual(out.returncode, 0, out.stderr)
+         lines = out.stdout.splitlines()
+-        self.assertEqual(lines[1:], [line for line in sorted(lines[1:])])
+-        self.assertIn("groceries", lines[1])
+-        self.assertIn("-5500", lines[1])
+-        self.assertIn("rent", lines[2])
++        self.assertEqual(lines[0], "account,currency,total_cents")
++        self.assertEqual(lines[1:], [
++            "groceries,USD,-5500",
++            "rent,USD,-120000",
++        ])
++
++    def test_totals_per_currency(self):
++        csv_text = (
++            HEADER
++            + "2026-03-01,rent,-120000,EUR\n"
++            + "2026-03-02,rent,-300,USD\n"
++            + "2026-03-03,rent,-700,EUR\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 0, out.stderr)
++        self.assertEqual(out.stdout.splitlines()[1:], [
++            "rent,EUR,-120700",
++            "rent,USD,-300",
++        ])
++
++    def test_old_csv_without_currency_counts_as_usd(self):
++        csv_text = (
++            "date,account,amount_cents\n"
++            "2026-03-01,rent,-120000\n"
++            "2026-03-02,rent,-500\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 0, out.stderr)
++        self.assertEqual(out.stdout, (
++            "account,currency,total_cents\n"
++            "rent,USD,-120500\n"
++        ))
++
++    def test_sorted_by_account_then_currency(self):
++        csv_text = (
++            HEADER
++            + "2026-03-01,rent,-1,USD\n"
++            + "2026-03-01,groceries,-2,USD\n"
++            + "2026-03-01,rent,-3,EUR\n"
++            + "2026-03-01,groceries,-4,EUR\n"
++        )
++        out = run(csv_text)
++        self.assertEqual(out.returncode, 0, out.stderr)
++        self.assertEqual(out.stdout.splitlines()[1:], [
++            "groceries,EUR,-4",
++            "groceries,USD,-2",
++            "rent,EUR,-3",
++            "rent,USD,-1",
++        ])
++
++    def test_malformed_currency_exits_2(self):
++        for bad in ["eur", "EURO", "US1", "E", "€UR", ""]:
++            with self.subTest(currency=bad):
++                csv_text = HEADER + f"2026-03-01,rent,-1,{bad}\n"
++                out = run(csv_text)
++                self.assertEqual(out.returncode, 2)
++                self.assertEqual(out.stdout, "")
++                self.assertIn("malformed currency", out.stderr)
++
++    def test_short_row_missing_currency_exits_2(self):
++        out = run(HEADER + "2026-03-01,rent,-1\n")
++        self.assertEqual(out.returncode, 2)
++        self.assertEqual(out.stdout, "")
++        self.assertIn("data row 1: missing or malformed currency", out.stderr)
+ 
+ 
+ if __name__ == "__main__":

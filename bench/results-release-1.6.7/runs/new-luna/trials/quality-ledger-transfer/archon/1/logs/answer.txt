@@ -1,0 +1,14 @@
+Queued as **qi_01M8GHTJDB0BJYX7WSWT0STGGS** on the adaptive pipeline. It covers the SPEC.md behavior, focused tests, and a commit.
+
+Done: Implement atomic thread-safe ledger. Implemented and committed an atomic, thread-safe ledger with input validation, independent snapshots, and focused regression tests. `python -m unittest -v` (10 passed), `python -m py_compile ledger.py test_ledger.py`, and `git diff --check` pass on 560e22aeada29ca5103b67d3dc5c1cae9f321680. Whole-change review found and the passing delta review verified the fix for unhashable account arguments. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHXKRHWHNW525C7TH87Z0V), codex/gpt-6-luna (agent agt_01M8GJ2FRGPH4DRSY9W5Z0GVEF)
+
+SHIPPED: commit 560e22aeada29ca5103b67d3dc5c1cae9f321680 on the run branch
+Branch `archon/wt0stggs-implement-atomic-thread-safe-ledger` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/168feae820d51f268e288a64/quality-ledger-transfer holds it (2 files changed, 124 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GHTJDB0BJYX7WSWT0STGGS`; land it in `main`: `archon merge qi_01M8GHTJDB0BJYX7WSWT0STGGS`.
+
+Implemented and committed an atomic, thread-safe ledger with input validation, independent snapshots, and focused regression tests. `python -m unittest -v` (10 passed), `python -m py_compile ledger.py test_ledger.py`, and `git diff --check` pass on 560e22aeada29ca5103b67d3dc5c1cae9f321680. Whole-change review found and the passing delta review verified the fix for unhashable account arguments. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHXKRHWHNW525C7TH87Z0V), codex/gpt-6-luna (agent agt_01M8GJ2FRGPH4DRSY9W5Z0GVEF)
+
+SHIPPED: commit 560e22aeada29ca5103b67d3dc5c1cae9f321680 on the run branch

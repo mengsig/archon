@@ -1,0 +1,60 @@
+All four tickets are running as separate `direct` items in `long-backlog`. Each item calls for focused tests, the full unittest suite, standard-library-only changes, and its own commit.
+
+- TT-101: `qi_01M8GH2XKH1B503PGHEFERCJ5A`
+- TT-102: `qi_01M8GH2XNG7CVEFKKV7THW2DP9`
+- TT-103: `qi_01M8GH2XH20XS4Q2F63XRTPY6S`
+- TT-104: `qi_01M8GH2WKT6V0Y6FVFKKFKJ6ST`
+
+The work is underway; I’ll report the outcomes when the items finish.
+
+Done: TT-102: RFC 4180 CSV export. Implemented TT-102 RFC 4180 CSV export: fields are escaped as specified and all rows end in CRLF. Added ticket-specific tests. Baseline suite passed (4 tests); final suite passed (6 tests). Commit 19393692b1a07aa9e538bb580246ada0a37cadfe; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH4ZCS9CZPGW68RN6C1685)
+
+SHIPPED: commit 19393692b1a07aa9e538bb580246ada0a37cadfe on the run branch
+Branch `archon/7thw2dp9-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/399367d3a5f825d04803e78f/long-backlog holds it (2 files changed, 45 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GH2XNG7CVEFKKV7THW2DP9`; land it in `main`: `archon merge qi_01M8GH2XNG7CVEFKKV7THW2DP9`.
+
+Done: TT-104: Undo TaskStore operations. Added TaskStore.undo() with LIFO reversal for add, complete, and delete; preserved deleted task identity and monotonic ids. Full unittest suite passes (9 tests), and independent review passed with no findings. Commit 6036becbede24e9f8095bd0d2231058197b88e45; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH4V2BX89RRFV12MK2WK91)
+
+SHIPPED: commit 6036becbede24e9f8095bd0d2231058197b88e45 on the run branch
+Branch `archon/kkfkj6st-tt-104-undo-taskstore-operations` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/399367d3a5f825d04803e78f/long-backlog holds it (2 files changed, 87 insertions(+)). Review: `archon diff qi_01M8GH2WKT6V0Y6FVFKKFKJ6ST`; land it in `main`: `archon merge qi_01M8GH2WKT6V0Y6FVFKKFKJ6ST`.
+
+Done: TT-101: Reject impossible due dates. Defined InvalidDate and updated due-date parsing to reject impossible calendar dates, unsupported forms, and invalid offset arithmetic while preserving today/tomorrow and +Nd behavior. Added focused TT-101 tests. `python3 -m unittest discover -s tests -t .` passed all 8 tests; `git diff --check` passed. Commit: ddc8b3a189400c5cc8658ea9d3287fc2b47ba073. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH66RGK8YT2JREAH985R9H)
+
+SHIPPED: commit ddc8b3a189400c5cc8658ea9d3287fc2b47ba073 on the run branch
+Branch `archon/efercj5a-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/399367d3a5f825d04803e78f/long-backlog holds it (2 files changed, 54 insertions(+), 6 deletions(-)). Review: `archon diff qi_01M8GH2XKH1B503PGHEFERCJ5A`; land it in `main`: `archon merge qi_01M8GH2XKH1B503PGHEFERCJ5A`.
+
+Done: TT-103: Search query syntax. Implemented TT-103 search syntax with quoted phrase handling, case insensitive title and tag matching, status filters, and QueryError validation. Added ticket specific tests. Full suite passed (10 tests) and git diff --check passed. Committed as 9a8db4445dd68fb51ba9785e8fa9fec44d6e6ba0; no open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH51Z7YTJGH5HHNH7CM4A3), codex/gpt-6-luna (agent agt_01M8GH801ZFZ3PSQR1APEJQY0J)
+
+SHIPPED: commit 9a8db4445dd68fb51ba9785e8fa9fec44d6e6ba0 on the run branch
+Branch `archon/3xrtpy6s-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/399367d3a5f825d04803e78f/long-backlog holds it (2 files changed, 111 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GH2XH20XS4Q2F63XRTPY6S`; land it in `main`: `archon merge qi_01M8GH2XH20XS4Q2F63XRTPY6S`.
+
+Implemented TT-102 RFC 4180 CSV export: fields are escaped as specified and all rows end in CRLF. Added ticket-specific tests. Baseline suite passed (4 tests); final suite passed (6 tests). Commit 19393692b1a07aa9e538bb580246ada0a37cadfe; independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH4ZCS9CZPGW68RN6C1685)
+
+SHIPPED: commit 19393692b1a07aa9e538bb580246ada0a37cadfe on the run branch
+
+Defined InvalidDate and updated due-date parsing to reject impossible calendar dates, unsupported forms, and invalid offset arithmetic while preserving today/tomorrow and +Nd behavior. Added focused TT-101 tests. `python3 -m unittest discover -s tests -t .` passed all 8 tests; `git diff --check` passed. Commit: ddc8b3a189400c5cc8658ea9d3287fc2b47ba073. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH66RGK8YT2JREAH985R9H)
+
+SHIPPED: commit ddc8b3a189400c5cc8658ea9d3287fc2b47ba073 on the run branch
+
+Implemented TT-103 search syntax with quoted phrase handling, case insensitive title and tag matching, status filters, and QueryError validation. Added ticket specific tests. Full suite passed (10 tests) and git diff --check passed. Committed as 9a8db4445dd68fb51ba9785e8fa9fec44d6e6ba0; no open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH51Z7YTJGH5HHNH7CM4A3), codex/gpt-6-luna (agent agt_01M8GH801ZFZ3PSQR1APEJQY0J)
+
+SHIPPED: commit 9a8db4445dd68fb51ba9785e8fa9fec44d6e6ba0 on the run branch
+
+Added TaskStore.undo() with LIFO reversal for add, complete, and delete; preserved deleted task identity and monotonic ids. Full unittest suite passes (9 tests), and independent review passed with no findings. Commit 6036becbede24e9f8095bd0d2231058197b88e45; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GH4V2BX89RRFV12MK2WK91)
+
+SHIPPED: commit 6036becbede24e9f8095bd0d2231058197b88e45 on the run branch

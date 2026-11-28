@@ -1,0 +1,32 @@
+Root cause: updatePrice (src/pricing.js:42-49) deletes only the product:<sku> cache key, but category listings are cached per page under listing:<category>:<page> with LISTING_TTL_SECONDS=600 (src/catalog.js:22-33, src/config.js:42) and nothing invalidates them. Product pages therefore update immediately while category pages serve the old price until the listing entry's TTL expires (up to ~600s). Reproduced read-only: after updatePrice, product() returns 4500 while listing() returns 5000 until t=600s. npm test passes 3/3 because no test checks listing prices after an update. Fix: in updatePrice, also delete all cached listing keys for the SKU's category (prefix listing:<category>:), and add a regression test asserting listing() reflects the new price. No code was changed.
+
+The category pages show the old price because `updatePrice` only clears the product cache entry, and the category listings are cached separately with no invalidation. I changed no code.
+
+**Root cause**
+
+- **The write path:** `updatePrice` in `src/pricing.js:42-49` writes the new price to the store, then deletes only `product:<sku>`.
+- **Product pages:** `Catalog.product` (`src/catalog.js:12-20`) re-reads the store after that delete, so product pages update immediately.
+- **Category pages:** `Catalog.listing` (`src/catalog.js:22-33`) caches each page of `{sku, name, priceCents}` rows under `listing:<category>:<page>` for `LISTING_TTL_SECONDS = 600` (`src/config.js:42`). Nothing deletes those keys, so they serve the old price until the TTL expires. That is the ten-minute window.
+
+**Reproduction**
+
+I ran a read-only `node -e` check against `./src` with an injected clock:
+
+```
+t=0        product 5000   listing 5000
+update 4500
+           product 4500   listing 5000     <- stale listing
+t=599.999s listing 5000
+t=600s     listing 4500                    <- expires after TTL
+```
+
+`npm test` passes 3/3. The suite does not catch this because the product test checks only the product page after an update, and the listing test does not check prices.
+
+**Fix**
+
+1. In `updatePrice`, after the store update, delete every cached listing for the SKU's category. Listing keys have the form `listing:<category>:<page>`, so delete all keys with the prefix `listing:<category>:`. Iterating the cache's `entries` map is O(n), which is fine at this scale. A per-category version counter folded into the listing key is an alternative if the cache grows large.
+2. Add a regression test: build a listing, update a price, and assert that `listing()` returns the new price.
+
+If `updatePrice` ever moves a SKU between categories, the old category's listing would also need invalidating. The current function does not change category, so this is not part of the bug.
+
+**Secondary observation:** `updatePrice` reaches directly into `catalog.store` and `catalog.cache`, bypassing the `Catalog` abstraction. Moving invalidation into a `Catalog` method would keep the invalidation rules in one place.

@@ -1,0 +1,14 @@
+The mirror shows an off-by-one in `sliding_windows`: its range omits the final valid start index. I’m queuing a focused `direct` change with boundary coverage and a committed fix.
+
+Done: Fix final sliding window boundary. Updated sliding_windows in window.py to include the final valid start and whole-input window, clamp oversize ranges to empty, and preserve ValueError for nonpositive sizes. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and direct boundary probes passed. Committed as aa6c94c746419a7da3739e6433d86a14bfbab75e; independent whole-change review passed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM1DZ14BG7KW2V66N36926)
+
+SHIPPED: commit aa6c94c746419a7da3739e6433d86a14bfbab75e on the run branch
+Branch `archon/gx1jwzst-fix-final-sliding-window-boundary` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/dcc4cdd576f54adbc7f04a08/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GKZN2BVD3DB6D9GX1JWZST`; land it in `main`: `archon merge qi_01M8GKZN2BVD3DB6D9GX1JWZST`.
+
+Updated sliding_windows in window.py to include the final valid start and whole-input window, clamp oversize ranges to empty, and preserve ValueError for nonpositive sizes. `python3 -m unittest` passed (3 tests), `git diff --check` passed, and direct boundary probes passed. Committed as aa6c94c746419a7da3739e6433d86a14bfbab75e; independent whole-change review passed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM1DZ14BG7KW2V66N36926)
+
+SHIPPED: commit aa6c94c746419a7da3739e6433d86a14bfbab75e on the run branch

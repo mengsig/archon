@@ -1,0 +1,9 @@
+Fixed the off-by-one in window.py `sliding_windows`. The window loop used range(len(items) - size), which dropped the final window; it now uses range(len(items) - size + 1). Committed as a9ca965 ("Fix off-by-one that dropped the last sliding window") as mengsig, with no attribution line per the project CLAUDE.md. `python3 -m unittest` now passes 3/3 (was 2 failures). Tests were not modified. Edge cases checked against a reference implementation: empty list, size greater than length, size equal to length, size 1, and tuple and string inputs. size <= 0 still raises ValueError. Working tree is clean.
+
+The bug is fixed and committed as `a9ca965`, and `python3 -m unittest` now passes all 3 tests (it had 2 failures before).
+
+The cause was in `window.py`'s `sliding_windows`: the loop ran `range(len(items) - size)`, which drops the last window. The number of windows of length `size` is `len(items) - size + 1`, so the fix is `range(len(items) - size + 1)`.
+
+I checked edge cases against a reference implementation: empty input, `size` larger than the list, `size` equal to the list length, `size` 1, and tuple and string inputs. Lists shorter than `size` still return `[]`, and `size <= 0` still raises `ValueError`. I did not change the tests.
+
+The commit uses the repo's configured identity (mengsig) with no attribution line, because the project CLAUDE.md says not to add one and that takes precedence over the attribution reminder. The working tree is clean.

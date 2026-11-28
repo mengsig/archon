@@ -1,0 +1,24 @@
+Queued the `ledger.py` work as item `qi_01M8GSE7JVKKHWBCH1JA0J1JNT` (pipeline `adaptive`, strict review, repo `quality-ledger-transfer`).
+
+I did not write the code myself: the orchestrator's rules send changes through the queue. I picked `adaptive` over `direct` because the spec has concurrency requirements (linearizable transfers, no deadlock), and strict review because of the same.
+
+The brief carries the full SPEC.md text and your request. It asks for:
+- The documented API unchanged, with validation in the order the spec gives.
+- Bool rejected wherever an integer is expected.
+- Existing tests kept, plus focused tests for each error path, the boundary values, failure-leaves-state-unchanged, snapshot independence, and a deterministic multi-thread test.
+- A local commit with no attribution lines, since this repo ships local.
+
+I'll report the outcome when the item finishes. If it fails, I'll read the stage results and report what blocked it.
+
+Done: Implement ledger.py per SPEC.md (atomic thread-safe ledger). Implemented ledger.py per SPEC.md and extended test_ledger.py (existing tests kept). Head ef370e8c4528ab18c6b6a57c6027c59f3f0ba787, tree 1591cf8e80fc869e7314bae0de71a018635e6f3c, on archon/ja0j1jnt-implement-ledger-py-per-spec-md-atomic-t. Checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v gives 30 tests OK in 5.0s. A lock-free mutant fails TransferAtomicity deterministically. Review: whole-change pass on ef370e8 (agt_01M8GT5VNKNJDHSB94FZGDKZ6B); blocker-confirmation pass on ef370e8 (agt_01M8GTB7VWEJXVYVKJ8J2SVHZP). review-2 and review-3 failed df901368 on blocking test gaps; both are fixed in ef370e8 with Review-Fix trailers. Open non-blocking follow-ups are listed in pr.body. Nothing is left running, and the worktree is clean apart from the operator's untracked .archon/ directory, which is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GT5VNKNJDHSB94FZGDKZ6B), claude-code/claude-haiku-5-5 (agent agt_01M8GTB7VWEJXVYVKJ8J2SVHZP), claude-code/claude-haiku-5-5 (agent agt_01M8GSG8W0B96F84MJT06ZABAM), claude-code/claude-haiku-5-5 (agent agt_01M8GSGGYX9W4BK0X5PYCJJ3SR)
+
+SHIPPED: commit ef370e8c4528ab18c6b6a57c6027c59f3f0ba787 on the run branch
+Branch `archon/ja0j1jnt-implement-ledger-py-per-spec-md-atomic-t` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/bab0f4e91bf598a4800ba4bf/quality-ledger-transfer holds it (2 files changed, 297 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GSE7JVKKHWBCH1JA0J1JNT`; land it in `main`: `archon merge qi_01M8GSE7JVKKHWBCH1JA0J1JNT`.
+
+Implemented ledger.py per SPEC.md and extended test_ledger.py (existing tests kept). Head ef370e8c4528ab18c6b6a57c6027c59f3f0ba787, tree 1591cf8e80fc869e7314bae0de71a018635e6f3c, on archon/ja0j1jnt-implement-ledger-py-per-spec-md-atomic-t. Checks: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v gives 30 tests OK in 5.0s. A lock-free mutant fails TransferAtomicity deterministically. Review: whole-change pass on ef370e8 (agt_01M8GT5VNKNJDHSB94FZGDKZ6B); blocker-confirmation pass on ef370e8 (agt_01M8GTB7VWEJXVYVKJ8J2SVHZP). review-2 and review-3 failed df901368 on blocking test gaps; both are fixed in ef370e8 with Review-Fix trailers. Open non-blocking follow-ups are listed in pr.body. Nothing is left running, and the worktree is clean apart from the operator's untracked .archon/ directory, which is not committed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GT5VNKNJDHSB94FZGDKZ6B), claude-code/claude-haiku-5-5 (agent agt_01M8GTB7VWEJXVYVKJ8J2SVHZP), claude-code/claude-haiku-5-5 (agent agt_01M8GSG8W0B96F84MJT06ZABAM), claude-code/claude-haiku-5-5 (agent agt_01M8GSGGYX9W4BK0X5PYCJJ3SR)
+
+SHIPPED: commit ef370e8c4528ab18c6b6a57c6027c59f3f0ba787 on the run branch

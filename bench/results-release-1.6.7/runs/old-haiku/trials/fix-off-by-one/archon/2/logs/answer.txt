@@ -1,0 +1,21 @@
+I've queued the fix as item `qi_01M8GMYJ4HMJFY09BBB90KTKRX` on the `fix-off-by-one` repository, using the `direct` pipeline with standard review. I did not edit the repository myself; the Archon daemon will run the change in its own worktree.
+
+The brief asks the agent to:
+- Fix the implementation in `window.py` without touching any test files.
+- Check edge cases beyond the existing tests (empty input, single element, boundaries, ends of the range).
+- Commit on the local branch without pushing, since this repository ships locally.
+
+Acceptance is `python3 -m unittest` exiting 0 with no test files changed, and the fix committed. I'll report the outcome when the item finishes.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py sliding_windows: range(len(items) - size) became range(len(items) - size + 1), so the last window is now produced. Committed on archon/b90ktkrx-fix-window-py-bug-so-python3-m-unittest as 0317597 (tree 86fa257), not pushed. Checks: python3 -m unittest exits 0 with 3 tests OK (before: 2 failures); no test files changed; manual edge cases pass (empty list, len 1, size > len, size == len, size 1, size 4 of 5, size 0 and -1 raise ValueError). Review: one read-only reviewer passed the head with no findings. Nothing left running: the reviewer's leftover process (pid 3391703) was stopped by PID. Open: none. The test suite was not run by the reviewer, which is read-only.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMZP6XXBJPCC2VTVSK8012)
+
+SHIPPED: commit 0317597b5c7279db869ad26aaa43db3db2c00d20 on the run branch
+Branch `archon/b90ktkrx-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/bc548c19d23d175b8d776748/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GMYJ4HMJFY09BBB90KTKRX`; land it in `main`: `archon merge qi_01M8GMYJ4HMJFY09BBB90KTKRX`.
+
+Fixed the off-by-one in window.py sliding_windows: range(len(items) - size) became range(len(items) - size + 1), so the last window is now produced. Committed on archon/b90ktkrx-fix-window-py-bug-so-python3-m-unittest as 0317597 (tree 86fa257), not pushed. Checks: python3 -m unittest exits 0 with 3 tests OK (before: 2 failures); no test files changed; manual edge cases pass (empty list, len 1, size > len, size == len, size 1, size 4 of 5, size 0 and -1 raise ValueError). Review: one read-only reviewer passed the head with no findings. Nothing left running: the reviewer's leftover process (pid 3391703) was stopped by PID. Open: none. The test suite was not run by the reviewer, which is read-only.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMZP6XXBJPCC2VTVSK8012)
+
+SHIPPED: commit 0317597b5c7279db869ad26aaa43db3db2c00d20 on the run branch

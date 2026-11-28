@@ -1,0 +1,14 @@
+Queued as **qi_01M8GQAJJP8NP4YT5AHE6PDEGV**. The work is to fix `window.py`, leave tests unchanged, verify with `python3 -m unittest`, and commit the fix.
+
+Done: Fix window.py so all unittests pass. Fixed sliding_windows to include the final valid window. python3 -m unittest passes all 3 tests; git diff --check passes. Independent review passed with no findings. Committed as ca52a922ae9c16c85b3d4b5c9c84ecf3f48ed65b; no open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQBYTWYNFH3SBC1NJH7RVY)
+
+SHIPPED: commit ca52a922ae9c16c85b3d4b5c9c84ecf3f48ed65b on the run branch
+Branch `archon/he6pdegv-fix-window-py-so-all-unittests-pass` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/4e58866ff3feac278a08f011/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GQAJJP8NP4YT5AHE6PDEGV`; land it in `main`: `archon merge qi_01M8GQAJJP8NP4YT5AHE6PDEGV`.
+
+Fixed sliding_windows to include the final valid window. python3 -m unittest passes all 3 tests; git diff --check passes. Independent review passed with no findings. Committed as ca52a922ae9c16c85b3d4b5c9c84ecf3f48ed65b; no open items.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQBYTWYNFH3SBC1NJH7RVY)
+
+SHIPPED: commit ca52a922ae9c16c85b3d4b5c9c84ecf3f48ed65b on the run branch

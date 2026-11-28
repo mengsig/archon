@@ -1,0 +1,21 @@
+Queued the work as item `qi_01M8GJBQ8315XFJ54F5B2TCWY8` on the `quality-safe-extract` repository, using the `adaptive` pipeline.
+
+- **Scope:** implement `safe_extract.py` per `SPEC.md`, keep the documented API, handle every specified error and boundary case, add focused tests, use the standard library only, and commit locally.
+- **Review:** `strict`, because the code is security-sensitive extraction. `merge` stays `manual`, and nothing is pushed.
+- **Model:** the build stage uses `strong` at `high` effort, for the risky diff.
+- **Ambiguity:** the brief tells the agent to take the most conservative reading (fail closed) where `SPEC.md` is unclear, and to record that choice in the commit body and summary.
+
+I haven't read `SPEC.md` or the repository myself, per the orchestrator rules, so I can't yet confirm its file layout or whether the spec has gaps. I'll report the outcome when the item finishes.
+
+Done: Implement safe_extract.py per SPEC.md with focused tests. Implemented safe_extract.extract per SPEC.md in commit 9a94839 on archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi (tree 71db1a2187bece2053add1c15da4b5adcceba73c, based on fea9ded). Stdlib only. Changed safe_extract.py and test_safe_extract.py. Verification: `python3 -B -m unittest` gives 36 tests OK (2 original plus 34 new covering each SPEC error and boundary case); a mutant with the ancestor-directory check removed fails 5 tests; longest function is 17 lines. Three whole-change reviewers (agt_01M8GJH1QZPE4M4H9XVJ48W1EZ, agt_01M8GJHA6SADK2QXK1YPNMBFFE, agt_01M8GJHMNNH9939B4MP5WMDBQK) all passed the head with no blocking findings. Open non-blocking follow-ups are in pr.body: over-255-byte names fail mid-write, exact-string collision checks on case-insensitive filesystems, '..' in roots, Path('') handling, root-through-file error message, subclass rejection, missing assertions, cwd-based temp dirs, and a missing non-dangling target-symlink test. Assumptions: POSIX-only, fail-closed on ambiguous types and roots, and no rollback after I/O errors. Working tree is clean. No services were started; the reviewer agents have completed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJH1QZPE4M4H9XVJ48W1EZ), claude-code/claude-haiku-5-5 (agent agt_01M8GJHA6SADK2QXK1YPNMBFFE), claude-code/claude-haiku-5-5 (agent agt_01M8GJHMNNH9939B4MP5WMDBQK)
+
+SHIPPED: commit 9a948393a610ff14e9d762dc6e664e22fc3a7914 on the run branch
+Branch `archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3e000780d9271690802bc84c/quality-safe-extract holds it (2 files changed, 345 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GJBQ8315XFJ54F5B2TCWY8`; land it in `main`: `archon merge qi_01M8GJBQ8315XFJ54F5B2TCWY8`.
+
+Implemented safe_extract.extract per SPEC.md in commit 9a94839 on archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi (tree 71db1a2187bece2053add1c15da4b5adcceba73c, based on fea9ded). Stdlib only. Changed safe_extract.py and test_safe_extract.py. Verification: `python3 -B -m unittest` gives 36 tests OK (2 original plus 34 new covering each SPEC error and boundary case); a mutant with the ancestor-directory check removed fails 5 tests; longest function is 17 lines. Three whole-change reviewers (agt_01M8GJH1QZPE4M4H9XVJ48W1EZ, agt_01M8GJHA6SADK2QXK1YPNMBFFE, agt_01M8GJHMNNH9939B4MP5WMDBQK) all passed the head with no blocking findings. Open non-blocking follow-ups are in pr.body: over-255-byte names fail mid-write, exact-string collision checks on case-insensitive filesystems, '..' in roots, Path('') handling, root-through-file error message, subclass rejection, missing assertions, cwd-based temp dirs, and a missing non-dangling target-symlink test. Assumptions: POSIX-only, fail-closed on ambiguous types and roots, and no rollback after I/O errors. Working tree is clean. No services were started; the reviewer agents have completed.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJH1QZPE4M4H9XVJ48W1EZ), claude-code/claude-haiku-5-5 (agent agt_01M8GJHA6SADK2QXK1YPNMBFFE), claude-code/claude-haiku-5-5 (agent agt_01M8GJHMNNH9939B4MP5WMDBQK)
+
+SHIPPED: commit 9a948393a610ff14e9d762dc6e664e22fc3a7914 on the run branch

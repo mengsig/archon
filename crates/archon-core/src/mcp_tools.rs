@@ -86,6 +86,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("design_note", ToolClass::Mutation),
     // A read, but it names its caller like the other design tools.
     tool("design_history", ToolClass::Mutation),
+    tool("design_recipe", ToolClass::Mutation),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its
@@ -103,7 +104,12 @@ pub const STAGE_TOOLS: [&str; 6] = [
 /// The tools a live design stage's agent also keeps: it reports its preview
 /// and each note's outcome through them. Every other agent has them hidden,
 /// and archond refuses them from any caller but a live session's agent.
-pub const DESIGN_STAGE_TOOLS: [&str; 3] = ["design_preview", "design_note", "design_history"];
+pub const DESIGN_STAGE_TOOLS: [&str; 4] = [
+    "design_preview",
+    "design_note",
+    "design_history",
+    "design_recipe",
+];
 
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {
     ToolName { name, class }

@@ -1,0 +1,14 @@
+======================================================================
+FAIL: test_bad_cursors (test_api_pagination.PaginationTest.test_bad_cursors)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/1e31e6c4bb5741a5b3e72345/inventory-api/test_api_pagination.py", line 58, in test_bad_cursors
+    self.assertEqual(res["status"], 400, bad)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 200 != 400 : 0000000000000000000000000000000000000000000000000000000000000000
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+FAILED (failures=1)
+expect_tests: python3 exited 1

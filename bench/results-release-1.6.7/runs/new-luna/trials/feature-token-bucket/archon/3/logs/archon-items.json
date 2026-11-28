@@ -1,0 +1,323 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GRFNQ1GXMQECWK5QZ2J5YF",
+      "repo": "repo_01M8GREA8GTR1TAJXECFJJ7XMD",
+      "pipeline": "direct",
+      "title": "Implement specified token bucket and keyed rate limiter",
+      "brief": "Implement the behavior in the repository's SPEC.md in ratelimit.py, replacing the stubs. Match all specified semantics and error cases: positive capacity/refill rate, initially full token buckets, continuous fractional refill capped at capacity, atomic try_acquire failure, validation of n, non-consuming wait_time, and clock rollback handling that does not advance the latest observed time or alter tokens. Implement KeyedLimiter with independent buckets per hashable key, max_keys validation, LRU eviction on new keys, and both try_acquire and wait_time counting as use; an evicted key starts full. Keep the implementation dependency-free using only the Python standard library, preserve the given public signatures, and account for edge cases beyond the basic tests. Run the existing tests and focused checks for the specified edge cases, then commit the implementation.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GRFNQ1GXMQECWK5QZ2J5YF",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:41:23.170190504Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T09:41:23.185335500Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T09:41:23.170190504Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GRFRM3A87GT1D1W13940Z2",
+        "summary": "Implemented token bucket refill, validation, rollback handling, and keyed LRU limiting in ratelimit.py; added focused coverage in test_ratelimit.py. All 7 unittest cases and git diff --check pass on the final commit. The full-change review’s blocking wait_time rollback finding was fixed and passed a delta re-review. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRK4109E65P0PFH7JDRT00), codex/gpt-6-luna (agent agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK)\n\nSHIPPED: commit 5f1b861b67f2be9eec584a7069c29bdf4b6d1692 on the run branch"
+      },
+      "created_at": "2026-11-28T09:41:20.225893288Z",
+      "updated_at": "2026-11-28T09:46:32.529536714Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GRFRM3A87GT1D1W13940Z2",
+        "item": "qi_01M8GRFNQ1GXMQECWK5QZ2J5YF",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GRFRTT6GM9N3MBVG3MJTE4",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0398a3d9a7530b65914028a1/.archon/data/worktrees/feature-token-bucket/qi_01M8GRFNQ1GXMQECWK5QZ2J5YF",
+        "branch": "archon/5qz2j5yf-implement-specified-token-bucket-and-key",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented token bucket refill, validation, rollback handling, and keyed LRU limiting in ratelimit.py; added focused coverage in test_ratelimit.py. All 7 unittest cases and git diff --check pass on the final commit. The full-change review’s blocking wait_time rollback finding was fixed and passed a delta re-review. Nothing remains open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRK4109E65P0PFH7JDRT00), codex/gpt-6-luna (agent agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK)\n\nSHIPPED: commit 5f1b861b67f2be9eec584a7069c29bdf4b6d1692 on the run branch"
+        },
+        "cost_usd": 0.028833020000000004,
+        "started_at": "2026-11-28T09:41:23.396581982Z",
+        "finished_at": "2026-11-28T09:46:32.529536714Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GRFRTHJY7ZVWYE6DWK2E84",
+        "run": "prun_01M8GRFRM3A87GT1D1W13940Z2",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GRFRV7CRTNJ0NTDQ2EY015",
+        "aether_task": "tsk_01M8GRFRV7CRTNJ0NTDQ2EY016",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented token bucket refill, validation, rollback handling, and keyed LRU limiting in ratelimit.py; added focused coverage in test_ratelimit.py. All 7 unittest cases and git diff --check pass on the final commit. The full-change review’s blocking wait_time rollback finding was fixed and passed a delta re-review. Nothing remains open.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (7 tests passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "5f1b861b67f2be9eec584a7069c29bdf4b6d1692",
+          "evidence": [
+            {
+              "after": "Ran 7 tests in 0.001s\nOK",
+              "before": "FAILED (errors=3)\nAll 3 existing tests raised NotImplementedError.",
+              "caption": "Before, the three existing tests failed because constructors were unimplemented; after, all seven tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "5f1b861b67f2be9eec584a7069c29bdf4b6d1692",
+          "pr": {
+            "body": "Implemented continuous capped refill with fractional tokens, input validation, no-consumption failure, wait-time calculation, and clock rollback high-water behavior in ratelimit.py. Added independent per-key buckets with max_keys validation and LRU eviction; both keyed operations refresh LRU usage, and evicted keys restart full. Added tests in test_ratelimit.py for refill, rollback, validation, wait purity, independence, and LRU. Checks: python -m unittest -v (7 passed); git diff --check (passed). Uses only the Python standard library. Review found and resolved a rollback wait_time defect; delta re-review passed.",
+            "summary": "Implemented full token bucket and keyed LRU rate limiting. Before: both classes were stubs; now callers can acquire, inspect availability, calculate waits, and enforce independent per-key limits.",
+            "title": "Implement token bucket and keyed limiter"
+          },
+          "review": {
+            "reviewed_head": "5f1b861b67f2be9eec584a7069c29bdf4b6d1692",
+            "reviewer_agents": [
+              "agt_01M8GRK4109E65P0PFH7JDRT00",
+              "agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GRK4109E65P0PFH7JDRT00",
+                "base": "14bba65c2b84dde3a33ad96447d5bb3d97d37e69",
+                "findings": 1,
+                "head": "e15e49874611586d7a9ee17a7d33bf5ecd034f0e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK",
+                "base": "e15e49874611586d7a9ee17a7d33bf5ecd034f0e",
+                "findings": 0,
+                "head": "5f1b861b67f2be9eec584a7069c29bdf4b6d1692",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GRK4109E65P0PFH7JDRT00",
+              "agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK"
+            ],
+            "risk": {
+              "level": "medium",
+              "why": "Contained behavior change with focused unit coverage; no concurrency or persistence changes."
+            },
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GRK4109E65P0PFH7JDRT00:1": {
+                "blocking": true,
+                "description": "After the clock moves behind `_updated_at`, `wait_time()` returns `0.0` even when the bucket lacks tokens and `try_acquire()` would fail. For example, drain the bucket, advance the clock to 2 and refill, drain it again, then set the clock to 1: `wait_time()` reports zero while acquisition fails. This contradicts the documented guarantee that it returns the time until acquisition would succeed. Acc",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GRFRTHJY7ZVWYE6DWK2E84"
+                },
+                "id": "agt_01M8GRK4109E65P0PFH7JDRT00:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GRFRTHJY7ZVWYE6DWK2E84"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "e15e49874611586d7a9ee17a7d33bf5ecd034f0e",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GRK4109E65P0PFH7JDRT00",
+                    "base": "14bba65c2b84dde3a33ad96447d5bb3d97d37e69",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GRK4109E65P0PFH7JDRT00:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "5f1b861b67f2be9eec584a7069c29bdf4b6d1692",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK",
+                    "base": "e15e49874611586d7a9ee17a7d33bf5ecd034f0e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in ratelimit.py and tests, with no concurrency, persistence, migration, or API signature changes. Seven focused tests pass; initial review found one blocking rollback wait_time edge case, fixed and passed by delta review."
+          },
+          "tree": "4d01e09430fc919535a8b38d49692e02d30a3575"
+        },
+        "cost_usd": 0.028833020000000004,
+        "started_at": "2026-11-28T09:41:23.408897983Z",
+        "finished_at": "2026-11-28T09:46:29.889295816Z"
+      }
+    ],
+    "spent_usd": 0.028833020000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GRFRTHJY7ZVWYE6DWK2E84": {
+        "direct_usd": 0.021713580000000003,
+        "delegated_usd": 0.007119440000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8GRK4109E65P0PFH7JDRT00",
+            "parent": "agt_01M8GRFRV7CRTNJ0NTDQ2EY015",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0021463000000000003
+          },
+          {
+            "agent": "agt_01M8GRNWCEXC0VQS2M0D8YQAQT",
+            "parent": "agt_01M8GRFRV7CRTNJ0NTDQ2EY015",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0021522800000000003
+          },
+          {
+            "agent": "agt_01M8GRQ6NG4QQFHN0DR9Q2J0RK",
+            "parent": "agt_01M8GRFRV7CRTNJ0NTDQ2EY015",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.002820860000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:41:23.170190504Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T09:41:23.185335500Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T09:41:23.170190504Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

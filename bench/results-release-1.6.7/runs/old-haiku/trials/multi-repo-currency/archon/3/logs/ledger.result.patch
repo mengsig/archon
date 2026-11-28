@@ -1,0 +1,281 @@
+diff --git a/README.md b/README.md
+index d04f33a..0723049 100644
+--- a/README.md
++++ b/README.md
+@@ -6,8 +6,29 @@ Converts a transaction log to CSV for the reporting tools.
+ cargo run -q < transactions.tsv > ledger.csv
+ ```
+ 
+-Input: one transaction per line, `date<TAB>account<TAB>amount` (ISO date,
+-amount with up to two decimals). Blank lines and `#` comments are skipped.
++Input: one transaction per line, tab-separated:
+ 
+-Output: `date,account,amount_cents`. Any malformed line stops the export
+-with `line N: ...` on stderr and exit status 1.
++```
++date<TAB>account<TAB>amount[<TAB>currency]
++```
++
++- `date`: ISO date (`YYYY-MM-DD`).
++- `amount`: up to two decimals, e.g. `-45.10`.
++- `currency` (optional): ISO 4217 code, exactly three uppercase ASCII
++  letters, e.g. `EUR`. Lines without it are treated as `USD`.
++
++Blank lines and `#` comments are skipped.
++
++Output: `date,account,amount_cents,currency`, one row per transaction, with
++the currency on every row.
++
++Exit status:
++
++- `0`: success.
++- `1`: any other malformed input line (bad date, account, amount or
++  field count).
++- `2`: a malformed currency code (e.g. `eur`, `EU`, `EURO`, `US1`).
++
++On failure, the message `line N: ...` is printed to stderr, where `N` is
++the 1-based line number in the input. Rows before the failing line are
++already written to stdout.
+diff --git a/src/lib.rs b/src/lib.rs
+index 051009d..d2971d8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,35 +1,84 @@
+ //! Transaction parsing and CSV rendering for the `ledger` exporter.
+ 
++use std::fmt;
++
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct Entry {
+     pub date: String,
+     pub account: String,
+     pub amount_cents: i64,
++    pub currency: String,
++}
++
++pub const CSV_HEADER: &str = "date,account,amount_cents,currency";
++
++/// Currency used when a line has no fourth column.
++pub const DEFAULT_CURRENCY: &str = "USD";
++
++/// Why a line was rejected. The variant decides the process exit status.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum LineError {
++    BadCurrency(String),
++    Other(String),
+ }
+ 
+-pub const CSV_HEADER: &str = "date,account,amount_cents";
++impl LineError {
++    /// Exit status: 2 for a malformed currency code, 1 for any other input error.
++    pub fn exit_code(&self) -> u8 {
++        match self {
++            LineError::BadCurrency(_) => 2,
++            LineError::Other(_) => 1,
++        }
++    }
++}
+ 
+-/// Parse one TSV line: `date<TAB>account<TAB>amount`.
+-pub fn parse_line(line: &str) -> Result<Entry, String> {
++impl fmt::Display for LineError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            LineError::BadCurrency(msg) | LineError::Other(msg) => f.write_str(msg),
++        }
++    }
++}
++
++/// Parse one TSV line: `date<TAB>account<TAB>amount[<TAB>currency]`.
++pub fn parse_line(line: &str) -> Result<Entry, LineError> {
+     let fields: Vec<&str> = line.split('\t').collect();
+-    if fields.len() != 3 {
+-        return Err(format!("expected 3 tab-separated fields, got {}", fields.len()));
++    if !(3..=4).contains(&fields.len()) {
++        return Err(LineError::Other(format!(
++            "expected 3 or 4 tab-separated fields, got {}",
++            fields.len()
++        )));
+     }
+     let date = fields[0].trim();
+     if !is_iso_date(date) {
+-        return Err(format!("bad date {date:?}"));
++        return Err(LineError::Other(format!("bad date {date:?}")));
+     }
+     let account = fields[1].trim();
+     if account.is_empty() || account.contains(',') {
+-        return Err(format!("bad account {account:?}"));
++        return Err(LineError::Other(format!("bad account {account:?}")));
+     }
++    let amount_cents = parse_cents(fields[2].trim()).map_err(LineError::Other)?;
++    let currency = match fields.get(3) {
++        Some(code) => parse_currency(code.trim())?,
++        None => DEFAULT_CURRENCY.to_string(),
++    };
+     Ok(Entry {
+         date: date.to_string(),
+         account: account.to_string(),
+-        amount_cents: parse_cents(fields[2].trim())?,
++        amount_cents,
++        currency,
+     })
+ }
+ 
++/// Accepts exactly three ASCII uppercase letters (ISO 4217 shape).
++fn parse_currency(code: &str) -> Result<String, LineError> {
++    let bytes = code.as_bytes();
++    if bytes.len() != 3 || !bytes.iter().all(|c| c.is_ascii_uppercase()) {
++        return Err(LineError::BadCurrency(format!("bad currency {code:?}")));
++    }
++    Ok(code.to_string())
++}
++
+ fn is_iso_date(s: &str) -> bool {
+     let b = s.as_bytes();
+     b.len() == 10
+@@ -59,5 +108,8 @@ pub fn parse_cents(s: &str) -> Result<i64, String> {
+ }
+ 
+ pub fn to_csv_row(entry: &Entry) -> String {
+-    format!("{},{},{}", entry.date, entry.account, entry.amount_cents)
++    format!(
++        "{},{},{},{}",
++        entry.date, entry.account, entry.amount_cents, entry.currency
++    )
+ }
+diff --git a/src/main.rs b/src/main.rs
+index b2095b9..ef01818 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -16,7 +16,7 @@ fn main() -> ExitCode {
+             Ok(entry) => writeln!(out, "{}", to_csv_row(&entry)).expect("writing stdout"),
+             Err(e) => {
+                 eprintln!("line {}: {e}", index + 1);
+-                return ExitCode::from(1);
++                return ExitCode::from(e.exit_code());
+             }
+         }
+     }
+diff --git a/tests/cli.rs b/tests/cli.rs
+new file mode 100644
+index 0000000..237bf45
+--- /dev/null
++++ b/tests/cli.rs
+@@ -0,0 +1,71 @@
++use std::io::Write;
++use std::process::{Command, Output, Stdio};
++
++fn run_ledger(input: &str) -> Output {
++    let mut child = Command::new(env!("CARGO_BIN_EXE_ledger"))
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()
++        .expect("spawn ledger");
++    child
++        .stdin
++        .take()
++        .expect("piped stdin")
++        .write_all(input.as_bytes())
++        .expect("write stdin");
++    child.wait_with_output().expect("wait for ledger")
++}
++
++#[test]
++fn three_column_input_defaults_to_usd() {
++    let out = run_ledger("2026-03-01\tgroceries\t-45.10\n");
++    assert_eq!(out.status.code(), Some(0));
++    assert_eq!(
++        String::from_utf8_lossy(&out.stdout),
++        "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD\n"
++    );
++}
++
++#[test]
++fn four_column_input_uses_given_currency() {
++    let out = run_ledger("2026-03-01\tgroceries\t-45.10\tEUR\n");
++    assert_eq!(out.status.code(), Some(0));
++    assert_eq!(
++        String::from_utf8_lossy(&out.stdout),
++        "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,EUR\n"
++    );
++}
++
++#[test]
++fn malformed_currency_exits_2_and_names_line() {
++    for code in ["eur", "EU", "EURO", "US1", "EÜR", ""] {
++        let input = format!("2026-03-01\tfood\t1\tUSD\n\n2026-03-02\tfuel\t2\t{code}\n");
++        let out = run_ledger(&input);
++        let stderr = String::from_utf8_lossy(&out.stderr);
++        assert_eq!(out.status.code(), Some(2), "code {code:?}");
++        assert!(
++            stderr.contains("line 3:"),
++            "code {code:?}: stderr was {stderr:?}"
++        );
++    }
++}
++
++#[test]
++fn other_input_errors_exit_1_and_name_line() {
++    let cases = [
++        ("2026-03-01\tfood\t1\nMarch 1\tfuel\t2\n", "line 2:"),
++        ("2026-03-01\tfood\t1.234\tEUR\n", "line 1:"),
++        ("2026-03-01\tfood\t1\tEUR\textra\n", "line 1:"),
++        ("2026-03-01\tfood\n", "line 1:"),
++    ];
++    for (input, line_prefix) in cases {
++        let out = run_ledger(input);
++        let stderr = String::from_utf8_lossy(&out.stderr);
++        assert_eq!(out.status.code(), Some(1), "input {input:?}");
++        assert!(
++            stderr.contains(line_prefix),
++            "input {input:?}: stderr was {stderr:?}"
++        );
++    }
++}
+diff --git a/tests/ledger.rs b/tests/ledger.rs
+index 6293987..630d1c4 100644
+--- a/tests/ledger.rs
++++ b/tests/ledger.rs
+@@ -1,4 +1,4 @@
+-use ledger::{parse_cents, parse_line, to_csv_row};
++use ledger::{parse_cents, parse_line, to_csv_row, LineError};
+ 
+ #[test]
+ fn parses_amounts() {
+@@ -14,7 +14,34 @@ fn parses_lines() {
+     let entry = parse_line("2026-03-01\tgroceries\t-45.10").unwrap();
+     assert_eq!(entry.account, "groceries");
+     assert_eq!(entry.amount_cents, -4510);
+-    assert!(to_csv_row(&entry).starts_with("2026-03-01,groceries,-4510"));
++    assert_eq!(entry.currency, "USD");
++    assert_eq!(to_csv_row(&entry), "2026-03-01,groceries,-4510,USD");
+     assert!(parse_line("2026-03-01\tgroceries").is_err());
+     assert!(parse_line("March 1\tgroceries\t1").is_err());
+ }
++
++#[test]
++fn parses_currency_column() {
++    let entry = parse_line("2026-03-01\tgroceries\t-45.10\tEUR").unwrap();
++    assert_eq!(entry.currency, "EUR");
++    assert_eq!(to_csv_row(&entry), "2026-03-01,groceries,-4510,EUR");
++}
++
++#[test]
++fn rejects_malformed_currency_as_bad_currency() {
++    for code in ["eur", "EU", "EURO", "US1", "EÜR", ""] {
++        let line = format!("2026-03-01\tgroceries\t1\t{code}");
++        assert!(
++            matches!(parse_line(&line), Err(LineError::BadCurrency(_))),
++            "code {code:?} should be rejected as a bad currency"
++        );
++    }
++}
++
++#[test]
++fn other_errors_are_not_bad_currency() {
++    let err = parse_line("2026-03-01\tgroceries\t1.234\tEUR").unwrap_err();
++    assert_eq!(err.exit_code(), 1);
++    let err = parse_line("2026-03-01\tgroceries\t1\tEUR\textra").unwrap_err();
++    assert_eq!(err.exit_code(), 1);
++}

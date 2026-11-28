@@ -1,0 +1,398 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+      "repo": "repo_01M8GT1E2HVFHAXV9DPSQ0ZH0S",
+      "pipeline": "direct",
+      "title": "Implement ledger.py to SPEC with focused tests",
+      "brief": "Implement ledger.py according to the repository's SPEC.md. Preserve the documented API exactly, and handle every specified error and boundary case. Add focused tests beyond the existing basic coverage, especially for specified errors and boundaries. Use only the Python standard library. Run the relevant tests and commit the completed work. Acceptance: implementation matches SPEC.md; focused tests cover the specified behavior and error/boundary cases; tests pass; commit exists.\n\n## Amendment (2026-11-28 10:10 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `implement`: ESCALATE: re-queue on adaptive. The requested implementation explicitly requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers (SPEC.md), so it necessarily changes concurrency/locking behavior. The stage contract says concurrency or locking work must commit nothing and be escalated. I inspected the clean baseline and found ledger.py is a stub with only two basic tests; no files were changed and no checks were run.\nThe work that run committed is on branch `archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused` in this worktree. Continue from it; do not start over.\n\n## Amendment (2026-11-28 10:11 UTC)\n\nThe repository pipeline contract says adaptive is the path for changes involving concurrency or locking, and its build stage explicitly covers concurrency reasoning. Follow the SPEC requirements for linearizable cross-thread transfers/snapshots and deadlock-safe opposite transfers; implement and test them. The allowed maximum effort is high; use codex/gpt-6-luna at high with a model_reasons entry explaining the concurrency analysis.\n\n## Amendment (2026-11-28 10:11 UTC)\n\nThis item continues with the stages of pipeline `adaptive` after its run failed at stage `build`: ESCALATE: SPEC.md requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers. The adaptive implement stage contract prohibits committing concurrency or locking changes, so this needs a pipeline that permits that work. The branch remains clean at 912834fc499bc6fead3efb4da7de17ba5aa1b10b; ledger.py is still a stub with two basic tests; no checks or edits were performed.\nThe work that run committed is on branch `archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused` in this worktree. Continue from it; do not start over.\n",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T10:11:49.412591236Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T10:11:49.412591236Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:concurrency"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:concurrency"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "The SPEC requires linearizable concurrent operations and deadlock-safe lock ordering; use the maximum allowed high effort for this concurrency analysis."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GT76AD3YQ2RG0FAZCQP2V9",
+        "summary": "Implemented the bounded thread-safe ledger in ledger.py and expanded test_ledger.py from 2 to 10 tests. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passed (10 tests); `git diff --check` passed. Reviewer passed the full change with no findings. Commit: 69b4309695e1defdd45f9fcf3a74d485d15cf521.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTA7B9JAB1G64F94RQ7M3M)\n\nSHIPPED: commit 69b4309695e1defdd45f9fcf3a74d485d15cf521 on the run branch"
+      },
+      "created_at": "2026-11-28T10:08:55.512010842Z",
+      "updated_at": "2026-11-28T10:14:37.670751365Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GT27AY7WEC0MM617W7Y72T",
+        "item": "qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M8GT27K13A7E0NW98S764XSX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/980c5eb7061182282ac0b648/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "branch": "archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused",
+        "state": {
+          "state": "failed",
+          "stage_id": "implement",
+          "error": "ESCALATE: re-queue on adaptive. The requested implementation explicitly requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers (SPEC.md), so it necessarily changes concurrency/locking behavior. The stage contract says concurrency or locking work must commit nothing and be escalated. I inspected the clean baseline and found ledger.py is a stub with only two basic tests; no files were changed and no checks were run."
+        },
+        "cost_usd": 0.00425194,
+        "started_at": "2026-11-28T10:08:56.862347211Z",
+        "finished_at": "2026-11-28T10:09:31.776970197Z"
+      },
+      {
+        "id": "prun_01M8GT4N4DHF3V1W8CDBQK4Q22",
+        "item": "qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M8GT4N6WP9P35AJHPGRK0968",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/980c5eb7061182282ac0b648/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "branch": "archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused",
+        "state": {
+          "state": "failed",
+          "stage_id": "build",
+          "error": "ESCALATE: SPEC.md requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers. The adaptive implement stage contract prohibits committing concurrency or locking changes, so this needs a pipeline that permits that work. The branch remains clean at 912834fc499bc6fead3efb4da7de17ba5aa1b10b; ledger.py is still a stub with two basic tests; no checks or edits were performed."
+        },
+        "cost_usd": 0.003782600000000001,
+        "started_at": "2026-11-28T10:10:16.385221814Z",
+        "finished_at": "2026-11-28T10:10:36.800703650Z"
+      },
+      {
+        "id": "prun_01M8GT76AD3YQ2RG0FAZCQP2V9",
+        "item": "qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GT76EJWSZDWY3HMC3RE8DK",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/980c5eb7061182282ac0b648/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GT266R4W2XTWT5K4JQ2EYY",
+        "branch": "archon/k4jq2eyy-implement-ledger-py-to-spec-with-focused",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the bounded thread-safe ledger in ledger.py and expanded test_ledger.py from 2 to 10 tests. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passed (10 tests); `git diff --check` passed. Reviewer passed the full change with no findings. Commit: 69b4309695e1defdd45f9fcf3a74d485d15cf521.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GTA7B9JAB1G64F94RQ7M3M)\n\nSHIPPED: commit 69b4309695e1defdd45f9fcf3a74d485d15cf521 on the run branch"
+        },
+        "cost_usd": 0.012608060000000004,
+        "started_at": "2026-11-28T10:11:39.537224418Z",
+        "finished_at": "2026-11-28T10:14:37.670751365Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GT27JDZVW1HGK9N2CTFZKZ",
+        "run": "prun_01M8GT27AY7WEC0MM617W7Y72T",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GT27M5XGWXAW70GKG7B34Y",
+        "aether_task": "tsk_01M8GT27M5XGWXAW70GKG7B34Z",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: re-queue on adaptive. The requested implementation explicitly requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers (SPEC.md), so it necessarily changes concurrency/locking behavior. The stage contract says concurrency or locking work must commit nothing and be escalated. I inspected the clean baseline and found ledger.py is a stub with only two basic tests; no files were changed and no checks were run."
+        },
+        "verdict": null,
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.00425194,
+        "started_at": "2026-11-28T10:08:56.909390911Z",
+        "finished_at": "2026-11-28T10:09:31.771841720Z"
+      },
+      {
+        "id": "stg_01M8GT4N6GGGYJ8JQ4TFZXRW5S",
+        "run": "prun_01M8GT4N4DHF3V1W8CDBQK4Q22",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GT4N77B7EZZE2WS68Q71Y5",
+        "aether_task": "tsk_01M8GT4N77HQ1VE1P98735V4Y9",
+        "state": {
+          "state": "failed",
+          "error": "ESCALATE: SPEC.md requires linearizable cross-thread transfers and snapshots plus deadlock-safe opposite transfers. The adaptive implement stage contract prohibits committing concurrency or locking changes, so this needs a pipeline that permits that work. The branch remains clean at 912834fc499bc6fead3efb4da7de17ba5aa1b10b; ledger.py is still a stub with two basic tests; no checks or edits were performed."
+        },
+        "verdict": null,
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier",
+        "summary": null,
+        "structured": null,
+        "cost_usd": 0.003782600000000001,
+        "started_at": "2026-11-28T10:10:16.400740837Z",
+        "finished_at": "2026-11-28T10:10:36.768164402Z"
+      },
+      {
+        "id": "stg_01M8GT76DX85V4P4MF7FJ7H58J",
+        "run": "prun_01M8GT76AD3YQ2RG0FAZCQP2V9",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "model_segments": [
+          {
+            "delivery": "ntf_01M8GT7G1KBKG9ZEBHJAHVE5RH",
+            "choice": {
+              "model": {
+                "provider": "codex",
+                "model": "gpt-6-luna"
+              },
+              "effort": "high"
+            },
+            "started_at": "2026-11-28T10:11:49.484033221Z",
+            "cost_before_usd": 0.0009979600000000002
+          }
+        ],
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GT76FMMY0Q921T6FDWRAT3",
+        "aether_task": "tsk_01M8GT76FMT46YKCQ8ZFX6V06Y",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier",
+        "summary": "Implemented the bounded thread-safe ledger in ledger.py and expanded test_ledger.py from 2 to 10 tests. `PYTHONDONTWRITEBYTECODE=1 python -m unittest -v` passed (10 tests); `git diff --check` passed. Reviewer passed the full change with no findings. Commit: 69b4309695e1defdd45f9fcf3a74d485d15cf521.",
+        "structured": {
+          "checks": [
+            "PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "69b4309695e1defdd45f9fcf3a74d485d15cf521",
+          "evidence": [
+            {
+              "after": "PYTHONDONTWRITEBYTECODE=1 python -m unittest -v: Ran 10 tests in 0.011s — OK.",
+              "before": "ledger.py raised NotImplementedError for all API methods; test_ledger.py contained 2 basic cases.",
+              "caption": "Baseline had a stub and two basic tests; the committed implementation passes the expanded suite.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "69b4309695e1defdd45f9fcf3a74d485d15cf521",
+          "pr": {
+            "body": "ledger.py validates construction and transfer arguments, preserves balances on failures, handles same-account transfers, and protects transfers and copied snapshots with one per-ledger lock. test_ledger.py covers validation order, invalid types and bounds, unknown accounts, insufficient funds, destination overflow, aliasing, same-account boundaries, opposite transfers, and snapshots during transfers. Verification: PYTHONDONTWRITEBYTECODE=1 python -m unittest -v (10 passed); git diff --check (passed). No separate build, lint, or formatting configuration exists. Whole-change review covered base 912834fc499bc6fead3efb4da7de17ba5aa1b10b through head 69b4309695e1defdd45f9fcf3a74d485d15cf521; passed with no findings. No follow-up findings.",
+            "summary": "Made the bounded ledger implementation complete. It now validates inputs, transfers atomically, and returns independent snapshots. Before: stub and 2 basic tests; now: thread-safe behavior with 10 focused tests.",
+            "title": "implement atomic ledger transfers"
+          },
+          "review": {
+            "reviewed_head": "69b4309695e1defdd45f9fcf3a74d485d15cf521",
+            "reviewer_agents": [
+              "agt_01M8GTA7B9JAB1G64F94RQ7M3M"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GTA7B9JAB1G64F94RQ7M3M",
+                "base": "912834fc499bc6fead3efb4da7de17ba5aa1b10b",
+                "findings": 0,
+                "head": "69b4309695e1defdd45f9fcf3a74d485d15cf521",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GTA7B9JAB1G64F94RQ7M3M"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "69b4309695e1defdd45f9fcf3a74d485d15cf521",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GTA7B9JAB1G64F94RQ7M3M",
+                    "base": "912834fc499bc6fead3efb4da7de17ba5aa1b10b",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": {
+              "level": "high",
+              "why": "Changes lock-protected shared-state behavior and thread linearizability."
+            },
+            "why": "Behavior changes affect lock-protected shared state and thread linearizability. Tests cover opposite transfers and concurrent snapshots; all 10 tests pass."
+          },
+          "tree": "54dc8fba00b71272ccf415da57b8c6838f4f3920"
+        },
+        "cost_usd": 0.012608060000000004,
+        "started_at": "2026-11-28T10:11:39.581359086Z",
+        "finished_at": "2026-11-28T10:14:34.922126093Z"
+      }
+    ],
+    "spent_usd": 0.020642600000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GT76DX85V4P4MF7FJ7H58J": {
+        "direct_usd": 0.009931360000000002,
+        "delegated_usd": 0.0026767000000000006,
+        "agents": [
+          {
+            "agent": "agt_01M8GTA7B9JAB1G64F94RQ7M3M",
+            "parent": "agt_01M8GT76FMMY0Q921T6FDWRAT3",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.0026767000000000006
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T10:11:49.412591236Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T10:11:49.412591236Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "steers": [
+      {
+        "at": "2026-11-28T10:10:16.313078364Z",
+        "by": "orchestrator",
+        "what": "switched the stages still to run to `adaptive`; sized the efforts of the stages still to run again; queued it again on its branch"
+      },
+      {
+        "at": "2026-11-28T10:11:39.405347641Z",
+        "by": "orchestrator",
+        "what": "amended the brief; switched the stages still to run to `adaptive`; queued it again on its branch",
+        "note": "The repository pipeline contract says adaptive is the path for changes involving concurrency or locking, and its build stage explicitly covers concurrency reasoning. Follow the SPEC requirements for linearizable cross-thread transfers/snapshots and deadlock-safe opposite transfers; implement and test them. The allowed maximum effort is high; use codex/gpt-6-luna at high with a model_reasons entry explaining the concurrency analysis."
+      },
+      {
+        "at": "2026-11-28T10:11:49.426586403Z",
+        "by": "orchestrator",
+        "what": "replaced the model plan"
+      }
+    ],
+    "switched_to": "adaptive"
+  }
+]

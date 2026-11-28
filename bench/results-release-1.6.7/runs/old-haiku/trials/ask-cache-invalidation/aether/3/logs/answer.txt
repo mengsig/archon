@@ -1,0 +1,41 @@
+## Root cause: `updatePrice` only invalidates the product cache entry, not the listing entries
+
+The category pages are served from a separate cache entry that the price update never touches, and that entry lives for 600 seconds.
+
+**The code path**
+
+- `src/pricing.js:6-13` (`updatePrice`) writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That removes only the `product:<sku>` entry.
+- `src/catalog.js:22-33` (`Catalog.listing`) caches category pages under `listing:<category>:<page>` with `LISTING_TTL_SECONDS` (`src/config.js:7`, 600 s). Those rows contain `priceCents` copied out of the store at build time.
+- Nothing deletes `listing:*` keys. `src/cache.js` has only `get`, `set` and `delete(key)`, with no prefix or pattern delete, and `src/keys.js` has no index from category to listing keys. So the listing entry stays until its TTL expires.
+
+**Why the product page is immediate and the listing is not**
+
+`Catalog.product` (`src/catalog.js:12-20`) reads `product:<sku>`. The update deletes that key, so the next read goes to the store. `Catalog.listing` reads the separate `listing:` key, which the update never deletes. The listing therefore serves the old `priceCents` until the entry expires.
+
+**Why it is about 10 minutes**
+
+The listing TTL is 600 seconds, set in `src/config.js:7`. The stale window is at most that long, and it depends on when the page was last built. A page built just before the price change can be stale for nearly the full 10 minutes.
+
+**Reproduction (read-only, run from `/tmp`)**
+
+- Listing price before update: 5000. Product: 5000.
+- After `updatePrice(c, "A1", 4500)`: product returns 4500, listing still returns 5000.
+- Listing at 599 s: 5000. At 600 s: 4500, because the entry expires.
+- `node --test` passes all 3 tests. None of them checks listing freshness after an update; `test/catalog.test.js` only covers the product path.
+
+**Suggested fix**
+
+Invalidate the affected listing entries inside `updatePrice`, in the same place the product key is deleted:
+
+1. Before the store update, look up the product's category, since `updatePrice` currently doesn't read it.
+2. Delete every cached `listing:<category>:<page>` entry for that category. The simplest way is to add a prefix delete to `TtlCache`, or to keep a category → listing-keys index in `Catalog`.
+3. Add a test: warm a listing, update a price in that category, and assert the listing shows the new price right away.
+
+An alternative is to have listings store SKUs and hydrate prices from the product cache at read time. That removes the staleness but adds a lookup per row, so I'd only choose it if listings are read far more often than they are built.
+
+**Caveats**
+
+- `TtlCache` is created per `createCatalog` call and is in-process only. In a multi-instance deployment, invalidation on one instance does not reach the others. Product pages would then be stale elsewhere for up to an hour, and listings for up to 10 minutes. I assumed a single process, which matches the code, but the production topology is not in the repo.
+- Only the price is touched by `updatePrice`. Sorting is by name (`src/store.js:17`), so a price change does not reorder listings. Any future change to name or category would need broader invalidation.
+
+No files were changed. The only commands were read-only: printing the sources, a Node reproduction from `/tmp`, and `node --test` inside the repo.

@@ -1,0 +1,13 @@
+Fixed the off-by-one in window.py and committed it as 76ee4ef ("Fix off-by-one in sliding_windows dropping the last window") on main. The bug was the range upper bound: `range(len(items) - size)` dropped the final window. It is now `range(len(items) - size + 1)`. `python3 -m unittest` passes all 3 tests (test_window.py unchanged). Edge cases I checked by hand: empty list gives [], size == len gives one window, size > len gives [] (range of a non-positive count is empty), and size <= 0 still raises ValueError. A stray `__pycache__/` directory is untracked and was not committed.
+
+The fix is committed as `76ee4ef` on `main`, and `python3 -m unittest` now passes all 3 tests. I did not change the tests.
+
+The bug was in `window.py`: the loop ran over `range(len(items) - size)`, which dropped the final window. The loop now runs over `range(len(items) - size + 1)`, which is the correct window count.
+
+I also checked the edge cases by hand:
+- An empty list returns `[]`.
+- When `size == len(items)`, it returns one window.
+- When `size > len(items)`, the range is empty, so it returns `[]`.
+- A non-positive `size` still raises `ValueError`.
+
+The commit message has no Claude attribution line, because the project CLAUDE.md says not to include Claude attribution in commits. A stray untracked `__pycache__/` directory was left uncommitted.

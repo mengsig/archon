@@ -1,0 +1,22 @@
+Implemented the token-bucket rate limiter per SPEC.md in ratelimit.py (standard library only) and committed it as c9b8a0a on main, with edge-case tests added to test_ratelimit.py. All 19 tests pass (python3 -m unittest test_ratelimit); the 3 original basic tests also pass.
+
+Implementation decisions:
+- Validation: bucket capacity/refill and KeyedLimiter's max_keys raise ValueError; n <= 0 or n > capacity raises ValueError. Validation runs before any state change, so an invalid call on KeyedLimiter neither creates nor evicts a key.
+- Clock: the bucket keeps the latest time it has seen. A backwards clock adds no tokens and takes none away.
+- KeyedLimiter: an OrderedDict gives LRU order. try_acquire and wait_time both count as a use. wait_time on a new key creates and tracks it, since the spec says buckets are created on first use. An evicted key returns full.
+- Tests cover validation, failed acquires consuming nothing, fractional accrual, the capacity cap, wait_time accuracy and non-consumption, clock rewind, and LRU eviction.
+
+Known caveat: exact float comparisons mean that sleeping exactly wait_time() seconds can, after rounding, still fall a hair short of n tokens. I kept the exact comparison because the spec says "at least n". Say if you want a tolerance.
+
+Commit attribution: I committed as the configured git user (mengsig) with no Co-Authored-By line, because the project CLAUDE.md forbids Claude attribution and says it takes precedence over the attribution reminder.
+
+The rate limiter is implemented per `SPEC.md` and committed on `main` as `c9b8a0a`. All 19 tests pass (the 3 original basic tests plus 16 new edge-case tests).
+
+- **`ratelimit.py`:** `TokenBucket` and `KeyedLimiter` with standard library only. Validation errors are raised before any state changes. A clock that goes backwards adds no tokens. `KeyedLimiter` evicts the least recently used key, and an evicted key returns full.
+- **`test_ratelimit.py`:** I added tests for validation, failed acquires consuming nothing, fractional accrual, the capacity cap, `wait_time` accuracy, clock rewind, and LRU eviction.
+
+Choices I made where the spec was silent:
+- `wait_time` on a new key creates and tracks that key, since the spec says buckets are created on first use and both methods count as a use.
+- The commit has no `Co-Authored-By` line. The project `CLAUDE.md` forbids Claude attribution and takes precedence over the attribution reminder.
+
+One caveat: comparisons are exact floats. Sleeping exactly `wait_time()` seconds can, after rounding, still fall a hair short of `n` tokens. I kept the exact check because the spec says "at least n". I can add a small tolerance if you want one.

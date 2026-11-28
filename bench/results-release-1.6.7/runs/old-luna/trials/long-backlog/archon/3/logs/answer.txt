@@ -1,0 +1,60 @@
+All four tickets are queued as separate `direct` items in `long-backlog`. Each brief requires added tests, the specified unittest command, standard-library-only changes, and a separate commit.
+
+- TT-101: `qi_01M8GQGDCX1111GQ2F8MAV0EAG`
+- TT-102: `qi_01M8GQGDGG3B1937KY1ER0F9CJ`
+- TT-103: `qi_01M8GQGDFM115Z9SM5PQE8Y8WJ`
+- TT-104: `qi_01M8GQGDDY5S700TF2A347VGXP`
+
+They’re queued for implementation; I’ll report the outcomes when the runs finish.
+
+Done: TT-102: RFC 4180 CSV export. Implemented TT-102 RFC 4180 CSV escaping with CRLF row endings and added exact-output regression tests. Required unittest command passed (5 tests); independent review passed with no findings. Commit 57fe0663faa0319d4051acf4a9257c1a4b567b04 (tree 14976dcb48864ba34be458bdd226e44b1facd339).
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQH54VGX8BF62PXP4C9JKX)
+
+SHIPPED: commit 57fe0663faa0319d4051acf4a9257c1a4b567b04 on the run branch
+Branch `archon/1er0f9cj-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/0048443ed5792f88fcd7ed48/long-backlog holds it (2 files changed, 27 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GQGDGG3B1937KY1ER0F9CJ`; land it in `main`: `archon merge qi_01M8GQGDGG3B1937KY1ER0F9CJ`.
+
+Done: TT-104: Undo. Implemented TT-104 undo history for add, complete, and delete, with exact delete snapshots and monotonic IDs. Added focused behavior tests. `python3 -m unittest discover -s tests -t .` passed (8 tests); independent review passed with no findings. Committed as 5dc349b9c59f84d1840247704782d786bf56a834. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQJAE2VGF0DKJGVNY7QZSR)
+
+SHIPPED: commit 5dc349b9c59f84d1840247704782d786bf56a834 on the run branch
+Branch `archon/a347vgxp-tt-104-undo` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/0048443ed5792f88fcd7ed48/long-backlog holds it (2 files changed, 74 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GQGDDY5S700TF2A347VGXP`; land it in `main`: `archon merge qi_01M8GQGDDY5S700TF2A347VGXP`.
+
+Done: TT-103: Search query syntax. Implemented TT-103 query syntax: quoted phrase terms, AND matching, case-insensitive title and tag matching, status filters, and QueryError for invalid terms or unterminated quotes. Added focused tests. The exact unittest command passed (6 tests); commit 6b1d23c. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQK3BWFRESAHS3717N2E6D)
+
+SHIPPED: commit 6b1d23c340247dc893130afcdf1cec72e396996c on the run branch
+Branch `archon/pqe8y8wj-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/0048443ed5792f88fcd7ed48/long-backlog holds it (2 files changed, 70 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GQGDFM115Z9SM5PQE8Y8WJ`; land it in `main`: `archon merge qi_01M8GQGDFM115Z9SM5PQE8Y8WJ`.
+
+Done: TT-101: Reject impossible due dates. TT-101 now rejects impossible calendar dates and unsupported due-date forms with InvalidDate, preserves the original input in errors, and handles valid relative offsets including +0d. Added regression coverage; `python3 -m unittest discover -s tests -t .` passes (6 tests). Committed as 6ab3149ab429e532a4099c47bc9e61a82bf12b3a. The oversized-offset edge case found in review was fixed and the delta review approved it.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQHT971ZJZ4S3XM7YWZSGK), codex/gpt-6-luna (agent agt_01M8GQM3ZY9586A6T8YNSYEF4T)
+
+SHIPPED: commit 6ab3149ab429e532a4099c47bc9e61a82bf12b3a on the run branch
+Branch `archon/8mav0eag-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/0048443ed5792f88fcd7ed48/long-backlog holds it (2 files changed, 28 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M8GQGDCX1111GQ2F8MAV0EAG`; land it in `main`: `archon merge qi_01M8GQGDCX1111GQ2F8MAV0EAG`.
+
+Implemented TT-102 RFC 4180 CSV escaping with CRLF row endings and added exact-output regression tests. Required unittest command passed (5 tests); independent review passed with no findings. Commit 57fe0663faa0319d4051acf4a9257c1a4b567b04 (tree 14976dcb48864ba34be458bdd226e44b1facd339).
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQH54VGX8BF62PXP4C9JKX)
+
+SHIPPED: commit 57fe0663faa0319d4051acf4a9257c1a4b567b04 on the run branch
+
+Implemented TT-103 query syntax: quoted phrase terms, AND matching, case-insensitive title and tag matching, status filters, and QueryError for invalid terms or unterminated quotes. Added focused tests. The exact unittest command passed (6 tests); commit 6b1d23c. No open findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQK3BWFRESAHS3717N2E6D)
+
+SHIPPED: commit 6b1d23c340247dc893130afcdf1cec72e396996c on the run branch
+
+Implemented TT-104 undo history for add, complete, and delete, with exact delete snapshots and monotonic IDs. Added focused behavior tests. `python3 -m unittest discover -s tests -t .` passed (8 tests); independent review passed with no findings. Committed as 5dc349b9c59f84d1840247704782d786bf56a834. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQJAE2VGF0DKJGVNY7QZSR)
+
+SHIPPED: commit 5dc349b9c59f84d1840247704782d786bf56a834 on the run branch
+
+TT-101 now rejects impossible calendar dates and unsupported due-date forms with InvalidDate, preserves the original input in errors, and handles valid relative offsets including +0d. Added regression coverage; `python3 -m unittest discover -s tests -t .` passes (6 tests). Committed as 6ab3149ab429e532a4099c47bc9e61a82bf12b3a. The oversized-offset edge case found in review was fixed and the delta review approved it.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQHT971ZJZ4S3XM7YWZSGK), codex/gpt-6-luna (agent agt_01M8GQM3ZY9586A6T8YNSYEF4T)
+
+SHIPPED: commit 6ab3149ab429e532a4099c47bc9e61a82bf12b3a on the run branch

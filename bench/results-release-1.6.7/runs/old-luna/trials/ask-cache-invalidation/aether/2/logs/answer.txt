@@ -1,0 +1,7 @@
+**Root cause:** `updatePrice` in [pricing.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/1bfb8f6758c3abaa80610d40/ask-cache-invalidation/src/pricing.js:6) updates the store and deletes only `product:${sku}`. That makes the next product page read the new price.
+
+Category pages use a separate cache: [catalog.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/1bfb8f6758c3abaa80610d40/ask-cache-invalidation/src/catalog.js:22) caches listing rows under `listing:${category}:${page}`. Those rows include `priceCents`, but the price update path never invalidates them. The old value remains served until that entry expires.
+
+The delay is up to **600 seconds (10 minutes)**, set by `LISTING_TTL_SECONDS` in [config.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/r-a7e9g5pr/archon-bench/work/20261128T072017Z/1bfb8f6758c3abaa80610d40/ask-cache-invalidation/src/config.js:7). Each listing entry’s expiry starts when it is cached, so the actual stale period depends on how long ago the listing was populated.
+
+**Fix:** when a price changes, invalidate every cached listing page for that product’s category, as well as its product key. Alternatively, use a category-level cache version or another invalidation mechanism that ensures subsequent listing reads rebuild from the updated store. No code was changed.

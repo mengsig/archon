@@ -258,6 +258,9 @@ pub enum Command {
         /// Clear this scope's overlay and restore inheritance.
         #[arg(long)]
         reset: bool,
+        /// Forget the repository's saved design preview recipe.
+        #[arg(long, requires = "repo", conflicts_with_all = ["set", "reset"])]
+        clear_design_recipe: bool,
     },
     /// Published reports with their state and where they were shown.
     ///

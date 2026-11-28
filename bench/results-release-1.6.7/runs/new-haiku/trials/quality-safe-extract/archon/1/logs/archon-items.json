@@ -1,0 +1,568 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GJBQ8315XFJ54F5B2TCWY8",
+      "repo": "repo_01M8GJB9Z1W7XVJJMD31J563RN",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, local socket): \"Implement `safe_extract.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: implement safe_extract.py exactly as SPEC.md specifies.\n\nAcceptance criteria:\n- The public API documented in SPEC.md is preserved by name, signature, and return/raise behaviour.\n- Every error case in SPEC.md raises the specified error, with the specified message or type.\n- Every boundary case in SPEC.md is handled; read SPEC.md in full and enumerate its cases before coding.\n- Add focused tests for each specified error and boundary case, beyond the existing basic tests. Run the full test suite and report its result.\n- Standard library only; no new dependencies.\n- Path-traversal, absolute-path, symlink and archive-bomb style risks are handled as SPEC.md requires; do not weaken them to pass tests.\n- Follow the repository's CLAUDE.md commandments (small functions, explicit validation at the boundary, no swallowed exceptions).\n- Commit the work on the local branch with a clear message. Do not push.\n\nConstraints: if SPEC.md is ambiguous on a point that changes behaviour, pick the most conservative reading (fail closed), state it in the commit body and final summary. Do not change the existing public API to make tests easier.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "safe-extract",
+        "notify"
+      ],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GJBQ8315XFJ54F5B2TCWY8",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:54:19.831475548Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T07:54:19.831475548Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T07:54:19.831475548Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "Security-sensitive extraction code (path traversal, links, resource limits) with a full spec to honour; high effort for a risky diff."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GJBQTFZCFRY4B9GCGP34AP",
+        "summary": "Implemented safe_extract.extract per SPEC.md in commit 9a94839 on archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi (tree 71db1a2187bece2053add1c15da4b5adcceba73c, based on fea9ded). Stdlib only. Changed safe_extract.py and test_safe_extract.py. Verification: `python3 -B -m unittest` gives 36 tests OK (2 original plus 34 new covering each SPEC error and boundary case); a mutant with the ancestor-directory check removed fails 5 tests; longest function is 17 lines. Three whole-change reviewers (agt_01M8GJH1QZPE4M4H9XVJ48W1EZ, agt_01M8GJHA6SADK2QXK1YPNMBFFE, agt_01M8GJHMNNH9939B4MP5WMDBQK) all passed the head with no blocking findings. Open non-blocking follow-ups are in pr.body: over-255-byte names fail mid-write, exact-string collision checks on case-insensitive filesystems, '..' in roots, Path('') handling, root-through-file error message, subclass rejection, missing assertions, cwd-based temp dirs, and a missing non-dangling target-symlink test. Assumptions: POSIX-only, fail-closed on ambiguous types and roots, and no rollback after I/O errors. Working tree is clean. No services were started; the reviewer agents have completed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJH1QZPE4M4H9XVJ48W1EZ), claude-code/claude-haiku-5-5 (agent agt_01M8GJHA6SADK2QXK1YPNMBFFE), claude-code/claude-haiku-5-5 (agent agt_01M8GJHMNNH9939B4MP5WMDBQK)\n\nSHIPPED: commit 9a948393a610ff14e9d762dc6e664e22fc3a7914 on the run branch"
+      },
+      "created_at": "2026-11-28T07:54:19.267051713Z",
+      "updated_at": "2026-11-28T08:00:27.461821358Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GJBQTFZCFRY4B9GCGP34AP",
+        "item": "qi_01M8GJBQ8315XFJ54F5B2TCWY8",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8GJBR02RDXRM9Q5350AAWQD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3e000780d9271690802bc84c/.archon/data/worktrees/quality-safe-extract/qi_01M8GJBQ8315XFJ54F5B2TCWY8",
+        "branch": "archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract.extract per SPEC.md in commit 9a94839 on archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi (tree 71db1a2187bece2053add1c15da4b5adcceba73c, based on fea9ded). Stdlib only. Changed safe_extract.py and test_safe_extract.py. Verification: `python3 -B -m unittest` gives 36 tests OK (2 original plus 34 new covering each SPEC error and boundary case); a mutant with the ancestor-directory check removed fails 5 tests; longest function is 17 lines. Three whole-change reviewers (agt_01M8GJH1QZPE4M4H9XVJ48W1EZ, agt_01M8GJHA6SADK2QXK1YPNMBFFE, agt_01M8GJHMNNH9939B4MP5WMDBQK) all passed the head with no blocking findings. Open non-blocking follow-ups are in pr.body: over-255-byte names fail mid-write, exact-string collision checks on case-insensitive filesystems, '..' in roots, Path('') handling, root-through-file error message, subclass rejection, missing assertions, cwd-based temp dirs, and a missing non-dangling target-symlink test. Assumptions: POSIX-only, fail-closed on ambiguous types and roots, and no rollback after I/O errors. Working tree is clean. No services were started; the reviewer agents have completed.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJH1QZPE4M4H9XVJ48W1EZ), claude-code/claude-haiku-5-5 (agent agt_01M8GJHA6SADK2QXK1YPNMBFFE), claude-code/claude-haiku-5-5 (agent agt_01M8GJHMNNH9939B4MP5WMDBQK)\n\nSHIPPED: commit 9a948393a610ff14e9d762dc6e664e22fc3a7914 on the run branch"
+        },
+        "cost_usd": 0.14480057000000002,
+        "started_at": "2026-11-28T07:54:20.002039868Z",
+        "finished_at": "2026-11-28T08:00:27.461821358Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GJBQZRSSYAQVKWXWS3JW00",
+        "run": "prun_01M8GJBQTFZCFRY4B9GCGP34AP",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "high",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GJBR0SM276AYT4JGDZWWBX",
+        "aether_task": "tsk_01M8GJBR0SYC9X2Q678HJY6HAJ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins high",
+        "summary": "Implemented safe_extract.extract per SPEC.md in commit 9a94839 on archon/5b2tcwy8-implement-safe-extract-py-per-spec-md-wi (tree 71db1a2187bece2053add1c15da4b5adcceba73c, based on fea9ded). Stdlib only. Changed safe_extract.py and test_safe_extract.py. Verification: `python3 -B -m unittest` gives 36 tests OK (2 original plus 34 new covering each SPEC error and boundary case); a mutant with the ancestor-directory check removed fails 5 tests; longest function is 17 lines. Three whole-change reviewers (agt_01M8GJH1QZPE4M4H9XVJ48W1EZ, agt_01M8GJHA6SADK2QXK1YPNMBFFE, agt_01M8GJHMNNH9939B4MP5WMDBQK) all passed the head with no blocking findings. Open non-blocking follow-ups are in pr.body: over-255-byte names fail mid-write, exact-string collision checks on case-insensitive filesystems, '..' in roots, Path('') handling, root-through-file error message, subclass rejection, missing assertions, cwd-based temp dirs, and a missing non-dangling target-symlink test. Assumptions: POSIX-only, fail-closed on ambiguous types and roots, and no rollback after I/O errors. Working tree is clean. No services were started; the reviewer agents have completed.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest (36 tests, OK)",
+            "AST function-length audit (longest function 17 lines)"
+          ],
+          "commit": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+          "evidence": [
+            {
+              "after": "Ran 36 tests in 0.008s\n\nOK",
+              "before": "Ran 2 tests ... FAILED (errors=2) — NotImplementedError from safe_extract.extract",
+              "caption": "Test suite before (unchanged tree, stub): the 2 existing tests error with NotImplementedError. After (9a94839): 36 tests, OK.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+          "pr": {
+            "body": "Approach: safe_extract.py validates everything before the first write. Entries and names must be exact types; names are strict UTF-8 with no backslash, colon, NUL, leading slash, or empty, '.' or '..' component. Duplicate names and file/directory collisions are rejected in either order. Root must be an existing non-symlink directory and must not contain '..'. Every existing ancestor must be a real directory and every target must be absent (lstat, so dangling links count). Files are written with mode 'x' (O_EXCL), so nothing is overwritten or followed. Unexpected OSError propagates.\n\nChecks: python3 -B -m unittest, 36 tests OK. A mutant with the ancestor-directory check removed fails 5 tests.\n\nReview: three whole-change reads at 9a94839, all pass, no blocking findings.\n\nNon-blocking follow-ups (open): (1) names over 255 bytes pass validation and fail mid-write with ENAMETOOLONG, so earlier entries may be left behind; (2) case-insensitive and Unicode-normalising filesystems can fail mid-batch because collision checks are exact-string; (3) '..' in root is rejected though SPEC does not name it; (4) Path('') means '.' while '' is rejected; (5) a root running through a regular file reports 'does not exist'; (6) subclasses of list, tuple, str and bytes are rejected by design; (7) some functions have no assertions, per CLAUDE.md; (8) ExtractBasics writes temp dirs into the cwd; (9) the non-dangling target-symlink case has no dedicated test.\n\nAssumptions: SPEC is read as POSIX-only; rollback after I/O errors is out of scope.",
+            "summary": "Made extract(entries, root) write regular-file batches safely. Now: whole batch validated before any write; rejects traversal, absolute and symlink paths, overwrites and collisions with ValueError. Before: NotImplementedError stub. Now: 36 tests pass.",
+            "title": "feat: implement safe batch extraction of regular files"
+          },
+          "review": {
+            "reviewed_head": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+            "reviewer_agents": [
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ",
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE",
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ",
+                "base": "fea9ded57153acd23457308645644e561d96badf",
+                "findings": 8,
+                "head": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GJHA6SADK2QXK1YPNMBFFE",
+                "base": "fea9ded57153acd23457308645644e561d96badf",
+                "findings": 8,
+                "head": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GJHMNNH9939B4MP5WMDBQK",
+                "base": "fea9ded57153acd23457308645644e561d96badf",
+                "findings": 4,
+                "head": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ",
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE",
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:1": {
+                "blocking": false,
+                "description": "test_rejects_lone_surrogate_names passes even with the explicit UTF-8 check in safe_extract.py:43-46 deleted. The surrogate is then rejected later by os.lstat with UnicodeEncodeError, which subclasses ValueError. Confirmed by running the test against a mutant copy: it passes. at test_safe_extract.py:81 (remedy: Use assertRaisesRegex(ValueError, 'UTF-8') or assert the exception message, so the test",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:1",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:2": {
+                "blocking": false,
+                "description": "Batch collision checks are exact-string only. On case-insensitive or normalization-insensitive filesystems (macOS, Windows; NFC vs NFD), names such as 'A' and 'a' pass validation. The second open('xb') then fails with FileExistsError after earlier files are written. at safe_extract.py:55 (remedy: State the case-sensitive POSIX assumption in the module docstring or SPEC, or add a folded-name collis",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:2",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:3": {
+                "blocking": false,
+                "description": "The only guard against writing through a parent that became a symlink after validation is an assert, which is removed under python -O. The brief also puts TOCTOU outside scope, so this is defence in depth only. at safe_extract.py:111 (remedy: Replace the assert with an explicit check that raises ValueError (or a dedicated error), so the guard survives -O.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:3",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:4": {
+                "blocking": false,
+                "description": "The 'even when empty' requirement for non-list batches is covered only by the empty tuple (). Empty iterators and empty generators are not tested. at test_safe_extract.py:41 (remedy: Add iter([]) and an empty generator expression to the batch list in test_rejects_non_list_batches_without_consuming_them.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:4",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:5": {
+                "blocking": false,
+                "description": "An empty str root is rejected, but Path('') is accepted and resolves to '.' (verified by probe). The two root types behave differently for the same empty input. at safe_extract.py:68 (remedy: Either reject Path('') too (check str(root) == '' or root.parts == ()), or document that Path('') means the current directory.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:5",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:6": {
+                "blocking": false,
+                "description": "_lstat_or_none maps NotADirectoryError to None. A root whose parent component is a regular file (e.g. file/x) is reported as 'root does not exist' (verified by probe), which is misleading. at safe_extract.py:83 (remedy: Keep the helper for the target and ancestor checks, but give the root check its own lstat that reports 'not a directory' for NotADirectoryError.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:6",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:7": {
+                "blocking": false,
+                "description": "An over-long name component (e.g. 300 bytes) passes name validation and raises OSError ENAMETOOLONG from the validation-phase lstat. It is not a ValueError, and it is not in the spec's enumerated error list. Verified: the root stays empty, so no partial write occurs. at safe_extract.py:95 (remedy: Either reject components longer than 255 bytes in _validate_name with a ValueError, or document that ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:7",
+                "resolved_in": null
+              },
+              "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:8": {
+                "blocking": false,
+                "description": "ExtractBasics uses tempfile.TemporaryDirectory(dir='.'), creating temp dirs in the caller's working directory. TempRootCase uses mkdtemp() in the system temp directory, so the two classes are inconsistent. at test_safe_extract.py:12 (remedy: Use the default temp directory (tempfile.TemporaryDirectory() with no dir argument) in ExtractBasics.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:8",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:1": {
+                "blocking": false,
+                "description": "Over-long names and paths raise OSError (ENAMETOOLONG) from os.lstat instead of ValueError. Observed: a 300-byte path component and a 5000-byte total path both raise OSError. No writes happen first, so the filesystem is unchanged. at safe_extract.py:95 (remedy: Either document that OS-level name-length errors propagate as OSError, or pre-check component and total length and raise ValueError. Add a",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:1",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:2": {
+                "blocking": false,
+                "description": "A root containing '..' is rejected (test_rejects_invalid_roots, test_safe_extract.py:112). SPEC says root is 'a pathlib.Path or string naming an existing directory', and '/x/../root' names one. at safe_extract.py:71 (remedy: Decide whether '..' in root is 'invalid' under SPEC's 'Reject invalid roots'. If it is kept, state it in SPEC.md. If not, remove the check and the test case.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:2",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:3": {
+                "blocking": false,
+                "description": "Batch conflict detection is exact-string only. On case-insensitive filesystems (default macOS and Windows), names 'a' and 'A' both pass validation, then the second write fails with FileExistsError after the first file is already written. This breaks the 'validate the whole batch before any write' rule. Reasoned from the code, not run; this host is case-sensitive Linux. at safe_extract.py:56 (remed",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:3",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:4": {
+                "blocking": false,
+                "description": "Uncovered by name: a target that is a non-dangling symlink, to an existing file or directory inside or outside root. SPEC names 'the target' and 'links to locations inside root'. Only the dangling-target test (line 178) exists. I ran the case manually: it raises ValueError('target already exists') and the link target stays unchanged. It uses the same lstat branch as the dangling test. at test_safe",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:4",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:5": {
+                "blocking": false,
+                "description": "_lstat_or_none maps NotADirectoryError to 'absent'. For a root such as 'file/sub', the reported error is 'root does not exist', which is misleading (I verified this). The check is also correct only because _check_filesystem checks ancestors before targets. That ordering is an implicit dependency no test pins. at safe_extract.py:83 (remedy: Report 'root path component is not a directory' for NotADi",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:5",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:6": {
+                "blocking": false,
+                "description": "Exact-type checks reject subclasses that SPEC's wording (list, tuple, string, bytes) would normally cover: list subclasses (line 10), tuple subclasses such as namedtuple (line 21), str subclasses (line 31) and bytes subclasses (line 25). bytearray and memoryview are correctly rejected by the same checks. No test covers subclasses. at safe_extract.py:10 (remedy: Keep the strictness and document it ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:6",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:7": {
+                "blocking": false,
+                "description": "The public function has no '-> list[str]' annotation, which SPEC gives as the signature. extract, _validate_root and _check_filesystem have no assertions. CLAUDE.md asks for two or more meaningful assertions per non-trivial function at boundaries. Only _ancestors (line 51) and _write_entries (line 111) have one. at safe_extract.py:8 (remedy: Add the annotation. Add boundary assertions only where t",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:7",
+                "resolved_in": null
+              },
+              "agt_01M8GJHA6SADK2QXK1YPNMBFFE:8": {
+                "blocking": false,
+                "description": "ExtractBasics uses tempfile.TemporaryDirectory(dir='.') (lines 12 and 20), so tests write into the current working directory. Other tests use the system temp directory. at test_safe_extract.py:12 (remedy: Use the same temp-root base as TempRootCase.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHA6SADK2QXK1YPNMBFFE:8",
+                "resolved_in": null
+              },
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK:1": {
+                "blocking": false,
+                "description": "_validate_name does not bound name length. A component longer than 255 bytes (NAME_MAX) with a missing parent passes validation: lstat returns ENOENT, so the check finds nothing. The write phase then fails with OSError ENAMETOOLONG after earlier entries and directories are already created. Reproduced: [('a', b'1'), ('d/' + 'y'*300, b'2')] leaves 'a' and 'd/' in root and raises OSError errno 36. at",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHMNNH9939B4MP5WMDBQK:1",
+                "resolved_in": null
+              },
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK:2": {
+                "blocking": false,
+                "description": "No test covers the root spellings I probed by hand: a trailing slash, '.' or '//' components, or a symlink root given with a trailing slash. All of these behaved correctly (rejected for symlinks, accepted for real directories), but they are unpinned. at test_safe_extract.py:254 (remedy: Add a boundary test for str(root)+'/', str(root)+'/.' and a symlink-to-root with a trailing slash, asserting Val",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHMNNH9939B4MP5WMDBQK:2",
+                "resolved_in": null
+              },
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK:3": {
+                "blocking": false,
+                "description": "Root validation rejects the empty string but accepts Path(''), which is '.'. The two inputs are treated differently. at safe_extract.py:68 (remedy: Reject Path('') explicitly with the same ValueError, or document that an empty Path means '.'.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHMNNH9939B4MP5WMDBQK:3",
+                "resolved_in": null
+              },
+              "agt_01M8GJHMNNH9939B4MP5WMDBQK:4": {
+                "blocking": false,
+                "description": "Several functions have no assertions, against CLAUDE.md commandment 3. Examples are _validate_name, _validate_root and _check_filesystem. _write_entries has one assert placed after the mkdir, and asserts are stripped under python -O. at safe_extract.py:8 (remedy: Optionally add invariant asserts such as a non-empty name at the top of _check_filesystem. Do not add decorative asserts.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GJBQZRSSYAQVKWXWS3JW00"
+                },
+                "id": "agt_01M8GJHMNNH9939B4MP5WMDBQK:4",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "9a948393a610ff14e9d762dc6e664e22fc3a7914",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ",
+                    "base": "fea9ded57153acd23457308645644e561d96badf",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:1",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:2",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:3",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:4",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:5",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:6",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:7",
+                      "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GJHA6SADK2QXK1YPNMBFFE",
+                    "base": "fea9ded57153acd23457308645644e561d96badf",
+                    "finding_count": 8,
+                    "finding_ids": [
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:1",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:2",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:3",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:4",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:5",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:6",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:7",
+                      "agt_01M8GJHA6SADK2QXK1YPNMBFFE:8"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GJHMNNH9939B4MP5WMDBQK",
+                    "base": "fea9ded57153acd23457308645644e561d96badf",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GJHMNNH9939B4MP5WMDBQK:1",
+                      "agt_01M8GJHMNNH9939B4MP5WMDBQK:2",
+                      "agt_01M8GJHMNNH9939B4MP5WMDBQK:3",
+                      "agt_01M8GJHMNNH9939B4MP5WMDBQK:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Writes files under a caller-supplied root, so it is the security boundary for path traversal, symlink following and overwrites. Files touched: safe_extract.py (new implementation) and test_safe_extract.py. No existing callers. All three reviewers confirmed high."
+          },
+          "tree": "71db1a2187bece2053add1c15da4b5adcceba73c"
+        },
+        "cost_usd": 0.14480057000000002,
+        "started_at": "2026-11-28T07:54:20.023861145Z",
+        "finished_at": "2026-11-28T08:00:22.745242118Z"
+      }
+    ],
+    "spent_usd": 0.14480057000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GJBQZRSSYAQVKWXWS3JW00": {
+        "direct_usd": 0.06020578000000001,
+        "delegated_usd": 0.08459479,
+        "agents": [
+          {
+            "agent": "agt_01M8GJH1QZPE4M4H9XVJ48W1EZ",
+            "parent": "agt_01M8GJBR0SM276AYT4JGDZWWBX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.030649449999999995
+          },
+          {
+            "agent": "agt_01M8GJHA6SADK2QXK1YPNMBFFE",
+            "parent": "agt_01M8GJBR0SM276AYT4JGDZWWBX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.030350260000000004
+          },
+          {
+            "agent": "agt_01M8GJHMNNH9939B4MP5WMDBQK",
+            "parent": "agt_01M8GJBR0SM276AYT4JGDZWWBX",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.023595080000000004
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:54:19.831475548Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T07:54:19.831475548Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T07:54:19.831475548Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

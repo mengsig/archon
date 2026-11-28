@@ -1052,6 +1052,10 @@ pub enum Request {
     /// A stage agent (re)points the preview at its dev server.
     DesignPreview {
         url: String,
+        /// How the stack came up; saved for the repository once the preview
+        /// and the recipe's readiness checks answer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recipe: Option<Box<crate::design::recipe::PreviewRecipe>>,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },
@@ -1084,6 +1088,15 @@ pub enum Request {
         id: Option<String>,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
+    },
+    /// A stage agent reads the preview recipe saved for its repository.
+    DesignRecipe {
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    /// Operator only: forget a repository's saved preview recipe.
+    ClearDesignRecipe {
+        repo: RepoRef,
     },
 }
 
@@ -1147,6 +1160,7 @@ impl Request {
             | Self::DesignFinishConfirm { .. }
             | Self::DesignFinishCancel { .. }
             | Self::DesignPreview { .. }
+            | Self::DesignRecipe { .. }
             | Self::DesignNoteReport { .. } => Some(DESIGN_PROTOCOL_VERSION),
             _ => None,
         }
@@ -1225,6 +1239,7 @@ impl Request {
             | Self::SetCaps { .. }
             | Self::SetSettings { .. }
             | Self::ResetSettings { .. }
+            | Self::ClearDesignRecipe { .. }
             | Self::Say { .. }
             | Self::OrchestratorRestart
             | Self::OrchestratorAttach
@@ -1284,6 +1299,7 @@ impl Request {
             | Self::DesignPreview { .. }
             | Self::DesignNoteReport { .. }
             | Self::DesignHistory { .. }
+            | Self::DesignRecipe { .. }
             | Self::SubmitVerdict { .. }
             | Self::ApproveIntent(_)
             | Self::Enqueue(_)

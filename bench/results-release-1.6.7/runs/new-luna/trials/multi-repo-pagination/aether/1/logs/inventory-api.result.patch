@@ -1,0 +1,91 @@
+diff --git a/README.md b/README.md
+index 1a55755..8a45cd2 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,11 @@ In-memory inventory service. `api.handle(request)` maps a request
+ 
+ ## Endpoints
+ 
+-- `GET /items` → `{"items": [...]}`: every item, ordered by `id`.
++- `GET /items?limit=<1..100>&cursor=<token>` →
++  `{"items": [...], "next_cursor": <token or null>}`: items ordered by `id`.
++  `limit` defaults to 20. Pass the returned `next_cursor` unchanged to fetch
++  the next page; it is `null` on the last page. Invalid limits or cursors
++  return status 400 with an `{"error": "..."}` body.
+ - `GET /items/<id>` → the item, 404 when unknown, 400 when `id` is not a number.
+ 
+ Run the tests with `python3 -m unittest`.
+diff --git a/api.py b/api.py
+index aba1605..c6a8755 100644
+--- a/api.py
++++ b/api.py
+@@ -5,8 +5,14 @@ response is `{"status": int, "body": object}`; the transport layer lives
+ elsewhere.
+ """
+ 
++import base64
++import binascii
++
+ from data import ITEMS
+ 
++DEFAULT_LIMIT = 20
++MAX_LIMIT = 100
++
+ 
+ def handle(request):
+     if request.get("method") != "GET":
+@@ -22,7 +28,53 @@ def handle(request):
+ 
+ def list_items(query):
+     items = sorted(ITEMS, key=lambda item: item["id"])
+-    return {"status": 200, "body": {"items": items}}
++    limit = _parse_limit(query.get("limit", DEFAULT_LIMIT))
++    if limit is None:
++        return _error(400, "limit must be an integer from 1 to 100")
++
++    cursor = query.get("cursor")
++    if cursor is None:
++        start = 0
++    else:
++        last_id = _parse_cursor(cursor, items)
++        if last_id is None:
++            return _error(400, "invalid cursor")
++        start = next(i for i, item in enumerate(items) if item["id"] == last_id) + 1
++
++    page = items[start:start + limit]
++    next_cursor = _encode_cursor(page[-1]["id"]) if start + len(page) < len(items) else None
++    return {"status": 200, "body": {"items": page, "next_cursor": next_cursor}}
++
++
++def _parse_limit(value):
++    if isinstance(value, bool):
++        return None
++    if isinstance(value, int):
++        limit = value
++    elif isinstance(value, str) and value.isdecimal():
++        limit = int(value)
++    else:
++        return None
++    return limit if 1 <= limit <= MAX_LIMIT else None
++
++
++def _encode_cursor(item_id):
++    raw = str(item_id).encode("ascii")
++    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
++
++
++def _parse_cursor(cursor, items):
++    if not isinstance(cursor, str) or not cursor:
++        return None
++    try:
++        raw = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
++        value = raw.decode("ascii")
++    except (binascii.Error, UnicodeDecodeError):
++        return None
++    if not value.isdecimal() or _encode_cursor(int(value)) != cursor:
++        return None
++    item_id = int(value)
++    return item_id if any(item["id"] == item_id for item in items) else None
+ 
+ 
+ def get_item(raw_id):

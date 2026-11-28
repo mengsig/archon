@@ -1,0 +1,20 @@
+`ledger.py` now implements `SPEC.md`, and the tests are extended to cover each spec rule. All 21 tests pass, and the work is committed as `2cabd02` on `main`.
+
+**Implementation choices**
+- **One lock per ledger.** Every transfer and snapshot runs under a single `threading.Lock`. That makes transfers atomic, keeps snapshots from seeing a half-finished transfer, and rules out deadlock between opposite transfers.
+- **Validation order.** `transfer` checks the amount first, then the account names, then takes the lock. Unknown accounts raise `KeyError`.
+- **Type checks.** Integers must be exactly `int` (`type(x) is int`), so booleans and float or string lookalikes are rejected.
+- **Non-string account names** passed to `transfer` raise `KeyError`, the same as unknown names. The spec doesn't cover this case explicitly.
+- **Self-transfer** returns `source balance >= amount` and never writes.
+- **Copies.** The constructor copies its input dict, and `snapshot()` returns a new dict.
+- **Assertions.** `transfer` asserts both balances stay in `[0, MAX_BALANCE]` after writing. These are internal invariant checks, not input validation.
+
+**Tests** (`test_ledger.py`)
+- Construction: empty ledger, non-dict input, invalid names and balances, boundary values, and input and snapshot copying.
+- Transfer: exact-balance moves, invalid amounts leaving balances unchanged, amount-before-account ordering, `KeyError` cases, and destination overflow both over and exactly at `MAX_BALANCE`.
+- Self-transfer: with funds, without funds, and at `MAX_BALANCE`.
+- Concurrency: opposite transfers keep the total, and snapshots never see a half transfer. Both are deterministic and use fixed round counts.
+
+**Notes**
+- The commit has no Co-Authored-By or "Generated with" line. The project CLAUDE.md says not to add attribution, and it takes precedence over the reminder that asked for it.
+- The commit author is `mengsig <[redacted-email]>`, from the repo's configured git identity.

@@ -315,7 +315,16 @@ async fn committed_fixes_get_one_confirmation_and_ship_in_the_same_run() {
         note.contains(&review.first_id) && note.contains(&review.new_id),
         "{note}"
     );
-    assert!(note.contains("Any real blocker"), "{note}");
+    assert!(
+        note.contains(
+            "fails only on a defect in the commits it reads, or an open finding left unfixed"
+        ),
+        "{note}"
+    );
+    assert!(
+        note.contains("a new finding in code a pass already read is `\"blocking\": false`"),
+        "{note}"
+    );
     let resolved = json!([review.first_id, review.new_id]);
     review.confirm("pass", resolved, json!([])).await;
     review.finish().await;
@@ -982,6 +991,14 @@ async fn a_fresh_lead_on_the_same_branch_gets_the_complete_oversized_findings() 
         .into_iter()
         .find(|r| r.idempotency_key == lead.id.as_str())
         .expect("the new lead's spawn");
+    let objective = request.objective.split_whitespace().collect::<Vec<_>>();
+    let objective = objective.join(" ");
+    assert!(
+        objective.contains(
+            "fails only on a defect in the commits it reads, or an open finding left unfixed",
+        ) && objective.contains("a pass already read is `\"blocking\": false`"),
+        "{objective}"
+    );
     let handed = full_handoff(&workspace, &request.objective);
     assert_eq!(handed.lines().count(), 22, "one line per open ID");
     for line in handed.lines() {

@@ -1,0 +1,8 @@
+Implemented currency support and updated both READMEs. `cargo test`, `cargo fmt --check`, and `python3 -m unittest` pass. A CLI check confirmed ledger reports the line number and exits 2 for an invalid currency.
+
+Commits:
+
+- `ledger`: `e270c5b` — Add transaction currency support
+- `reports`: `038d37e` — Group reports by currency
+
+The reports repository has an untracked `__pycache__/` directory created by the unittest run.

@@ -1,0 +1,272 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GQ67NYK8HHER6PCY552FC2",
+      "repo": "repo_01M8GQ5SH2ZSZP3MTGQMP9RS4S",
+      "pipeline": "direct",
+      "title": "Implement rate limiter in ratelimit.py per SPEC.md",
+      "brief": "Operator request (verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nGoal: implement `TokenBucket` and `KeyedLimiter` in `ratelimit.py` exactly as `SPEC.md` describes, covering every error case and edge case the spec lists (for example, clock going backwards, capacity and rate validation, and max_keys eviction behaviour). Read SPEC.md in full first; it is the source of truth over the existing stubs and over `test_ratelimit.py`.\n\nConstraints: standard library only, no new dependencies. Keep functions under 60 lines and follow the repository's existing style. Add tests in `test_ratelimit.py` for each spec error case and edge case, not just the basics. Run the test suite and make sure it passes before finishing. Commit the work on the local branch with a clear message; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ratelimit",
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GQ67NYK8HHER6PCY552FC2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:18:43.286540111Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:18:43.286540111Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:18:43.286540111Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small single-module change with a short spec; medium effort covers the edge cases."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GQ68M4MA78MX07SAC7AX3J",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, and added 28 tests in test_ratelimit.py covering each spec error case and edge case. Committed f3f2f28 (tree dbf5897) on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p; not pushed. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK (baseline on the stubs: 3 errors). Independent review agt_01M8GQ9E4NY6N2M83W2V95P6KC passed f3f2f28 with no blocking findings. Non-blocking follow-ups: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n; SPEC does not cover NaN. Nothing left running; no lint tool is installed here, so no lint was run.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQ9E4NY6N2M83W2V95P6KC)\n\nSHIPPED: commit f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7 on the run branch"
+      },
+      "created_at": "2026-11-28T09:18:42.366700736Z",
+      "updated_at": "2026-11-28T09:21:07.282819137Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GQ68M4MA78MX07SAC7AX3J",
+        "item": "qi_01M8GQ67NYK8HHER6PCY552FC2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GQ68VMKGHPFFDTWCPCMXMD",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/16ee3d078594c770e6d72d07/.archon/data/worktrees/feature-token-bucket/qi_01M8GQ67NYK8HHER6PCY552FC2",
+        "branch": "archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, and added 28 tests in test_ratelimit.py covering each spec error case and edge case. Committed f3f2f28 (tree dbf5897) on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p; not pushed. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK (baseline on the stubs: 3 errors). Independent review agt_01M8GQ9E4NY6N2M83W2V95P6KC passed f3f2f28 with no blocking findings. Non-blocking follow-ups: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n; SPEC does not cover NaN. Nothing left running; no lint tool is installed here, so no lint was run.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQ9E4NY6N2M83W2V95P6KC)\n\nSHIPPED: commit f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7 on the run branch"
+        },
+        "cost_usd": 0.04506297,
+        "started_at": "2026-11-28T09:18:43.527785770Z",
+        "finished_at": "2026-11-28T09:21:07.282819137Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GQ68VA1C2PE94FZ5FM480H",
+        "run": "prun_01M8GQ68M4MA78MX07SAC7AX3J",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GQ68WX8JQQARN7VNSBH5AB",
+        "aether_task": "tsk_01M8GQ68WXE94GA2GREKHY7VYV",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, and added 28 tests in test_ratelimit.py covering each spec error case and edge case. Committed f3f2f28 (tree dbf5897) on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p; not pushed. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK (baseline on the stubs: 3 errors). Independent review agt_01M8GQ9E4NY6N2M83W2V95P6KC passed f3f2f28 with no blocking findings. Non-blocking follow-ups: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n; SPEC does not cover NaN. Nothing left running; no lint tool is installed here, so no lint was run.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v test_ratelimit (28 tests, OK)",
+            "python3 -m unittest test_ratelimit on baseline ae6e68e (3 errors, stubs)"
+          ],
+          "commit": "f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7",
+          "evidence": [
+            {
+              "after": "Ran 28 tests: OK",
+              "before": "FAILED (errors=3)",
+              "caption": "Test run on baseline ae6e68e (stubs)",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7",
+          "pr": {
+            "body": "Approach: TokenBucket refills lazily from an injected clock, capped at capacity, and ignores clock regressions by keeping the latest time seen. KeyedLimiter keeps an OrderedDict of per-key buckets with LRU eviction at max_keys; validation of capacity, refill and max_keys happens at construction, and n is validated before any key is created. Key files: ratelimit.py, test_ratelimit.py. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK. Assumptions: NaN and non-integer max_keys are not specified by SPEC.md; NaN is rejected for capacity, refill and n. Follow-ups from review, non-blocking: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; LRU test does not assert survivor state.",
+            "summary": "Implemented TokenBucket and KeyedLimiter. Now can rate-limit per key with LRU eviction. Before: stubs raising NotImplementedError. Now: 28 tests pass.",
+            "title": "Implement token-bucket rate limiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7",
+            "reviewer_agents": [
+              "agt_01M8GQ9E4NY6N2M83W2V95P6KC"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GQ9E4NY6N2M83W2V95P6KC",
+                "base": "ae6e68e24aca7f46e24bb043afe964b240ec8d68",
+                "findings": 0,
+                "head": "f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GQ9E4NY6N2M83W2V95P6KC"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GQ9E4NY6N2M83W2V95P6KC",
+                    "base": "ae6e68e24aca7f46e24bb043afe964b240ec8d68",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "New logic in a previously unimplemented module, standard library only, no callers in the repo; tests cover each spec rule. Reviewer agt_01M8GQ9E4NY6N2M83W2V95P6KC confirmed medium."
+          },
+          "tree": "dbf5897ed63e634687e235a989674cb9a58a4bca"
+        },
+        "cost_usd": 0.04506297,
+        "started_at": "2026-11-28T09:18:43.562546691Z",
+        "finished_at": "2026-11-28T09:21:04.296219588Z"
+      }
+    ],
+    "spent_usd": 0.04506297,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GQ68VA1C2PE94FZ5FM480H": {
+        "direct_usd": 0.02795098,
+        "delegated_usd": 0.01711199,
+        "agents": [
+          {
+            "agent": "agt_01M8GQ84AR1JG5VAA4ZC60DJEW",
+            "parent": "agt_01M8GQ68WX8JQQARN7VNSBH5AB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00895867
+          },
+          {
+            "agent": "agt_01M8GQ9E4NY6N2M83W2V95P6KC",
+            "parent": "agt_01M8GQ68WX8JQQARN7VNSBH5AB",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.00815332
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:18:43.286540111Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:18:43.286540111Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:18:43.286540111Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

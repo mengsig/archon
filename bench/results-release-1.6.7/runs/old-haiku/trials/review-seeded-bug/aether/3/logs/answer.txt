@@ -1,0 +1,50 @@
+Review of src/tokens.js (HMAC-SHA256 session tokens). Nothing was changed. Existing tests pass (4/4), but they do not cover any of the problems below. Verified by calling verify() directly with node -e.
+
+Findings, most severe first:
+
+1. CRITICAL, auth bypass. src/tokens.js:24-27, verify(). A token with an empty signature, e.g. `base64url(JSON.stringify({user:"root",exp:9e15})) + "."`, is accepted. split('.') yields signature "" (not undefined, so line 25 passes), and `expected.startsWith("")` is always true. Confirmed: returns {user:'root', exp:9e15} with no secret. Any attacker can mint any claims. Fix: require the signature to be non-empty and exactly equal-length to the expected MAC, and compare with crypto.timingSafeEqual.
+
+2. HIGH, signature recovery via prefix oracle. Line 27, `expected.startsWith(signature)`. Any prefix of the real MAC is accepted, so a server that answers accept/reject lets an attacker recover the full 43-char signature one character at a time (about 43 x 64 ≈ 2,750 requests, no timing needed). Confirmed: with the real first signature character the token verifies; with a wrong one it returns null. This is the same defect as #1 with the empty case removed. Fix: full-length constant-time comparison (same as #1).
+
+3. HIGH (conditional), verify() accepts an empty or short key. verify() never runs the length check that sign() runs (line 15). Confirmed: with secret "" a token forged with HMAC key "" verifies. If a misconfigured or empty env var ever reaches verify(), forgery is open even after #1 is fixed. Fix: validate the secret in a shared helper used by both sign and verify.
+
+4. MEDIUM, verify() throws on untrusted input instead of returning null. Lines 28-29. The JSON.parse on line 28 is not guarded. Confirmed: a signed-looking token with payload `null` throws TypeError (reading 'exp' of null) on line 29. A non-JSON body throws SyntaxError. The documented contract is "payload or null". Callers that don't catch this turn bad cookies into 500s or crashes. Note this path is reachable by unauthenticated input (via #1, and as a plain malformed-cookie case). Fix: try/catch around the parse that returns null, and check that payload is a non-null object before reading exp.
+
+5. LOW, token malleability. Line 24 splits on '.' and discards extra segments. `<body>.<realsig>.junk` verifies, so one session has many valid string forms. This matters if tokens are used as revocation or replay keys. Fix: reject tokens without exactly two segments.
+
+Not an issue as checked: sign() overwrites caller-supplied iat/exp; there is no alg field, so no algorithm confusion; NaN or invalid ttl produces a null exp and is rejected.
+
+Test gaps: the "tampered payloads" test only changes the body and keeps the real signature. Add tests for an empty signature, a truncated signature, a null or non-JSON payload (expect null), an empty secret in verify, and a token with extra segments.
+
+Severity summary: #1 critical, #2 high, #3 high if reachable, #4 medium, #5 low. Recommend not shipping tomorrow until #1 and #2 are fixed and covered by tests.
+
+**Do not ship `src/tokens.js` tomorrow as written.** `verify()` accepts forged tokens. I made no code changes; the findings below are from reading the file and probing `verify()` directly with `node -e`. The existing 4 tests pass but don't cover any of these cases.
+
+**1. CRITICAL: auth bypass with an empty signature.** `src/tokens.js:24-27`, `verify()`
+- Input: `base64url(JSON.stringify({user:"root", exp:9e15})) + "."`
+- `split('.')` gives an empty signature. It is not `undefined`, so line 25 passes, and `expected.startsWith("")` is always true.
+- Confirmed: returns `{user:'root', exp:9e15}` with no secret.
+- Fix: require a non-empty signature of the exact expected length, compared with `crypto.timingSafeEqual`.
+
+**2. HIGH: signature recovery through a prefix oracle.** Line 27, `expected.startsWith(signature)`
+- Any prefix of the real MAC is accepted. An attacker who can see accept/reject can recover the full 43-character signature one character at a time, in roughly 43 × 64 ≈ 2,750 requests.
+- Confirmed: a correct first signature character verifies; a wrong one returns `null`.
+- Fix: the same full-length constant-time comparison as #1.
+
+**3. HIGH if reachable: `verify()` accepts an empty or short key.** `verify()` never runs the length check that `sign()` runs at line 15.
+- Confirmed: with secret `""`, a token signed with an empty HMAC key verifies.
+- If a misconfigured or empty env var ever reaches `verify()`, forgery is open even after #1 is fixed.
+- Fix: validate the secret in one helper used by both `sign` and `verify`.
+
+**4. MEDIUM: `verify()` throws on untrusted input instead of returning `null`.** Lines 28-29.
+- `JSON.parse` is unguarded. Confirmed: a payload of `null` throws `TypeError` on `payload.exp`, and non-JSON throws `SyntaxError`.
+- The documented contract is "payload or null". Callers that don't catch this turn a malformed cookie into a 500 or a crash.
+- Fix: catch the parse error and return `null`; check that the payload is a non-null object before reading `exp`.
+
+**5. LOW: token malleability.** Line 24 drops extra segments. `<body>.<realsig>.junk` verifies, so one session has many valid string forms. This matters if tokens are used as revocation or replay keys. Fix: require exactly two segments.
+
+**Checked and fine:** `sign()` overwrites caller-supplied `iat` and `exp`; there is no `alg` field, so no algorithm confusion; a NaN TTL produces a `null` `exp` and is rejected.
+
+**Test gaps:** the "tampered payloads" test changes only the body and keeps the real signature. Add cases for an empty signature, a truncated signature, a null or non-JSON payload (expect `null`), an empty secret passed to `verify`, and extra segments.
+
+**Recommendation:** fix #1 and #2 before release, and cover them with tests. #3 should be fixed in the same change.

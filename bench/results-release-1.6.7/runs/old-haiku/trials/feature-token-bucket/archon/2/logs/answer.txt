@@ -1,0 +1,22 @@
+I've queued the rate limiter as item `qi_01M8GMP9J7E22VVBKGXWG8ZQ49` on repo `feature-token-bucket`. I did not write the code myself; the daemon's implementer does it.
+
+- **Pipeline:** `direct`, one implementing agent. The spec has no concurrency or security surface, so I didn't use `adaptive`.
+- **Model and effort:** balanced tier at high effort. The spec's edge cases (clock regression, LRU use via `wait_time`, eviction restarting full) are where a subtle slip would go unnoticed.
+- **Review:** `standard`, one reviewer, because the edge-case logic could hide a bug.
+- **Shipping:** the repo is set to `ship local`, so the work is committed on a local branch and never pushed. It won't merge without your say-so.
+- **Scope:** the brief requires standard library only, the spec's error cases and edge cases, extended tests in `test_ratelimit.py`, and no changes to `SPEC.md`.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and extended test_ratelimit.py to 23 tests. Committed on archon/xwg8zq49-implement-rate-limiter-in-ratelimit-py-p: head 67949ab, tree 2dfbf3022a16015995a6dbaca236017d355c356b. Only ratelimit.py and test_ratelimit.py changed; nothing was pushed. Check: PYTHONDONTWRITEBYTECODE=1 python3 -W error -m unittest test_ratelimit gives Ran 23 tests, OK; the base stubs gave 3 errors. No linter is configured, and pyflakes is not installed. Review: the first whole-change reviewer failed on one blocking finding (non-integer max_keys accepted, e.g. 1.5). It was fixed in 67949ab with a test, and a second reviewer verified the delta and passed the head. Open follow-up (non-blocking): bool max_keys (True) is accepted as 1. Other assumptions: NaN capacity, refill and max_keys are rejected; float rounding may make wait_time off by one ulp. No processes or servers are left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMS3NZ4P4K848DQ7YFDG0W), claude-code/claude-haiku-5-5 (agent agt_01M8GMTTXFDG0VSK2GTFMK76E3)
+
+SHIPPED: commit 67949ab47f2ba7c38778c096a5421d751232baf1 on the run branch
+Branch `archon/xwg8zq49-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/ce868e82540eb5d5899fd86c/feature-token-bucket holds it (2 files changed, 241 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GMP9J7E22VVBKGXWG8ZQ49`; land it in `main`: `archon merge qi_01M8GMP9J7E22VVBKGXWG8ZQ49`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and extended test_ratelimit.py to 23 tests. Committed on archon/xwg8zq49-implement-rate-limiter-in-ratelimit-py-p: head 67949ab, tree 2dfbf3022a16015995a6dbaca236017d355c356b. Only ratelimit.py and test_ratelimit.py changed; nothing was pushed. Check: PYTHONDONTWRITEBYTECODE=1 python3 -W error -m unittest test_ratelimit gives Ran 23 tests, OK; the base stubs gave 3 errors. No linter is configured, and pyflakes is not installed. Review: the first whole-change reviewer failed on one blocking finding (non-integer max_keys accepted, e.g. 1.5). It was fixed in 67949ab with a test, and a second reviewer verified the delta and passed the head. Open follow-up (non-blocking): bool max_keys (True) is accepted as 1. Other assumptions: NaN capacity, refill and max_keys are rejected; float rounding may make wait_time off by one ulp. No processes or servers are left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMS3NZ4P4K848DQ7YFDG0W), claude-code/claude-haiku-5-5 (agent agt_01M8GMTTXFDG0VSK2GTFMK76E3)
+
+SHIPPED: commit 67949ab47f2ba7c38778c096a5421d751232baf1 on the run branch

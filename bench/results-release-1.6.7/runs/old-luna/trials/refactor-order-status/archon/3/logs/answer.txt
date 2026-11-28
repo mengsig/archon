@@ -1,0 +1,16 @@
+Queued as **qi_01M8GS83KZWX999TN4KZ20AP1Q** in the `direct` pipeline. It includes the behavior-preservation criteria, `cargo test`, and a commit. I’ll report the outcome when the run finishes.
+
+Done: Replace order status strings with OrderStatus. Replaced order status strings with OrderStatus and preserved error text, report output/order, and parsing behavior. cargo test passed (3 unit, 3 integration, 0 doc tests); git diff --check passed. Whole-change delegated review passed with no findings. No work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GSDWB3MTEEP5K67YC0E712)
+
+SHIPPED: commit be99b2a84d12b5aa6153ffd7a412045a81faf77e on the run branch
+Branch `archon/kz20ap1q-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/28bb01ec833eaeec2e2232f1/refactor-order-status holds it (7 files changed, 176 insertions(+), 28 deletions(-)). Review: `archon diff qi_01M8GS83KZWX999TN4KZ20AP1Q`; land it in `main`: `archon merge qi_01M8GS83KZWX999TN4KZ20AP1Q`.
+
+Freed 0.0 GiB of build output: item qi_01M8GS83KZWX999TN4KZ20AP1Q ended and its cargo target directory went.
+
+Replaced order status strings with OrderStatus and preserved error text, report output/order, and parsing behavior. cargo test passed (3 unit, 3 integration, 0 doc tests); git diff --check passed. Whole-change delegated review passed with no findings. No work remains.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GSDWB3MTEEP5K67YC0E712)
+
+SHIPPED: commit be99b2a84d12b5aa6153ffd7a412045a81faf77e on the run branch

@@ -1,0 +1,7 @@
+## Findings
+
+- **Critical — `src/tokens.js`, `verify` (line 27):** Signature validation accepts any prefix of the expected MAC, including an empty string. For example, a token whose body decodes to `{"user":"root","exp":9e15}` and whose token ends in `.` passes the MAC check and returns attacker-chosen claims. This allows forging sessions without the secret. Require an exact signature match, using a constant-time comparison.
+
+- **Medium — `src/tokens.js`, `verify` (line 28):** Malformed payloads can make `JSON.parse` throw instead of returning `null` as the function’s comment promises. For example, `verify('%.', secret)` reaches the parser because the empty signature passes the prefix check. Depending on how callers handle the exception, malformed tokens can disrupt request handling. Reject malformed input safely; fixing the signature check also prevents this particular unsigned input from reaching the parser.
+
+No code was changed, and I did not run tests.

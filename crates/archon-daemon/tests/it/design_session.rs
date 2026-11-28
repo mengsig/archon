@@ -748,6 +748,7 @@ async fn only_the_stage_agent_may_report() {
     let operator = f
         .operator(Request::DesignPreview {
             url: "http://127.0.0.1:1/".into(),
+            recipe: None,
             caller: None,
         })
         .await;
@@ -1186,6 +1187,7 @@ async fn next_session(f: &mut Fixture) {
     f.attempt += 1;
     f.as_agent(Request::DesignPreview {
         url: crate::common::design::PREVIEW.into(),
+        recipe: None,
         caller: Some(f.agent.clone()),
     })
     .await
@@ -1942,6 +1944,7 @@ mod stream {
         let retry = f
             .as_agent(Request::DesignPreview {
                 url: crate::common::design::PREVIEW.into(),
+                recipe: None,
                 caller: Some(f.agent.clone()),
             })
             .await
@@ -2178,6 +2181,7 @@ mod stream {
                 .expect("second session starts");
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -2212,6 +2216,77 @@ mod stream {
         f.end(StageEnd::Cancelled).await;
         let factory = f.factory.clone();
         until("the queued session's browser", || factory.launched() == 2).await;
+        task.abort();
+    }
+
+    /// A first look that cannot start the preview tells the open screen
+    /// why, instead of leaving it on "Starting" until a reload.
+    #[tokio::test]
+    async fn a_watched_preview_that_cannot_start_tells_the_open_screen() {
+        let f = Fixture::new().await;
+        let item = crate::common::design::enqueue_live(&f.h, "design the cancel button").await;
+        f.h.dispatch().await;
+        let run = f.h.run(&item.id).await;
+        let stage =
+            f.h.running()
+                .await
+                .into_iter()
+                .find(|s| s.run == run.id)
+                .expect("the second item's stage runs");
+        let agent = stage.aether_agent.clone().expect("an agent");
+        let worktree = crate::common::design::add_worktree(&f.h.repo, f.h.dir.path(), "design-3");
+        let second =
+            f.h.ctx
+                .design
+                .stage_started(
+                    &f.h.ctx,
+                    &item.id,
+                    &run.id,
+                    &stage.stage_id,
+                    stage.attempt,
+                    &agent,
+                    worktree,
+                )
+                .await
+                .expect("second session starts");
+        let (tx, mut rx) = mpsc::channel(64);
+        let sub = DesignSubscription {
+            id: 8,
+            request: 8,
+            session: second.clone(),
+            device: WelcomeDevice {
+                id: "device-1".into(),
+                name: "phone".into(),
+                role: archon_core::protocol::DeviceRole::Operator,
+            },
+        };
+        let task = {
+            let ctx = f.h.ctx.clone();
+            tokio::spawn(async move {
+                let (_acks, receiver) = tokio::sync::watch::channel(0);
+                archon_daemon::design::stream(ctx, sub, receiver, tx).await;
+            })
+        };
+        let service = f.h.ctx.design.clone();
+        until("the watcher", || service.subscriber_count(&second) == 1).await;
+        *f.factory.fail.lock().unwrap() = Some(archon_design_browser::BrowserError::Launch(
+            "scripted launch failure".into(),
+        ));
+        f.as_agent(Request::DesignPreview {
+            url: crate::common::design::PREVIEW.into(),
+            recipe: None,
+            caller: Some(agent.clone()),
+        })
+        .await
+        .expect("preview reported");
+        let message = loop {
+            if let DesignEvent::Toast { message } = event(&mut rx).await {
+                break message;
+            }
+        };
+        assert!(message.contains("The preview did not start"), "{message}");
+        assert!(message.contains("scripted launch failure"), "{message}");
+        assert_eq!(f.factory.launched(), 1, "no browser for the second session");
         task.abort();
     }
 
@@ -2275,6 +2350,7 @@ mod stream {
         );
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -2334,6 +2410,7 @@ mod stream {
                 .expect("second session starts");
         f.as_agent(Request::DesignPreview {
             url: crate::common::design::PREVIEW.into(),
+            recipe: None,
             caller: Some(agent.clone()),
         })
         .await
@@ -2437,6 +2514,7 @@ async fn the_first_preview_report_posts_a_ready_notice_once() {
     let f = Fixture::new().await;
     f.as_agent(Request::DesignPreview {
         url: crate::common::design::PREVIEW.into(),
+        recipe: None,
         caller: Some(f.agent.clone()),
     })
     .await

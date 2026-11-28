@@ -1,0 +1,5 @@
+- **High — [src/tokens.js:27](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/a771f34c68d40fe3d4d3e8ae/review-seeded-bug/src/tokens.js:27), `verify`:** `startsWith` accepts an empty or partial signature. For example, an attacker can base64url-encode `{"user":"root","exp":9999999999999}` and submit `<body>.` with an empty signature. The check passes and `verify` returns the forged claims, allowing session impersonation. Require an exact-length signature match and compare it safely.
+
+- **Moderate — [src/tokens.js:28–29](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/review-seeded-bug/src/tokens.js:28), `verify`:** Malformed payloads can throw instead of returning `null`. With the empty-signature bypass, a token containing a base64url-encoded `not-json` throws at `JSON.parse`; a payload of `null` throws when reading `payload.exp`. If callers don’t catch these exceptions, malformed tokens can cause request failures. Validate the decoded payload and handle parse errors as invalid tokens.
+
+I did not modify files or run tests.

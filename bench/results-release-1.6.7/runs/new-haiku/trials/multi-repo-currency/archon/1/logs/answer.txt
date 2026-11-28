@@ -1,0 +1,38 @@
+Both changes are queued as one initiative (`ini_01M8GH3KBA6N21X2A4MVMYGSZ3`) and are now running. I haven't touched either repository myself.
+
+- **`ledger`** (`qi_01M8GH3KBBXG5JWKXMF2METQAB`): optional 4th currency column, defaulting to `USD`. Header becomes `date,account,amount_cents,currency`. A malformed code prints the line number to stderr and exits 2; other input errors still exit 1.
+- **`reports`** (`qi_01M8GH3M1155S2JGMC458RV8EX`): totals per account and currency, output `account,currency,total_cents` sorted by account then currency. It accepts the old 3-column CSV as `USD`, and a malformed code exits 2.
+
+Both use the `direct` pipeline with standard review, since the CSV format is shared data. Both repos ship local, so the commits stay on local branches and nothing is pushed. Each brief asks for `cargo test` / `python3 -m unittest` to stay green, README updates, and no AI attribution in commit messages.
+
+I'll report when the items finish, or sooner if either fails.
+
+Done: reports: total per account and currency. reports now totals per (account, currency). Committed 132f825 (tree 8f8773f) on archon/458rv8ex-reports-total-per-account-and-currency, local only, not pushed. reports.py reads the optional currency column (missing = USD), outputs account,currency,total_cents sorted by account then currency, and exits 2 with a stderr message naming the line on a malformed currency. Before, EUR was merged into USD (rent,-170000); now rent,EUR,-50000 and rent,USD,-120000. Checks: python3 -B -m unittest -v => 6 tests OK. Review by agt_01M8GH53ZRTA46ZGCM02VMZSYB passed head 132f825 with no blocking findings. Open, non-blocking: a short 4-column row silently becomes USD while an empty currency is rejected; README's "ISO 4217" wording overstates the check (shape only). Process 562198, a leftover reviewer process, is still running under the reviewer agent and stops when this stage ends. Review: agt_01M8GH53ZRTA46ZGCM02VMZSYB pass on 132f825.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GH53ZRTA46ZGCM02VMZSYB)
+
+SHIPPED: commit 132f82500d12a5012acdcafb124fa90b7411a00c on the run branch
+Branch `archon/458rv8ex-reports-total-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3c4847697aaebc8702b583fe/reports holds it (3 files changed, 124 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M8GH3M1155S2JGMC458RV8EX`; land it in `main`: `archon merge qi_01M8GH3M1155S2JGMC458RV8EX`.
+
+Done: ledger: add per-row currency. Added the optional 4th TSV currency column to the ledger tool (commit 1444b7af425abca3fdd32d6964c8809e2f050ba5 on archon/f2metqab-ledger-add-per-row-currency, based on main 6f66d62; not pushed). Absent currency defaults to USD; present codes must be exactly three uppercase ASCII letters, and a malformed one prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1. Output header is now date,account,amount_cents,currency and every row carries its currency. README documents the column, output and exit codes. Checks: cargo test passes (9 integration tests incl. new 3-col, 4-col, default USD, malformed-currency exit 2 with line number, structural exit 1, and end-to-end CLI tests; doctests 0); cargo clippy --all-targets -D warnings clean; manual CLI runs confirmed the outputs and exit codes. Note rustfmt was not applied to the whole file because the original was not rustfmt-clean. Review: one reviewer (agt_01M8GH5SW4N3FSFWB9DTBJY3F0, claude-haiku-5-5, effort high) passed the head with three non-blocking follow-ups: empty 4th column (trailing tab) exits 2 rather than defaulting to USD, which is undocumented and untested; no test for a 4-column line with a bad amount. Risk high: the CSV header changes for every consumer and exit 2 is new. Nothing left running. Downstream reports work is the sibling item's, not done here.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GH5SW4N3FSFWB9DTBJY3F0)
+
+SHIPPED: commit 1444b7af425abca3fdd32d6964c8809e2f050ba5 on the run branch
+Branch `archon/f2metqab-ledger-add-per-row-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/3c4847697aaebc8702b583fe/ledger holds it (4 files changed, 169 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M8GH3KBBXG5JWKXMF2METQAB`; land it in `main`: `archon merge qi_01M8GH3KBBXG5JWKXMF2METQAB`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.1 GiB of build output: item qi_01M8GH3KBBXG5JWKXMF2METQAB ended and its cargo target directory went.
+
+reports now totals per (account, currency). Committed 132f825 (tree 8f8773f) on archon/458rv8ex-reports-total-per-account-and-currency, local only, not pushed. reports.py reads the optional currency column (missing = USD), outputs account,currency,total_cents sorted by account then currency, and exits 2 with a stderr message naming the line on a malformed currency. Before, EUR was merged into USD (rent,-170000); now rent,EUR,-50000 and rent,USD,-120000. Checks: python3 -B -m unittest -v => 6 tests OK. Review by agt_01M8GH53ZRTA46ZGCM02VMZSYB passed head 132f825 with no blocking findings. Open, non-blocking: a short 4-column row silently becomes USD while an empty currency is rejected; README's "ISO 4217" wording overstates the check (shape only). Process 562198, a leftover reviewer process, is still running under the reviewer agent and stops when this stage ends. Review: agt_01M8GH53ZRTA46ZGCM02VMZSYB pass on 132f825.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GH53ZRTA46ZGCM02VMZSYB)
+
+SHIPPED: commit 132f82500d12a5012acdcafb124fa90b7411a00c on the run branch
+
+Added the optional 4th TSV currency column to the ledger tool (commit 1444b7af425abca3fdd32d6964c8809e2f050ba5 on archon/f2metqab-ledger-add-per-row-currency, based on main 6f66d62; not pushed). Absent currency defaults to USD; present codes must be exactly three uppercase ASCII letters, and a malformed one prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1. Output header is now date,account,amount_cents,currency and every row carries its currency. README documents the column, output and exit codes. Checks: cargo test passes (9 integration tests incl. new 3-col, 4-col, default USD, malformed-currency exit 2 with line number, structural exit 1, and end-to-end CLI tests; doctests 0); cargo clippy --all-targets -D warnings clean; manual CLI runs confirmed the outputs and exit codes. Note rustfmt was not applied to the whole file because the original was not rustfmt-clean. Review: one reviewer (agt_01M8GH5SW4N3FSFWB9DTBJY3F0, claude-haiku-5-5, effort high) passed the head with three non-blocking follow-ups: empty 4th column (trailing tab) exits 2 rather than defaulting to USD, which is undocumented and untested; no test for a 4-column line with a bad amount. Risk high: the CSV header changes for every consumer and exit 2 is new. Nothing left running. Downstream reports work is the sibling item's, not done here.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GH5SW4N3FSFWB9DTBJY3F0)
+
+SHIPPED: commit 1444b7af425abca3fdd32d6964c8809e2f050ba5 on the run branch

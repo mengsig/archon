@@ -1,0 +1,21 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and extended test_safe_extract.py. Committed as eb7a9ef on main; working tree is clean. All 29 tests pass (`python3 -m unittest test_safe_extract`). The whole batch is validated before any file or directory is created: batch type, root (existing real directory, not a symlink), entry shape, names, duplicates, file/directory collisions in either order, and every existing path component (symlinks, including dangling, rejected and never followed). Files are written exclusively ("xb"), so existing files are never overwritten. OS errors other than missing paths propagate. Assumptions: entries must be 2-tuples (lists rejected), data must be exactly bytes, names must be UTF-8 encodable, and an empty-string root is rejected. Known gap: on case-insensitive filesystems, case-only collisions inside one batch are not caught by validation and fail at write time with FileExistsError after earlier files are created; the spec does not cover this. The commit has no Co-Authored-By trailer, because CLAUDE.md forbids Claude attribution.
+
+`safe_extract.py` is implemented and the test suite is extended; all 29 tests pass. The work is committed as `eb7a9ef` on `main`, with the identity already configured in the repo (mengsig).
+
+**What changed**
+- `safe_extract.py`: `extract(entries, root)` checks the whole batch before the first `mkdir` or write. It covers the batch type, root (existing real directory, not a symlink), entry shape, names, duplicates, file/directory collisions in either order, and every existing path component on disk. Symlinks, including dangling ones, are rejected and never followed. Files are written with exclusive-create (`"xb"`), so an existing file is never overwritten. Only missing-path lookups are treated as "absent"; any other OS error propagates.
+- `test_safe_extract.py`: the two original tests are unchanged. I added 27 tests covering each rejection path, the no-partial-write guarantee, symlink cases, literal `%` and `..`-prefixed names, exact bytes including empty files, input-order return, and I/O error propagation.
+
+**Choices I made where the spec was silent**
+- Entries must be actual 2-tuples, so a `["name", data]` list is rejected as malformed.
+- Data must be exactly `bytes`; `bytearray` and `memoryview` are rejected.
+- Names must encode as UTF-8, so lone surrogates are rejected.
+- An empty-string root is rejected rather than treated as the current directory.
+
+**Gaps to know about**
+- On case-insensitive filesystems, a batch with case-only collisions (`A` and `a`) passes validation. The second write then fails with `FileExistsError` after earlier files are already created. The spec does not say how to handle this, so I left it as is.
+- Per the spec, there is no rollback after an I/O error during writing.
+
+**Notes**
+- I ran the tests with `python3 -m unittest`, not `-I`, because `-I` drops the working directory from the import path and the test module cannot be found.
+- I left out the `Co-Authored-By` trailer from the commit message. Your CLAUDE.md says not to add Claude attribution, and I followed that over the attribution reminder.

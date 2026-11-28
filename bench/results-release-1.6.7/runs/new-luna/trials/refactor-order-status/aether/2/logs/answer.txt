@@ -1,0 +1,5 @@
+Implemented the `OrderStatus` enum, parsing and display support, lifecycle transitions, and crate-root re-exports. Updated order operations and reporting to use the enum while preserving output and error messages.
+
+`cargo test` passes (3 integration tests). Status-name literals appear only in `src/status.rs`. Working tree is clean.
+
+Commit: `9481672` — `Refactor order status to enum`

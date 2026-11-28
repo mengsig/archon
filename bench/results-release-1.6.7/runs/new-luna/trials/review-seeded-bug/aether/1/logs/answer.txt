@@ -1,0 +1,7 @@
+### Findings
+
+- **Critical — `src/tokens.js`, `verify` (line 27):** `expected.startsWith(signature)` accepts an empty signature and any matching MAC prefix. For example, an attacker can submit `<base64url({"user":"admin","exp":9999999999999})>.`; the empty signature is a prefix of every expected MAC, so the forged token is accepted. Reject signatures unless they match the full MAC, using a constant-time comparison.
+
+- **High — `src/tokens.js`, `verify` (line 28):** Invalid token input can throw instead of returning `null`. For example, `bm90LWpzb24.` has an empty signature, passes the check above, then causes `JSON.parse` to throw. If the caller doesn’t catch it, a request using this token can trigger an unhandled error. Reject malformed tokens and handle parsing failures.
+
+No code was changed.

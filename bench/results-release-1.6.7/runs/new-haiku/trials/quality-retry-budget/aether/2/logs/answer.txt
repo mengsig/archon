@@ -1,0 +1,22 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed as 16bc880 on main (author mengsig). All 32 unittest tests pass (`python3 -m unittest test_retry_budget`).
+
+What's in place:
+- Validation first, before any early return: every numeric argument must be a built-in int (bool, float, str, None and int subclasses are rejected). attempt and max_attempts >= 1; elapsed_ms, budget_ms, base_ms, cap_ms >= 0; retry_after_ms None or >= 0. Violations raise ValueError.
+- If attempt >= max_attempts, return None.
+- Backoff is min(cap, base * 2**(attempt-1)) via a helper that short-circuits on zero base/cap, base >= cap, and shift >= cap.bit_length(), so huge attempts never build a large power of two.
+- Retry-After is a floor via max(), not capped by cap_ms.
+- Return None when elapsed + delay >= budget; otherwise return the delay, which is never shortened.
+
+Tests cover the original basics plus attempt-limit boundaries, the exact budget boundary, zero base/cap/budget, cap saturation, Retry-After beyond cap and past budget, a brute-force comparison with the naive formula on small inputs, huge attempt and cap values, and validation for every argument (including raising even when attempts or budget are already exhausted).
+
+Assumption to note: the spec says invalid values raise ValueError, so non-int types also raise ValueError rather than TypeError. Nothing else was changed; the __pycache__ directory from the test run was removed and the tree is clean.
+
+I implemented `retry_delay` per `SPEC.md`, added focused tests, and committed the work as `16bc880` on `main`. All 32 tests pass with `python3 -m unittest test_retry_budget`.
+
+- **Validation:** every argument is checked before any early return. Non-`int` values (bool, float, str, None, int subclasses) and out-of-range values raise `ValueError`. I chose `ValueError` for wrong types too, because the spec says invalid values raise `ValueError`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** `min(cap, base * 2**(attempt-1))`, computed without building a large power of two. Zero base or zero cap gives zero.
+- **Retry-After:** used as a floor via `max()` and not capped by `cap_ms`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`. The wait is never shortened to fit.
+
+The tests keep the original basics and add coverage for the attempt and budget boundaries, zero values, cap saturation, huge attempt and cap values, a brute-force check against the naive formula, and validation of every argument.

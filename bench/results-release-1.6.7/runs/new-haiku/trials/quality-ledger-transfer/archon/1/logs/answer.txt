@@ -1,0 +1,42 @@
+I've queued the work as item `qi_01M8GHKBM9JR6M03JE9X7K2BQN` in the `quality-ledger-transfer` repository. I did not edit the code myself.
+
+- **Pipeline:** `direct`, one agent that implements, tests and commits.
+- **Model:** balanced tier at medium effort, because this is a single-module, spec-driven change.
+- **Review:** `standard`, since a ledger is shared data code where a slip could hide.
+- **Shipping:** the repository ships `local`, so the commit lands on the item's local branch and is not pushed.
+
+The brief tells the agent to read `SPEC.md` as the contract, keep the documented API, handle every specified error and boundary case, use only the standard library, add focused tests, run the suite, and commit with no AI attribution. I haven't checked the code or the spec myself, so I can't yet say whether the spec's cases are all covered. I'll report the outcome when the item finishes, including the test results.
+
+Failed: Implement ledger.py per SPEC.md with focused tests — implement: ESCALATE: Implementing ledger.py per SPEC.md is risky under the stage contract, so I committed nothing and changed no files. Full detail: archon queue show qi_01M8GHKBM9JR6M03JE9X7K2BQN --full
+
+Done: Implement ledger.py per SPEC.md with locking and focused tests (adaptive). Implemented ledger.py per SPEC.md on archon/9x7k2bqn-implement-ledger-py-per-spec-md-with-foc. Head cb83b4c (tree 85cb1a3f360173720a8bd4798760ee3c87e62746), on top of ad0dde1 and the base cdb5aa6.
+
+What changed: Ledger(balances), transfer and snapshot per SPEC.md, guarded by one lock. Construction copies then validates. Amounts and balances must be built-in ints. Unknown accounts raise KeyError. Insufficient funds and overflow return False. Self-transfer is a no-op check. Snapshots copy under the lock.
+
+Tests: test_ledger.py has 27 tests covering error paths, boundaries, and concurrency (totals preserved, opposite-direction transfers complete, snapshots never see a half transfer via a deterministic paused-transfer test). Final run: python3 -m unittest on cb83b4c, 27 OK. Mutants (lock-free snapshot, lock-free transfer, isinstance int check) each fail the suite.
+
+Review: three whole-change reviews of ad0dde1 (verdict fail, both blocking defects fixed in cb83b4c). One delta review of ad0dde1..cb83b4c (verdict pass). Reviewers: agt_01M8GHQC3MREB67DC6GQFBN37B, agt_01M8GHQJP3GQ42PTN97QTRDNHK, agt_01M8GHQRZDEQ9A0W0WY5J743NH, agt_01M8GHZQMD2ZHX71B4QTTJJVXD. Risk stays high per rubric (locking); the delta reviewer rated it low, which I did not adopt.
+
+Open non-blocking follow-ups: opposite-direction test doesn't assert any transfer succeeded; _move has no invariant assertion; two blank lines missing before MyInt.
+
+Nothing is running from this stage: all four reviewers completed and no services were started. Untracked .archon/ (evidence) is not committed. Working tree clean at cb83b4c.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHQC3MREB67DC6GQFBN37B), claude-code/claude-haiku-5-5 (agent agt_01M8GHQJP3GQ42PTN97QTRDNHK), claude-code/claude-haiku-5-5 (agent agt_01M8GHQRZDEQ9A0W0WY5J743NH), claude-code/claude-haiku-5-5 (agent agt_01M8GHZQMD2ZHX71B4QTTJJVXD)
+
+SHIPPED: commit cb83b…
+
+Implemented ledger.py per SPEC.md on archon/9x7k2bqn-implement-ledger-py-per-spec-md-with-foc. Head cb83b4c (tree 85cb1a3f360173720a8bd4798760ee3c87e62746), on top of ad0dde1 and the base cdb5aa6.
+
+What changed: Ledger(balances), transfer and snapshot per SPEC.md, guarded by one lock. Construction copies then validates. Amounts and balances must be built-in ints. Unknown accounts raise KeyError. Insufficient funds and overflow return False. Self-transfer is a no-op check. Snapshots copy under the lock.
+
+Tests: test_ledger.py has 27 tests covering error paths, boundaries, and concurrency (totals preserved, opposite-direction transfers complete, snapshots never see a half transfer via a deterministic paused-transfer test). Final run: python3 -m unittest on cb83b4c, 27 OK. Mutants (lock-free snapshot, lock-free transfer, isinstance int check) each fail the suite.
+
+Review: three whole-change reviews of ad0dde1 (verdict fail, both blocking defects fixed in cb83b4c). One delta review of ad0dde1..cb83b4c (verdict pass). Reviewers: agt_01M8GHQC3MREB67DC6GQFBN37B, agt_01M8GHQJP3GQ42PTN97QTRDNHK, agt_01M8GHQRZDEQ9A0W0WY5J743NH, agt_01M8GHZQMD2ZHX71B4QTTJJVXD. Risk stays high per rubric (locking); the delta reviewer rated it low, which I did not adopt.
+
+Open non-blocking follow-ups: opposite-direction test doesn't assert any transfer succeeded; _move has no invariant assertion; two blank lines missing before MyInt.
+
+Nothing is running from this stage: all four reviewers completed and no services were started. Untracked .archon/ (evidence) is not committed. Working tree clean at cb83b4c.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GHQC3MREB67DC6GQFBN37B), claude-code/claude-haiku-5-5 (agent agt_01M8GHQJP3GQ42PTN97QTRDNHK), claude-code/claude-haiku-5-5 (agent agt_01M8GHQRZDEQ9A0W0WY5J743NH), claude-code/claude-haiku-5-5 (agent agt_01M8GHZQMD2ZHX71B4QTTJJVXD)
+
+SHIPPED: commit cb83b4cc88fef52acb23488c14eb2affbdb427b7 on the run branch

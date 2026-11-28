@@ -261,6 +261,7 @@ async fn s4_a_live_approval_records_the_capture_and_holds_the_build_to_it() {
     let (run, session) = design_gate::designing(&h, &item).await;
     let preview = Request::DesignPreview {
         url: "http://127.0.0.1:5173/".into(),
+        recipe: None,
         caller: session.agent.clone(),
     };
     Box::pin(archon_daemon::handlers::handle(

@@ -1,0 +1,29 @@
+Queued initiative **ini_01M8GHMAFGAWZCHGP0WA00XDXR** with coordinated API and client work. Each repository will update its README, run the requested test command, and commit locally. The initiative is still in progress.
+
+Done: Follow cursor pages in listItems. Updated listItems to fetch every cursor page in order, documented the pagination behavior, added coverage for cursor traversal and terminal cursor forms, and committed as a5423bcb9772a7cc519385457355cdd62759b043. npm test passes (5/5); git diff --check is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a5423bcb9772a7cc519385457355cdd62759b043 on the run branch
+Branch `archon/3smwakze-follow-cursor-pages-in-listitems` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d1c29c359a3bd15c82595d2b/inventory-client holds it (3 files changed, 52 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GHMBVJWZPCTTBD3SMWAKZE`; land it in `main`: `archon merge qi_01M8GHMBVJWZPCTTBD3SMWAKZE`.
+
+Done: Implement cursor pagination for GET /items. Implemented cursor pagination for GET /items, added tests for defaults, page traversal, ordering, invalid parameters, and final-page behavior, and documented the API. `python3 -m unittest` passed (6 tests); `git diff --check` passed. Committed as 358b7f29030164b29f35f97738f3648e7b927633.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 358b7f29030164b29f35f97738f3648e7b927633 on the run branch
+Branch `archon/657yb2zx-implement-cursor-pagination-for-get-item` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d1c29c359a3bd15c82595d2b/inventory-api holds it (3 files changed, 57 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GHMAFKQS6724YZ657YB2ZX`; land it in `main`: `archon merge qi_01M8GHMAFKQS6724YZ657YB2ZX`.
+
+Initiative finished; coordinated result queued.
+
+Updated listItems to fetch every cursor page in order, documented the pagination behavior, added coverage for cursor traversal and terminal cursor forms, and committed as a5423bcb9772a7cc519385457355cdd62759b043. npm test passes (5/5); git diff --check is clean. No open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a5423bcb9772a7cc519385457355cdd62759b043 on the run branch
+
+Implemented cursor pagination for GET /items, added tests for defaults, page traversal, ordering, invalid parameters, and final-page behavior, and documented the API. `python3 -m unittest` passed (6 tests); `git diff --check` passed. Committed as 358b7f29030164b29f35f97738f3648e7b927633.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 358b7f29030164b29f35f97738f3648e7b927633 on the run branch

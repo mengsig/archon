@@ -1,0 +1,3 @@
+Implemented `TokenBucket` and `KeyedLimiter` per `SPEC.md`, including continuous refill, backwards-clock handling, request validation, and LRU eviction.
+
+`git diff --check` passed. I did not run tests. Commit: `76b77ab` (`Implement token bucket rate limiter`).

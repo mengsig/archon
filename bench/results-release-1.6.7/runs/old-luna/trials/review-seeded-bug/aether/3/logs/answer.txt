@@ -1,0 +1,9 @@
+## Findings
+
+- **Critical — [src/tokens.js:27](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/efe4f3fad9c1406b12b4fa24/review-seeded-bug/src/tokens.js:27), `verify`:** `startsWith` accepts an empty signature, so an attacker can forge a token without knowing the secret. For example, a token containing the base64url encoding of `{"user":"admin","exp":4102444800000}` followed by a single `.` passes the signature check and returns the attacker-supplied claims. Require an exact, full-length signature match.
+
+- **Medium — [src/tokens.js:28](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/efe4f3fad9c1406b12b4fa24/review-seeded-bug/src/tokens.js:28), `verify`:** Malformed payloads can throw instead of returning `null` as the function’s comment promises. For example, a token with a base64url body that decodes to `{` and an empty signature reaches `JSON.parse` and throws. With the current signature check, an unauthenticated caller can trigger this exception; callers that expect invalid tokens to return `null` may fail their request. Catch decoding/parsing errors and reject malformed payloads.
+
+- **Low — [src/tokens.js:24](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/efe4f3fad9c1406b12b4fa24/review-seeded-bug/src/tokens.js:24), `verify`:** `split('.')` discards segments after the signature. A valid token with `.extra` appended is still accepted, even though the documented format has exactly two segments. Reject tokens with extra segments to avoid inconsistent handling by callers or intermediaries.
+
+No files were changed; I did not run builds or tests.

@@ -1,0 +1,3 @@
+Implemented the `OrderStatus` enum, parsing and display support, lifecycle transitions, and crate root re-exports. Reports preserve their existing output, error text, and alphabetical status ordering.
+
+`cargo test` passed (3 integration tests), and the working tree is clean. Committed as `b0a8deb` (`Refactor order status to enum`).

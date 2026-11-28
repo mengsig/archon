@@ -1,0 +1,199 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GRMJEYNBPGEVZXNYMEHYTM",
+      "repo": "repo_01M8GRKS8SZ6HSSX3YVKH9DN5F",
+      "pipeline": "direct",
+      "title": "Implement retry_budget.py from SPEC.md with edge-case tests",
+      "brief": "Implement retry_budget.py according to SPEC.md. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the basics in the existing tests. Use only the Python standard library. Run the relevant tests and commit the completed work on the local branch. Acceptance: behavior matches every specified API/error/boundary requirement in SPEC.md; focused tests cover those cases; relevant tests pass; changes are committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GRMJEYNBPGEVZXNYMEHYTM",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:44:00.785721636Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T09:44:01.983449829Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T09:44:00.785721636Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GRMKRNXKNACCMM44H2WXRP",
+        "summary": "Implemented retry_delay with full argument validation, efficient capped exponential backoff, Retry-After floors, and strict budget boundaries. Added focused edge tests; all 9 tests, compilation, and diff checks pass. Committed as 207f649b97e0bc0922a63ac245862b3bd7a58724; worktree clean.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 207f649b97e0bc0922a63ac245862b3bd7a58724 on the run branch"
+      },
+      "created_at": "2026-11-28T09:44:00.734760772Z",
+      "updated_at": "2026-11-28T09:45:47.566030130Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GRMKRNXKNACCMM44H2WXRP",
+        "item": "qi_01M8GRMJEYNBPGEVZXNYMEHYTM",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GRMM0ANR1NNW1XN3QR0N1P",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/3e7840a2c5c5b4df6bf2d726/.archon/data/worktrees/quality-retry-budget/qi_01M8GRMJEYNBPGEVZXNYMEHYTM",
+        "branch": "archon/nymehytm-implement-retry-budget-py-from-spec-md-w",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented retry_delay with full argument validation, efficient capped exponential backoff, Retry-After floors, and strict budget boundaries. Added focused edge tests; all 9 tests, compilation, and diff checks pass. Committed as 207f649b97e0bc0922a63ac245862b3bd7a58724; worktree clean.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 207f649b97e0bc0922a63ac245862b3bd7a58724 on the run branch"
+        },
+        "cost_usd": 0.006910500000000001,
+        "started_at": "2026-11-28T09:44:02.283644509Z",
+        "finished_at": "2026-11-28T09:45:47.566030130Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GRMKZVSMEGR54HF7PZJ9DA",
+        "run": "prun_01M8GRMKRNXKNACCMM44H2WXRP",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GRMM0QZ0G4R03BQHHCMRJJ",
+        "aether_task": "tsk_01M8GRMM0QZ0G4R03BQHHCMRJK",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented retry_delay with full argument validation, efficient capped exponential backoff, Retry-After floors, and strict budget boundaries. Added focused edge tests; all 9 tests, compilation, and diff checks pass. Committed as 207f649b97e0bc0922a63ac245862b3bd7a58724; worktree clean.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v (9 tests passed)",
+            "python -m py_compile retry_budget.py test_retry_budget.py (passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "207f649b97e0bc0922a63ac245862b3bd7a58724",
+          "evidence": [
+            {
+              "after": "Ran 9 tests in 0.001s\nOK",
+              "before": "Ran 3 tests in 0.001s\nFAILED (errors=3; retry_delay raised NotImplementedError)",
+              "caption": "Before: baseline tests failed because retry_delay was unimplemented. After: all nine focused and basic tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "207f649b97e0bc0922a63ac245862b3bd7a58724",
+          "pr": {
+            "body": "Implemented the pure standard-library function in retry_budget.py and added focused edge coverage in test_retry_budget.py. Validation rejects bools and non-built-in ints, negative values, and malformed retry_after_ms before exhaustion checks. Backoff saturates without constructing huge powers, Retry-After is not cap-limited, and retries at the budget boundary are rejected. Checks: python -m unittest -v (9 passed), python -m py_compile retry_budget.py test_retry_budget.py (passed), git diff --check (passed).",
+            "summary": "Implemented the retry delay API with strict validation, capped exponential backoff, a Retry-After floor, and strict budget enforcement. Before: the API raised NotImplementedError; now it returns the specified delay or None across normal and edge cases.",
+            "title": "Implement bounded retry budget scheduling"
+          },
+          "risk": {
+            "level": "low",
+            "why": "Contained behavior change to one standalone Python function with no external dependencies or side effects. Added focused tests for API validation and boundaries; all 9 unit tests, compilation, and diff checks pass."
+          },
+          "tree": "e240854e27ce2b6dfdfd2d5ab082851daf695b7a"
+        },
+        "cost_usd": 0.006910500000000001,
+        "started_at": "2026-11-28T09:44:02.298752665Z",
+        "finished_at": "2026-11-28T09:45:47.126579279Z"
+      }
+    ],
+    "spent_usd": 0.006910500000000001,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:44:00.785721636Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T09:44:01.983449829Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T09:44:00.785721636Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

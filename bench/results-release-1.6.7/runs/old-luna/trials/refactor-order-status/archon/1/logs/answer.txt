@@ -1,0 +1,16 @@
+Queued as `qi_01M8GK20D5HYKPTS90XQ5K10EJ` on the `direct` pipeline. The work brief includes the API, behavior-preservation requirements, `cargo test`, and a local commit.
+
+Done: Refactor order status into OrderStatus. Added and exported OrderStatus and ParseStatusError, and moved order lifecycle checks, parsing, and reporting to the enum while preserving output and error behavior. `cargo fmt --check` and `cargo test` pass (4 integration tests); independent whole-change review passed with no findings. Committed as c620eb0114920cd4e49d7187071560bc1887ce21. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GK8RPBJWDSD7TJNNQZDD8Y)
+
+SHIPPED: commit c620eb0114920cd4e49d7187071560bc1887ce21 on the run branch
+Branch `archon/xq5k10ej-refactor-order-status-into-orderstatus` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/2a6a0e9635002f64c415ebf0/refactor-order-status holds it (7 files changed, 154 insertions(+), 35 deletions(-)). Review: `archon diff qi_01M8GK20D5HYKPTS90XQ5K10EJ`; land it in `main`: `archon merge qi_01M8GK20D5HYKPTS90XQ5K10EJ`.
+
+Freed 0.0 GiB of build output: item qi_01M8GK20D5HYKPTS90XQ5K10EJ ended and its cargo target directory went.
+
+Added and exported OrderStatus and ParseStatusError, and moved order lifecycle checks, parsing, and reporting to the enum while preserving output and error behavior. `cargo fmt --check` and `cargo test` pass (4 integration tests); independent whole-change review passed with no findings. Committed as c620eb0114920cd4e49d7187071560bc1887ce21. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GK8RPBJWDSD7TJNNQZDD8Y)
+
+SHIPPED: commit c620eb0114920cd4e49d7187071560bc1887ce21 on the run branch

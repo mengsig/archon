@@ -1,0 +1,14 @@
+Queued as **qi_01M8GGVN2CW9GQ209AW638VZB1** in `fix-off-by-one`. The agent is tasked with fixing `window.py`, leaving tests unchanged, running `python3 -m unittest`, checking correctness across inputs, and committing the fix.
+
+Done: Fix window.py for all inputs. Corrected the sliding-window stop bound so every valid contiguous window is included, including the final and exact-size windows. `python3 -m unittest` passed (3 tests), six empty/exact/undersized/oversized boundary probes passed, and `git diff --check` passed. Committed as da67d108738195342a6b774ff104cff388d02eac; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGXER5HJ5GH61WHP080GFS)
+
+SHIPPED: commit da67d108738195342a6b774ff104cff388d02eac on the run branch
+Branch `archon/w638vzb1-fix-window-py-for-all-inputs` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/3765a82eba07988bf5acfcdc/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GGVN2CW9GQ209AW638VZB1`; land it in `main`: `archon merge qi_01M8GGVN2CW9GQ209AW638VZB1`.
+
+Corrected the sliding-window stop bound so every valid contiguous window is included, including the final and exact-size windows. `python3 -m unittest` passed (3 tests), six empty/exact/undersized/oversized boundary probes passed, and `git diff --check` passed. Committed as da67d108738195342a6b774ff104cff388d02eac; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGXER5HJ5GH61WHP080GFS)
+
+SHIPPED: commit da67d108738195342a6b774ff104cff388d02eac on the run branch

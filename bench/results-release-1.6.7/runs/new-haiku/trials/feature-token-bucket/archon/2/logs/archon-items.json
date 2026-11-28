@@ -1,0 +1,698 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GME8Z110RBNSGT2982STZ6",
+      "repo": "repo_01M8GM4E5X54JBJ3HEAF9WWZXK",
+      "pipeline": "direct",
+      "title": "Fix wait_time under a backwards clock per SPEC.md",
+      "brief": "In ratelimit.py of the feature-token-bucket repository, TokenBucket.wait_time(n) currently ignores a clock that has gone backwards. SPEC.md says that when the clock goes backwards nothing changes: no tokens are added or removed until the clock passes the latest time the bucket has already seen. wait_time(n) must return the seconds until try_acquire(n) would succeed, so when the clock is behind the latest seen time it must include the wait for the clock to reach that time, plus the refill wait for any token deficit. Follow SPEC.md exactly. Add tests to test_ratelimit.py for wait_time under a backwards clock, including that the returned wait agrees with when try_acquire actually succeeds under a controlled clock. Keep the standard library only, keep functions under 60 lines, and run `python3 -W error -B -m unittest -v test_ratelimit`. Commit on this item's existing branch; do not push and do not add attribution lines.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GME8Z110RBNSGT2982STZ6",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:30:41.212803943Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:30:41.212803943Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:30:41.212803943Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Small, well-specified fix to one method plus tests; balanced tier at medium effort fits."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMEA36V1WPW792SHFJ01T6",
+        "summary": "Fixed TokenBucket.wait_time under a backwards clock in ratelimit.py, per SPEC.md: the wait now adds the gap between the latest seen time and the current clock to the token-deficit wait. Added 3 tests to test_ratelimit.py (deterministic gap case, zero wait with tokens available, randomized sleep-then-acquire under a backwards clock). `python3 -W error -B -m unittest -v test_ratelimit` runs 25 tests, all OK. The new randomized test fails on the pre-fix code. Committed as 9198a0c on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed; no attribution lines. Review: one reviewer (agt_01M8GMGCK101FH0TXRVNPWY54F) passed head 9198a0c; its non-blocking notes are a tiny forward-clock overestimate from the existing float margin and bool accepted by the max_keys check (pre-existing, left unchanged). Reviewer rated risk low; author rated medium. Nothing left running from this stage; the reviewer's leftover claude process (pid 3298906) stops when this agent ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMGCK101FH0TXRVNPWY54F)\n\nSHIPPED: commit 9198a0c791f06ebfcd1110cbd79c18683245e62c on the run branch"
+      },
+      "created_at": "2026-11-28T08:30:40.097821546Z",
+      "updated_at": "2026-11-28T08:33:31.979281471Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMEA36V1WPW792SHFJ01T6",
+        "item": "qi_01M8GME8Z110RBNSGT2982STZ6",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMEA7PDV3PXGE7NB9GC5BG",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/46166e5b961dc1875e81845d/.archon/data/worktrees/feature-token-bucket/qi_01M8GM4W798XMCM7P54YF1JSME",
+        "branch": "archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Fixed TokenBucket.wait_time under a backwards clock in ratelimit.py, per SPEC.md: the wait now adds the gap between the latest seen time and the current clock to the token-deficit wait. Added 3 tests to test_ratelimit.py (deterministic gap case, zero wait with tokens available, randomized sleep-then-acquire under a backwards clock). `python3 -W error -B -m unittest -v test_ratelimit` runs 25 tests, all OK. The new randomized test fails on the pre-fix code. Committed as 9198a0c on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed; no attribution lines. Review: one reviewer (agt_01M8GMGCK101FH0TXRVNPWY54F) passed head 9198a0c; its non-blocking notes are a tiny forward-clock overestimate from the existing float margin and bool accepted by the max_keys check (pre-existing, left unchanged). Reviewer rated risk low; author rated medium. Nothing left running from this stage; the reviewer's leftover claude process (pid 3298906) stops when this agent ends.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMGCK101FH0TXRVNPWY54F)\n\nSHIPPED: commit 9198a0c791f06ebfcd1110cbd79c18683245e62c on the run branch"
+        },
+        "cost_usd": 0.03593521,
+        "started_at": "2026-11-28T08:30:41.341464785Z",
+        "finished_at": "2026-11-28T08:33:31.979281471Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMEA6YJW362HRHZHEH2W6A",
+        "run": "prun_01M8GMEA36V1WPW792SHFJ01T6",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMEA8S3KFTQ2R7B9BMYQBZ",
+        "aether_task": "tsk_01M8GMEA8S5J0EKQ24R0V421A1",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Fixed TokenBucket.wait_time under a backwards clock in ratelimit.py, per SPEC.md: the wait now adds the gap between the latest seen time and the current clock to the token-deficit wait. Added 3 tests to test_ratelimit.py (deterministic gap case, zero wait with tokens available, randomized sleep-then-acquire under a backwards clock). `python3 -W error -B -m unittest -v test_ratelimit` runs 25 tests, all OK. The new randomized test fails on the pre-fix code. Committed as 9198a0c on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed; no attribution lines. Review: one reviewer (agt_01M8GMGCK101FH0TXRVNPWY54F) passed head 9198a0c; its non-blocking notes are a tiny forward-clock overestimate from the existing float margin and bool accepted by the max_keys check (pre-existing, left unchanged). Reviewer rated risk low; author rated medium. Nothing left running from this stage; the reviewer's leftover claude process (pid 3298906) stops when this agent ends.",
+        "structured": {
+          "checks": [
+            "python3 -W error -B -m unittest -v test_ratelimit"
+          ],
+          "commit": "9198a0c791f06ebfcd1110cbd79c18683245e62c",
+          "evidence": [
+            {
+              "after": [],
+              "before": [
+                "FAIL: test_sleeping_wait_time_under_backwards_clock_allows_acquire (start=50.0, back=30.550984759064562, capacity=1.7764603190678117, rate=84.7448993563539, n=0.4605693125919747)"
+              ],
+              "caption": "Pre-fix code: new randomized backwards-clock test fails",
+              "kind": "output"
+            },
+            {
+              "after": [
+                "Ran 25 tests in 0.094s",
+                "OK"
+              ],
+              "before": [],
+              "caption": "Post-fix unit test run",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "9198a0c791f06ebfcd1110cbd79c18683245e62c",
+          "pr": {
+            "body": "Approach: in TokenBucket.wait_time, _refill now returns the clock reading; the wait adds (latest seen time - now) to the refill wait. Forward-clock behaviour is unchanged apart from the existing float margin.\n\nKey files: ratelimit.py (_refill, wait_time), test_ratelimit.py (3 new tests: deterministic gap case, zero-wait case with tokens available, randomized sleep-then-acquire under a backwards clock).\n\nChecks: `python3 -W error -B -m unittest -v test_ratelimit` -> Ran 25 tests, OK. The new randomized test fails on the pre-fix code.\n\nAssumptions and limits: the float margin makes forward-clock waits a tiny overestimate (reviewer non-blocking note). isinstance(max_keys, int) accepts bool (pre-existing, not changed here).",
+            "risk": {
+              "level": "low",
+              "reviewer": "agt_01M8GMGCK101FH0TXRVNPWY54F",
+              "why": "Reviewer rated low (author rated medium): contained fix in one small stdlib class, no concurrency, security or persistence impact; a 200k-trial randomized probe found no insufficient wait."
+            },
+            "summary": "Made wait_time honour SPEC.md when the clock goes backwards. Now returns the true wait until try_acquire succeeds. Before: wait ignored the clock gap, so callers could wake too early. Now: wait = clock gap + token-deficit wait.",
+            "title": "Include clock gap in wait_time under a backwards clock"
+          },
+          "review": {
+            "reviewed_head": "9198a0c791f06ebfcd1110cbd79c18683245e62c",
+            "reviewer_agents": [
+              "agt_01M8GMGCK101FH0TXRVNPWY54F"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GMGCK101FH0TXRVNPWY54F",
+                "base": "8256706fcae888063c14e1b7a4ad79b2f9aa8bde",
+                "findings": 2,
+                "head": "9198a0c791f06ebfcd1110cbd79c18683245e62c",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GMGCK101FH0TXRVNPWY54F"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GMGCK101FH0TXRVNPWY54F:1": {
+                "blocking": false,
+                "description": "wait_time always adds a fixed 1e-9 s plus 4 ulp margin, even on a forward clock, so it is a slight overestimate rather than the exact seconds until try_acquire succeeds. Harmless, and sufficiency is preserved. at ratelimit.py:74",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMEA6YJW362HRHZHEH2W6A"
+                },
+                "id": "agt_01M8GMGCK101FH0TXRVNPWY54F:1",
+                "resolved_in": null
+              },
+              "agt_01M8GMGCK101FH0TXRVNPWY54F:2": {
+                "blocking": false,
+                "description": "isinstance(max_keys, int) also accepts bool, so max_keys=True is silently treated as 1. at ratelimit.py:77",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMEA6YJW362HRHZHEH2W6A"
+                },
+                "id": "agt_01M8GMGCK101FH0TXRVNPWY54F:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "9198a0c791f06ebfcd1110cbd79c18683245e62c",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMGCK101FH0TXRVNPWY54F",
+                    "base": "8256706fcae888063c14e1b7a4ad79b2f9aa8bde",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GMGCK101FH0TXRVNPWY54F:1",
+                      "agt_01M8GMGCK101FH0TXRVNPWY54F:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "reviewer": "agt_01M8GMGCK101FH0TXRVNPWY54F",
+            "why": "Contained behaviour fix in one small stdlib class with no concurrency, security or persistence impact; reviewer probe found no case where the returned wait was insufficient."
+          },
+          "tree": "1bec8ad5440cee9cef7cae23c50b94cb2c175fc3"
+        },
+        "cost_usd": 0.03593521,
+        "started_at": "2026-11-28T08:30:41.374564009Z",
+        "finished_at": "2026-11-28T08:33:18.495816472Z"
+      }
+    ],
+    "spent_usd": 0.03593521,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMEA6YJW362HRHZHEH2W6A": {
+        "direct_usd": 0.02555117,
+        "delegated_usd": 0.01038404,
+        "agents": [
+          {
+            "agent": "agt_01M8GMGCK101FH0TXRVNPWY54F",
+            "parent": "agt_01M8GMEA8S3KFTQ2R7B9BMYQBZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01038404
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:30:41.212803943Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:30:41.212803943Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:30:41.212803943Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GM4W798XMCM7P54YF1JSME",
+      "repo": "repo_01M8GM4E5X54JBJ3HEAF9WWZXK",
+      "pipeline": "direct",
+      "title": "Implement rate limiter per SPEC.md in ratelimit.py",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py in the feature-token-bucket repository. The module currently only has stubs. Follow SPEC.md exactly, including its error cases and edge cases (for example: the TokenBucket clock-goes-backwards behaviour, and the KeyedLimiter max_keys behaviour). test_ratelimit.py only covers the basics, so also add tests for the error cases and edge cases in SPEC.md to test_ratelimit.py, and run the tests. Use the Python standard library only, with no new dependencies. Keep functions under 60 lines, keep the code simple and explicit, and validate inputs at the boundary with clear errors as the spec requires. Commit the work on the item's branch with a clear commit message; do not push. Do not add any attribution lines to the commit message.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GM4W798XMCM7P54YF1JSME",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:25:33.256641617Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:25:33.256641617Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T08:25:33.256641617Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Single-module change with a written spec and tests; balanced tier at medium effort fits."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GM4XD37YWW30ME3NYNNWQ5",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 22 tests to test_ratelimit.py (validation, n bounds, fractional refill, cap, wait_time sufficiency incl. large clock values, backwards clock, LRU eviction, wait_time as a use, invalid request not evicting). Committed on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed. Final head c44a7c9ce14b6a1370f218bc8b17a9166160ff0b, tree 9978b7b2aa2c24f037fb84a530681c9ee3119a76. Check: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK (before: the 3 original tests errored on the stubs). Review: three reviewers. The first found a float-rounding bug in wait_time, fixed in 44eed50. The second found the fix incomplete at large clock values, fixed in c44a7c9. The third passed the head. Open follow-up (non-blocking): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. No processes left running; no services started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GM6WZC367FDHJ5CJJRPQ3W), claude-code/claude-haiku-5-5 (agent agt_01M8GMBJ46Y831QRMEXM6NN13V)\n\nSHIPPED: commit c44a7c9ce14b6a1370f218bc8b17a9166160ff0b on the run branch"
+      },
+      "created_at": "2026-11-28T08:25:32.137226744Z",
+      "updated_at": "2026-11-28T08:30:28.772311471Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GM4XD37YWW30ME3NYNNWQ5",
+        "item": "qi_01M8GM4W798XMCM7P54YF1JSME",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GM4XP8HA1HXW8K7AE7ZY9Y",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/46166e5b961dc1875e81845d/.archon/data/worktrees/feature-token-bucket/qi_01M8GM4W798XMCM7P54YF1JSME",
+        "branch": "archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 22 tests to test_ratelimit.py (validation, n bounds, fractional refill, cap, wait_time sufficiency incl. large clock values, backwards clock, LRU eviction, wait_time as a use, invalid request not evicting). Committed on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed. Final head c44a7c9ce14b6a1370f218bc8b17a9166160ff0b, tree 9978b7b2aa2c24f037fb84a530681c9ee3119a76. Check: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK (before: the 3 original tests errored on the stubs). Review: three reviewers. The first found a float-rounding bug in wait_time, fixed in 44eed50. The second found the fix incomplete at large clock values, fixed in c44a7c9. The third passed the head. Open follow-up (non-blocking): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. No processes left running; no services started.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GM6WZC367FDHJ5CJJRPQ3W), claude-code/claude-haiku-5-5 (agent agt_01M8GMBJ46Y831QRMEXM6NN13V)\n\nSHIPPED: commit c44a7c9ce14b6a1370f218bc8b17a9166160ff0b on the run branch"
+        },
+        "cost_usd": 0.08038308999999999,
+        "started_at": "2026-11-28T08:25:33.555459136Z",
+        "finished_at": "2026-11-28T08:30:28.772311471Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4",
+        "run": "prun_01M8GM4XD37YWW30ME3NYNNWQ5",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GM4XR6RCJ1FYB69ZERKEC8",
+        "aether_task": "tsk_01M8GM4XR6RCJ1FYB69ZERKEC9",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: ordinary -> medium; the plan pins medium",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 22 tests to test_ratelimit.py (validation, n bounds, fractional refill, cap, wait_time sufficiency incl. large clock values, backwards clock, LRU eviction, wait_time as a use, invalid request not evicting). Committed on archon/4yf1jsme-implement-rate-limiter-per-spec-md-in-ra; not pushed. Final head c44a7c9ce14b6a1370f218bc8b17a9166160ff0b, tree 9978b7b2aa2c24f037fb84a530681c9ee3119a76. Check: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK (before: the 3 original tests errored on the stubs). Review: three reviewers. The first found a float-rounding bug in wait_time, fixed in 44eed50. The second found the fix incomplete at large clock values, fixed in c44a7c9. The third passed the head. Open follow-up (non-blocking): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. No processes left running; no services started.",
+        "structured": {
+          "checks": [
+            "python3 -W error -B -m unittest -v test_ratelimit"
+          ],
+          "commit": "c44a7c9ce14b6a1370f218bc8b17a9166160ff0b",
+          "evidence": {
+            "none": "Pure library logic with no visible or measurable outcome; the test run output is the only evidence and is captured in the summary."
+          },
+          "local_commit": "c44a7c9ce14b6a1370f218bc8b17a9166160ff0b",
+          "pr": {
+            "body": "Approach: ratelimit.py implements TokenBucket (continuous refill capped at capacity, clock regression ignored until the clock passes the latest seen time) and KeyedLimiter (OrderedDict LRU, max_keys buckets, try_acquire and wait_time both count as use, invalid requests rejected before any key is created or evicted). Validation: capacity, refill_per_sec and n must be finite and > 0; n must not exceed capacity; max_keys must be an int >= 1. wait_time pads the refill wait by 1e-9 s plus 4 ulp of the target clock value so that sleeping exactly wait_time(n) allows try_acquire(n) at any clock magnitude. Checks: `python3 -W error -B -m unittest -v test_ratelimit` runs 22 tests, all OK. Follow-up (non-blocking, open): wait_time ignores a clock that has gone backwards; the spec implies the wait should be (last_seen - now) + refill wait. Assumptions: finite-only parameters (NaN and inf rejected) are an extension beyond the spec.",
+            "summary": "Made rate limiting available: TokenBucket and KeyedLimiter per SPEC.md. Before: stubs raising NotImplementedError, 3 tests erroring. Now: 22 tests pass, including validation, refill cap, wait_time sufficiency, clock regression, and LRU eviction.",
+            "title": "Implement TokenBucket and KeyedLimiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "c44a7c9ce14b6a1370f218bc8b17a9166160ff0b",
+            "reviewer_agents": [
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W",
+              "agt_01M8GMBJ46Y831QRMEXM6NN13V"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W",
+                "base": "8256706fcae888063c14e1b7a4ad79b2f9aa8bde",
+                "findings": 4,
+                "head": "cffe20013726852ac3a50b10f9f1d4d4ce0fa8e0",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GM9G3FHSKFAG98TX8TY339",
+                "base": "cffe20013726852ac3a50b10f9f1d4d4ce0fa8e0",
+                "findings": 1,
+                "head": "44eed50fafba607bae97d6f0b9d18f1c276f234e",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GMBJ46Y831QRMEXM6NN13V",
+                "base": "44eed50fafba607bae97d6f0b9d18f1c276f234e",
+                "findings": 1,
+                "head": "c44a7c9ce14b6a1370f218bc8b17a9166160ff0b",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W",
+              "agt_01M8GM9G3FHSKFAG98TX8TY339",
+              "agt_01M8GMBJ46Y831QRMEXM6NN13V"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:1": {
+                "blocking": true,
+                "description": "wait_time() returns (n - tokens) / rate, but refill computes tokens + elapsed * rate, so float rounding can leave tokens slightly below n after waiting exactly wait_time(n). Probe: 940/20000 random cases where try_acquire(n) failed right after the returned wait. This violates SPEC 'seconds until try_acquire(n) would succeed'. Fix: round the wait up by a small epsilon or re-check; add a regression ",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:1",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                }
+              },
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:2": {
+                "blocking": false,
+                "description": "bool is accepted as a number: n=True passes as 1, and max_keys=True passes the isinstance(int) check as 1. Harmless, but not a documented input. at ratelimit.py:20",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:2",
+                "resolved_in": null
+              },
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:3": {
+                "blocking": false,
+                "description": "Non-numeric capacity, refill_per_sec or n raises TypeError from math.isfinite rather than ValueError. SPEC only names ValueError for <=0 and out-of-range values, so this is acceptable but not uniform. at ratelimit.py:12",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:3",
+                "resolved_in": null
+              },
+              "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:4": {
+                "blocking": false,
+                "description": "min(self._capacity, ...) returns the int capacity when tokens reach it exactly, so available() can return an int where SPEC promises a float. Equality tests still pass. at ratelimit.py:39",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:4",
+                "resolved_in": null
+              },
+              "agt_01M8GM9G3FHSKFAG98TX8TY339:1": {
+                "blocking": true,
+                "description": "Fix for agt_01M8GM6WZC367FDHJ5CJJRPQ3W:1 is incomplete: the absolute 1e-9 s margin is smaller than float rounding of the clock value. Sleeping exactly wait_time(n) then try_acquire(n) fails ~23% of the time at clock ~3e7 s (probe: 4557/20000), and passes at clock 0, 1e6, 1e7. Fix by scaling the margin with abs(clock reading) or by rounding the wait up to the next representable float (math.nextafte",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GM9G3FHSKFAG98TX8TY339:1",
+                "resolved_in": {
+                  "number": 3,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                }
+              },
+              "agt_01M8GMBJ46Y831QRMEXM6NN13V:1": {
+                "blocking": false,
+                "description": "wait_time does not account for a clock that has gone backwards (below the bucket's latest seen time _last). It returns the refill wait measured from the current clock, but refill only resumes once the clock passes _last, so a caller sleeping that long still gets False. Violates SPEC.md's 'seconds until try_acquire(n) would succeed'. Pre-existing (unchanged by this delta); reproduced: clock 10 -> 5",
+                "found_in": {
+                  "number": 3,
+                  "stage": "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4"
+                },
+                "id": "agt_01M8GMBJ46Y831QRMEXM6NN13V:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "cffe20013726852ac3a50b10f9f1d4d4ce0fa8e0",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W",
+                    "base": "8256706fcae888063c14e1b7a4ad79b2f9aa8bde",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:1",
+                      "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:2",
+                      "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:3",
+                      "agt_01M8GM6WZC367FDHJ5CJJRPQ3W:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "44eed50fafba607bae97d6f0b9d18f1c276f234e",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GM9G3FHSKFAG98TX8TY339",
+                    "base": "cffe20013726852ac3a50b10f9f1d4d4ce0fa8e0",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GM9G3FHSKFAG98TX8TY339:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "c44a7c9ce14b6a1370f218bc8b17a9166160ff0b",
+                "number": 3,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GMBJ46Y831QRMEXM6NN13V",
+                    "base": "44eed50fafba607bae97d6f0b9d18f1c276f234e",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GMBJ46Y831QRMEXM6NN13V:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "Only ratelimit.py and test_ratelimit.py changed; new code behind existing stub interfaces, pure in-memory arithmetic, no concurrency, I/O, security or migration surface. Review findings were fixed: float-rounding in wait_time (two rounds). Reviewer confirmed low."
+          },
+          "tree": "9978b7b2aa2c24f037fb84a530681c9ee3119a76"
+        },
+        "cost_usd": 0.08038308999999999,
+        "started_at": "2026-11-28T08:25:33.595546270Z",
+        "finished_at": "2026-11-28T08:30:21.847760365Z"
+      }
+    ],
+    "spent_usd": 0.08038308999999999,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GM4XMVTBM6AXK8PJ8MQ4A4": {
+        "direct_usd": 0.04764345,
+        "delegated_usd": 0.03273964,
+        "agents": [
+          {
+            "agent": "agt_01M8GM6WZC367FDHJ5CJJRPQ3W",
+            "parent": "agt_01M8GM4XR6RCJ1FYB69ZERKEC8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01157501
+          },
+          {
+            "agent": "agt_01M8GM9G3FHSKFAG98TX8TY339",
+            "parent": "agt_01M8GM4XR6RCJ1FYB69ZERKEC8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0096733
+          },
+          {
+            "agent": "agt_01M8GMBJ46Y831QRMEXM6NN13V",
+            "parent": "agt_01M8GM4XR6RCJ1FYB69ZERKEC8",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01149133
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:25:33.256641617Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:25:33.256641617Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T08:25:33.256641617Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -1,0 +1,39 @@
+Queued the refactor as `qi_01M8GVBSV1JNRZWF0YNHDHQ0VC` on the `refactor` pipeline, against the `refactor-order-status` repository. I did not make the change myself. The refactor pipeline characterizes current behaviour, does the refactor, verifies it, and reviews before shipping, which fits a change that must not alter behaviour.
+
+- **Brief:** your request is included verbatim, plus acceptance criteria: the `src/status.rs` API as you specified, `Order::status` as the enum, crate-root re-exports, string literals only in `src/status.rs`, unchanged behaviour, `cargo test` passing, and a local commit.
+- **Shipping:** the repository ships local, so the commit stays on a local branch and nothing is pushed.
+- **Not decided:** I did not set a review level, because the refactor pipeline's own gates apply. I also did not set a model plan, so the configured default is used.
+
+I'll report the outcome when the item finishes. If it fails, I'll read the stage output and report back.
+
+Done: Refactor orders crate: OrderStatus enum replaces status strings. Review of "Refactor orders crate: OrderStatus enum replaces status strings" at HEAD ebe003c (branch archon/nhdhq0vc-refactor-orders-crate-orderstatus-enum-r). Read-only; nothing edited, committed or pushed.
+
+Structural goal: met. src/status.rs holds OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display (via f.pad), can_transition_to (exactly the four allowed edges), and public ParseStatusError (std::error::Error, message "unknown status {input:?}") with FromStr. The module is private and both types are re-exported from the crate root. Order::status is OrderStatus. pay, ship and cancel now share one pub(crate) Order::advance that checks can_transition_to, which removes the three hand-written transition checks. The error text is unchanged: "cannot be {next}: it is {current}" yields the same strings as the baseline for every reachable case.
+
+Behaviour: I compared each transition against the baseline by hand. pay only succeeds from pending, ship only from paid, and cancel from pending or paid; the table matches. from_line keeps its validation order (field count, id, total, status) and its error strings. status_counts keeps the (String, usize) signature and BTreeMap ordering, which is the same as String ordering. ready_to_ship keeps input order. The only public change is the authorised Order.status type change, and its derived Debug output changes as a consequence.
+
+Tests: tests/orders.rs and the 21 characterization tests are unmodified (git diff is empty against fedb7e0 and 7c6db09). tests/status.rs adds 6 contract tests; the lifecycle test is exhaustive over all 16 pairs.
+
+Checks run: cargo test exit 0 (characterization 21 ok, orders 3 ok, status 6 ok, doctests 0). cargo clippy --all-targets -- -D warnings exit 0. Worktree clean. Commits carry no attribution lines.
+
+Literal criterion: the grep shows the status literals in production code only in src/status.rs:22-25. Tests still hol…
+
+Freed 0.1 GiB of build output: item qi_01M8GVBSV1JNRZWF0YNHDHQ0VC ended and its cargo target directory went.
+
+Review of "Refactor orders crate: OrderStatus enum replaces status strings" at HEAD ebe003c (branch archon/nhdhq0vc-refactor-orders-crate-orderstatus-enum-r). Read-only; nothing edited, committed or pushed.
+
+Structural goal: met. src/status.rs holds OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display (via f.pad), can_transition_to (exactly the four allowed edges), and public ParseStatusError (std::error::Error, message "unknown status {input:?}") with FromStr. The module is private and both types are re-exported from the crate root. Order::status is OrderStatus. pay, ship and cancel now share one pub(crate) Order::advance that checks can_transition_to, which removes the three hand-written transition checks. The error text is unchanged: "cannot be {next}: it is {current}" yields the same strings as the baseline for every reachable case.
+
+Behaviour: I compared each transition against the baseline by hand. pay only succeeds from pending, ship only from paid, and cancel from pending or paid; the table matches. from_line keeps its validation order (field count, id, total, status) and its error strings. status_counts keeps the (String, usize) signature and BTreeMap ordering, which is the same as String ordering. ready_to_ship keeps input order. The only public change is the authorised Order.status type change, and its derived Debug output changes as a consequence.
+
+Tests: tests/orders.rs and the 21 characterization tests are unmodified (git diff is empty against fedb7e0 and 7c6db09). tests/status.rs adds 6 contract tests; the lifecycle test is exhaustive over all 16 pairs.
+
+Checks run: cargo test exit 0 (characterization 21 ok, orders 3 ok, status 6 ok, doctests 0). cargo clippy --all-targets -- -D warnings exit 0. Worktree clean. Commits carry no attribution lines.
+
+Literal criterion: the grep shows the status literals in production code only in src/status.rs:22-25. Tests still hold them: tests/orders.rs:10,12,14,23,26,43,48 (pre-existing, unchanged), tests/status.rs:14-17,22-23,35, and tests/characterization.rs. These pin observable text, so the brief's rule cannot hold literally for tests. This is the orchestrator's decision; I recommend accepting it as an explicit exception.
+
+Advisory findings (non-blocking): the literal exception above; the ALL const in status.rs duplicates the variant list (acceptable, small); the doc comment at src/order.rs:31 quotes "cannot be paid" (nit); report.rs contains reflowed format! lines that are outside the status change (cosmetic churn, mostly fixing pre-existing fmt drift). Risk: high, because the change breaks the public Order.status field type. The break is authorised, and the change is cross-cutting.
+
+VERDICT: PASS
+
+SHIPPED: commit ebe003c3ce8baa47e1dea5e5714c721d8044d121 on the run branch

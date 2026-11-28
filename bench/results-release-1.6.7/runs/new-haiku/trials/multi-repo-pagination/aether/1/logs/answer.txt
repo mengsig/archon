@@ -1,0 +1,25 @@
+Cursor pagination is in place in both repositories and committed. Both test suites pass, and the client, run against the real API, returns all 57 items in order.
+
+**Commits** (on `main`, each tree clean)
+- `inventory-api` `f506e8b`: "Add cursor pagination to GET /items"
+- `inventory-client` `e542a9c`: "Follow next_cursor in listItems"
+
+**API (`inventory-api/api.py`)**
+- `limit` accepts only plain digits from 1 to 100; default 20. Values like `" 5"`, `"+5"`, `"2.5"` and `"0"` get 400.
+- `next_cursor` is the URL-safe base64 of the last returned item's id. Clients see it as an opaque string. A cursor is valid only if it decodes to digits and re-encodes to the same string. Anything else, including an oversized one, gets 400 with `{"error": "cursor is invalid"}`.
+- Each page is the items with `id` greater than the cursor's id, so pages stay stable if items are added later.
+- `next_cursor` is `null` when no items remain after the page. A page that exactly uses up the data also returns `null`.
+
+**Client (`inventory-client/client.js`)**
+- `listItems` makes the first request with no query, then passes `next_cursor` back unchanged until it is `null` or absent.
+- It rejects if a page fails, and also if `next_cursor` is the same as the cursor just sent. That stops a misbehaving server from looping forever.
+
+**Tests and docs**
+- API: 6 new tests covering the default page, a full cursor walk, the last-page and exact-fill boundaries, and 400s for bad `limit` and `cursor`. 9 tests pass.
+- Client: 4 new tests covering a multi-page walk with cursors passed through, a missing cursor ending the walk, a mid-walk failure, and a non-advancing cursor. 7 tests pass.
+- Both READMEs now describe `limit`, `cursor`, `next_cursor` and the 400 behaviour.
+
+**Decisions to check**
+- **Commit trailer:** I left out the `Co-Authored-By: Claude Haiku 5.5` line. Your CLAUDE.md says not to add anything that attributes the work to Claude, and the attribution note says CLAUDE.md wins. Say if you want it added.
+- **Git identity:** commits use the configured `mengsig` identity.
+- **Assertions:** the code has one assertion in `list_items`, checking that a page never exceeds `limit`. I did not add more to meet the CLAUDE.md quota.

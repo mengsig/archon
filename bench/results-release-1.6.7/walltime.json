@@ -1,0 +1,439 @@
+{
+  "haiku": {
+    "archon": {
+      "1.6.4": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 96.34772149643332,
+        "mean_s": 175.1776754480606,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 31.805863711666664,
+          "feature-token-bucket": 154.317304319,
+          "fix-off-by-one": 63.52971369766667,
+          "long-backlog": 324.31804844566665,
+          "multi-repo-currency": 146.11245119433332,
+          "multi-repo-pagination": 264.016786265,
+          "quality-ledger-transfer": 138.16038400566666,
+          "quality-retry-budget": 125.49413554633334,
+          "quality-safe-extract": 389.53414713433335,
+          "refactor-order-status": 254.56623263333336,
+          "review-seeded-bug": 35.099362975666665
+        }
+      },
+      "1.6.5": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 132.52880509023333,
+        "mean_s": 240.96146380042424,
+        "timeouts": 2,
+        "tasks": {
+          "ask-cache-invalidation": 31.717507838999996,
+          "feature-token-bucket": 233.523629121,
+          "fix-off-by-one": 85.15700104166667,
+          "long-backlog": 204.35379615066665,
+          "multi-repo-currency": 201.83402375533333,
+          "multi-repo-pagination": 270.33890429166667,
+          "quality-ledger-transfer": 392.26944615766666,
+          "quality-retry-budget": 329.3128658786666,
+          "quality-safe-extract": 483.08082991866667,
+          "refactor-order-status": 369.18285394833333,
+          "review-seeded-bug": 49.805243702000006
+        }
+      },
+      "1.6.6": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 180.27896649070001,
+        "mean_s": 327.779939074,
+        "timeouts": 4,
+        "tasks": {
+          "ask-cache-invalidation": 36.047851428,
+          "feature-token-bucket": 301.69381031666666,
+          "fix-off-by-one": 91.44514972866666,
+          "long-backlog": 212.64008131133335,
+          "multi-repo-currency": 228.06738125366667,
+          "multi-repo-pagination": 399.914199549,
+          "quality-ledger-transfer": 831.2166604646667,
+          "quality-retry-budget": 134.97965927466666,
+          "quality-safe-extract": 725.8300991786667,
+          "refactor-order-status": 592.072888908,
+          "review-seeded-bug": 51.671548400666666
+        }
+      },
+      "1.6.7": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 137.58880232883334,
+        "mean_s": 250.16145877969697,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 38.66519286366667,
+          "feature-token-bucket": 302.51438893933334,
+          "fix-off-by-one": 94.85752851533334,
+          "long-backlog": 185.4604827006667,
+          "multi-repo-currency": 178.32696868433334,
+          "multi-repo-pagination": 228.70668928999999,
+          "quality-ledger-transfer": 363.5676750503333,
+          "quality-retry-budget": 131.511311797,
+          "quality-safe-extract": 438.65923629733334,
+          "refactor-order-status": 739.3071857153333,
+          "review-seeded-bug": 50.19938672333333
+        }
+      }
+    },
+    "aether": {
+      "1.6.4": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 31.9348297679,
+        "mean_s": 58.06332685072727,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 19.35862853633333,
+          "feature-token-bucket": 45.03412900066667,
+          "fix-off-by-one": 15.520110090333333,
+          "long-backlog": 113.40546477833334,
+          "multi-repo-currency": 74.061559468,
+          "multi-repo-pagination": 85.069497718,
+          "quality-ledger-transfer": 45.040757969,
+          "quality-retry-budget": 52.54702916233333,
+          "quality-safe-extract": 88.40486405899999,
+          "refactor-order-status": 63.371855692,
+          "review-seeded-bug": 36.882698884
+        }
+      },
+      "1.6.5": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 34.41242616711667,
+        "mean_s": 62.568047576575765,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 26.846972722333334,
+          "feature-token-bucket": 51.73474077266667,
+          "fix-off-by-one": 28.349107744666668,
+          "long-backlog": 128.397701367,
+          "multi-repo-currency": 95.382313814,
+          "multi-repo-pagination": 88.37606380033333,
+          "quality-ledger-transfer": 49.36084555866666,
+          "quality-retry-budget": 49.358546405333335,
+          "quality-safe-extract": 71.698465538,
+          "refactor-order-status": 60.55344097733333,
+          "review-seeded-bug": 38.190324642
+        }
+      },
+      "1.6.6": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 45.85893733421667,
+        "mean_s": 83.37988606221212,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 26.652763963,
+          "feature-token-bucket": 105.90941009433334,
+          "fix-off-by-one": 23.89712361633333,
+          "long-backlog": 149.64646245166668,
+          "multi-repo-currency": 111.916264969,
+          "multi-repo-pagination": 119.12071353900001,
+          "quality-ledger-transfer": 72.23269166066666,
+          "quality-retry-budget": 56.78034925933333,
+          "quality-safe-extract": 120.35370696766667,
+          "refactor-order-status": 80.142474057,
+          "review-seeded-bug": 50.52678610633333
+        }
+      },
+      "1.6.7": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 45.84308463433333,
+        "mean_s": 83.35106297151515,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 38.343958468000004,
+          "feature-token-bucket": 79.971974113,
+          "fix-off-by-one": 24.050850852666667,
+          "long-backlog": 153.07932596933333,
+          "multi-repo-currency": 123.595180445,
+          "multi-repo-pagination": 110.11558763166666,
+          "quality-ledger-transfer": 56.41133730633334,
+          "quality-retry-budget": 51.95432099566667,
+          "quality-safe-extract": 126.92769373633332,
+          "refactor-order-status": 99.323535293,
+          "review-seeded-bug": 53.08792787566667
+        }
+      }
+    },
+    "timeouts": [
+      {
+        "version": "1.6.5",
+        "task": "quality-safe-extract",
+        "arm": "archon",
+        "trial": 1,
+        "wall_s": 721,
+        "graded_pass": false,
+        "cause": "review loop: 9 reviewers, still reviewing at the limit",
+        "overlapped": [],
+        "peak_load5": null
+      },
+      {
+        "version": "1.6.5",
+        "task": "quality-retry-budget",
+        "arm": "archon",
+        "trial": 3,
+        "wall_s": 722,
+        "graded_pass": false,
+        "cause": "implement lead still working at the limit, no reviewer delegated yet (long engine turns)",
+        "overlapped": [],
+        "peak_load5": null
+      },
+      {
+        "version": "1.6.6",
+        "task": "quality-ledger-transfer",
+        "arm": "archon",
+        "trial": 1,
+        "wall_s": 1233,
+        "graded_pass": false,
+        "cause": "review loop: 5 reviewers, still reviewing at the limit",
+        "overlapped": [],
+        "peak_load5": 14.46
+      },
+      {
+        "version": "1.6.6",
+        "task": "quality-safe-extract",
+        "arm": "archon",
+        "trial": 1,
+        "wall_s": 728,
+        "graded_pass": false,
+        "cause": "review loop: 5 reviewers, still reviewing at the limit",
+        "overlapped": [],
+        "peak_load5": 19.65
+      },
+      {
+        "version": "1.6.6",
+        "task": "quality-safe-extract",
+        "arm": "archon",
+        "trial": 2,
+        "wall_s": 722,
+        "graded_pass": false,
+        "cause": "review loop: 4 reviewers, still reviewing at the limit",
+        "overlapped": [],
+        "peak_load5": 11.21
+      },
+      {
+        "version": "1.6.6",
+        "task": "quality-safe-extract",
+        "arm": "archon",
+        "trial": 3,
+        "wall_s": 728,
+        "graded_pass": false,
+        "cause": "review loop: 5 reviewers, still reviewing at the limit",
+        "overlapped": [],
+        "peak_load5": 9.37
+      }
+    ],
+    "overlap": {
+      "1.6.6": {
+        "trials": 66,
+        "overlapping": 0,
+        "jobs": []
+      },
+      "1.6.7": {
+        "trials": 66,
+        "overlapping": 0,
+        "jobs": []
+      }
+    }
+  },
+  "luna": {
+    "archon": {
+      "1.6.4": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 118.78920228099999,
+        "mean_s": 215.98036778363635,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 31.352648194,
+          "feature-token-bucket": 252.06525443833334,
+          "fix-off-by-one": 136.21351586633332,
+          "long-backlog": 389.7132528843333,
+          "multi-repo-currency": 307.51940193366664,
+          "multi-repo-pagination": 219.14356561066666,
+          "quality-ledger-transfer": 206.45363996866664,
+          "quality-retry-budget": 156.603459495,
+          "quality-safe-extract": 280.35111223866664,
+          "refactor-order-status": 365.8718605023333,
+          "review-seeded-bug": 30.496334488000002
+        }
+      },
+      "1.6.5": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 136.41614057328334,
+        "mean_s": 248.0293464968788,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 40.071709610999996,
+          "feature-token-bucket": 196.9375356093333,
+          "fix-off-by-one": 121.79044506966666,
+          "long-backlog": 558.7708179783334,
+          "multi-repo-currency": 327.62461416699995,
+          "multi-repo-pagination": 291.8970678923333,
+          "quality-ledger-transfer": 442.094460455,
+          "quality-retry-budget": 211.84624334766667,
+          "quality-safe-extract": 238.53885844299998,
+          "refactor-order-status": 258.64877531133334,
+          "review-seeded-bug": 40.102283581
+        }
+      },
+      "1.6.6": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 132.99286439215,
+        "mean_s": 241.8052079857273,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 58.46799623566667,
+          "feature-token-bucket": 216.40920620966668,
+          "fix-off-by-one": 160.01392677266668,
+          "long-backlog": 382.11059364633337,
+          "multi-repo-currency": 395.3014619786666,
+          "multi-repo-pagination": 169.42568919733333,
+          "quality-ledger-transfer": 328.4118936936666,
+          "quality-retry-budget": 198.37096719066665,
+          "quality-safe-extract": 385.17274705899996,
+          "refactor-order-status": 296.83765601666664,
+          "review-seeded-bug": 69.33514984266667
+        }
+      },
+      "1.6.7": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 164.21565394606665,
+        "mean_s": 298.57391626557575,
+        "timeouts": 1,
+        "tasks": {
+          "ask-cache-invalidation": 52.427225389,
+          "feature-token-bucket": 263.00618802633335,
+          "fix-off-by-one": 118.194613904,
+          "long-backlog": 396.8635129463334,
+          "multi-repo-currency": 259.56954003699997,
+          "multi-repo-pagination": 478.5976833806667,
+          "quality-ledger-transfer": 661.0634786463334,
+          "quality-retry-budget": 183.70089603166664,
+          "quality-safe-extract": 404.41156400866663,
+          "refactor-order-status": 399.04968387300005,
+          "review-seeded-bug": 67.42869267833333
+        }
+      }
+    },
+    "aether": {
+      "1.6.4": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 33.048980593783334,
+        "mean_s": 60.0890556250606,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 18.350654792333334,
+          "feature-token-bucket": 50.095845260333334,
+          "fix-off-by-one": 30.199690005666668,
+          "long-backlog": 96.72442516133333,
+          "multi-repo-currency": 100.05609339933334,
+          "multi-repo-pagination": 85.078268202,
+          "quality-ledger-transfer": 55.03336761633333,
+          "quality-retry-budget": 65.05334395066667,
+          "quality-safe-extract": 78.658584947,
+          "refactor-order-status": 56.70889689566667,
+          "review-seeded-bug": 25.020441645000002
+        }
+      },
+      "1.6.5": {
+        "effort": "medium",
+        "trials": 33,
+        "total_min": 35.59793654911667,
+        "mean_s": 64.72352099839395,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 21.675953533,
+          "feature-token-bucket": 55.020035750333335,
+          "fix-off-by-one": 31.682214567333332,
+          "long-backlog": 125.05336273966668,
+          "multi-repo-currency": 86.70170697733333,
+          "multi-repo-pagination": 100.040839582,
+          "quality-ledger-transfer": 60.024699144,
+          "quality-retry-budget": 63.357606928333325,
+          "quality-safe-extract": 73.36185858966667,
+          "refactor-order-status": 65.02801274666668,
+          "review-seeded-bug": 30.012440424
+        }
+      },
+      "1.6.6": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 50.13768437755,
+        "mean_s": 91.159426141,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 32.760132939,
+          "feature-token-bucket": 69.650058313,
+          "fix-off-by-one": 48.744026168,
+          "long-backlog": 175.601391067,
+          "multi-repo-currency": 160.20172447566665,
+          "multi-repo-pagination": 115.10593255266667,
+          "quality-ledger-transfer": 76.836588698,
+          "quality-retry-budget": 85.264787716,
+          "quality-safe-extract": 115.08042842733335,
+          "refactor-order-status": 65.06755002066667,
+          "review-seeded-bug": 58.44106717366666
+        }
+      },
+      "1.6.7": {
+        "effort": "high",
+        "trials": 33,
+        "total_min": 49.92481166248333,
+        "mean_s": 90.77238484087879,
+        "timeouts": 0,
+        "tasks": {
+          "ask-cache-invalidation": 41.133622679666665,
+          "feature-token-bucket": 104.32398746233333,
+          "fix-off-by-one": 45.158093321,
+          "long-backlog": 148.04690063966666,
+          "multi-repo-currency": 151.830102901,
+          "multi-repo-pagination": 127.07862918433334,
+          "quality-ledger-transfer": 80.23037950366667,
+          "quality-retry-budget": 76.80887579066666,
+          "quality-safe-extract": 105.26740144333333,
+          "refactor-order-status": 73.43083198400001,
+          "review-seeded-bug": 45.18740834
+        }
+      }
+    },
+    "timeouts": [
+      {
+        "version": "1.6.7",
+        "task": "quality-ledger-transfer",
+        "arm": "archon",
+        "trial": 2,
+        "wall_s": 1203,
+        "graded_pass": false,
+        "cause": "waiting: after 23 s the lead sent a raw send_message to its run-node parent asking whether locking needs an escalation, then wait_for on it; that parent never replies, so it idled until the limit",
+        "overlapped": [],
+        "peak_load5": 16.0
+      }
+    ],
+    "overlap": {
+      "1.6.6": {
+        "trials": 66,
+        "overlapping": 0,
+        "jobs": []
+      },
+      "1.6.7": {
+        "trials": 66,
+        "overlapping": 0,
+        "jobs": []
+      }
+    }
+  }
+}

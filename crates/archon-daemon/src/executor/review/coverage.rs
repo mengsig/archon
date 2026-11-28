@@ -673,10 +673,7 @@ fn open_left_out(
     in_play: &[usize],
     head: &str,
 ) -> Result<Option<String>, ArchonError> {
-    let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let judged_fail = |read: &Placed| read.left_out || (read.carried && !read.pass);
-    let outside = (0..placed.len()).filter(|i| judged_fail(&placed[*i]) && !in_play.contains(i));
-    reads.extend(outside.map(|i| placed[i].clone()));
+    let reads = beside_play(placed, in_play);
     if reads.len() == in_play.len() {
         return Ok(None);
     }
@@ -695,6 +692,21 @@ fn open_left_out(
         "{why}: the record leaves that reviewer out, but a fail of this attempt or an \
          earlier run stands until a pass reads past it"
     )))
+}
+
+/// The `in_play` reads of `placed`, then the left-out and carried fails outside play,
+/// which stand beside them until a pass reads past them.
+fn beside_play(placed: &[Placed], in_play: &[usize]) -> Vec<Placed> {
+    assert!(
+        in_play.iter().all(|i| *i < placed.len()),
+        "in play indexes placed"
+    );
+    let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+    let judged_fail = |read: &Placed| read.left_out || (read.carried && !read.pass);
+    let outside = (0..placed.len()).filter(|i| judged_fail(&placed[*i]) && !in_play.contains(i));
+    reads.extend(outside.map(|i| placed[i].clone()));
+    assert!(reads.len() >= in_play.len(), "the reads in play lead");
+    reads
 }
 
 /// Indexes of the `reads` that read the whole change on the branch: a pass
@@ -911,8 +923,45 @@ pub(super) fn note_blockers(
         placed.len() <= attempt.len() + carried.len(),
         "each verdict is placed at most once"
     );
-    let current = holding_passes(history, &placed, &head)?;
-    open_blockers(history, &placed, &current).map(Ok)
+    open_for_record(history, placed, &head).map(Ok)
+}
+
+/// What the gate holds open for the record the lead is told to make, naming every
+/// reviewer of its attempt: `placed` as [`place`] places `earlier` and `carried` reads.
+fn open_for_record(
+    history: &mut impl Ancestry,
+    placed: Vec<Placed>,
+    head: &str,
+) -> Result<Vec<OpenBlocker>, ArchonError> {
+    assert!(placed.iter().all(|read| !read.named && !read.left_out));
+    let mut placed: Vec<Placed> = placed
+        .into_iter()
+        .map(|read| Placed {
+            named: !read.carried,
+            ..read
+        })
+        .collect();
+    // As `in_play` keeps them: a read nothing anchors counts for no record, and its fail stands.
+    let (core, anchored) = named_and_carried(history, &placed)?;
+    assert_eq!(core.len(), placed.len(), "every read is named or carried");
+    let in_play: Vec<usize> = (0..placed.len()).filter(|i| anchored[*i]).collect();
+    for (read, held) in placed.iter_mut().zip(&anchored) {
+        read.left_out = read.named && !read.pass && !held;
+    }
+    let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+    let current = holding_passes(history, &reads, head)?;
+    let mut open = open_blockers(history, &reads, &current)?;
+    // The gate judges the fails outside play beside the reads in play, as `open_left_out` does.
+    let beside = beside_play(&placed, &in_play);
+    if beside.len() > reads.len() {
+        let current = holding_passes(history, &beside, head)?;
+        for blocker in open_blockers(history, &beside, &current)? {
+            if !open.iter().any(|b| b.id == blocker.id) {
+                open.push(blocker);
+            }
+        }
+    }
+    Ok(open)
 }
 
 fn blocker_id<'a>(
@@ -1191,30 +1240,35 @@ mod tests {
         open.into_iter().map(|b| b.id).collect()
     }
 
-    /// What the gate holds open: the reads in play, judged for `head`.
+    /// What the gate holds open for the record `placed` makes, judged for
+    /// `head`: the reads in play, then the fails beside them, as `counted` judges.
     fn gate_open(placed: &[Placed], head: &str) -> BTreeSet<String> {
         let in_play = in_play(&mut Forked, placed).unwrap().unwrap();
+        let mut open = BTreeSet::new();
         let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-        let current = holding_passes(&mut Forked, &reads, head).unwrap();
-        ids(open_blockers(&mut Forked, &reads, &current).unwrap())
+        for reads in [reads, beside_play(placed, &in_play)] {
+            let current = holding_passes(&mut Forked, &reads, head).unwrap();
+            open.extend(ids(open_blockers(&mut Forked, &reads, &current).unwrap()));
+        }
+        open
     }
 
-    /// What the note lists: every read placed as the note places them, unnamed.
+    /// What the note lists: every read as `place` gives the note them, unnamed.
     fn note_open(placed: &[Placed], head: &str) -> BTreeSet<String> {
         let reads: Vec<Placed> = placed
             .iter()
             .map(|read| Placed {
                 named: false,
+                left_out: false,
                 ..read.clone()
             })
             .collect();
-        let current = holding_passes(&mut Forked, &reads, head).unwrap();
-        ids(open_blockers(&mut Forked, &reads, &current).unwrap())
+        ids(open_for_record(&mut Forked, reads, head).unwrap())
     }
 
     /// The note's open blockers are the gate's: one ID for a blocker carried
-    /// across a retry, a resolution only from a pass that holds for the head,
-    /// and continuations and resolutions judged by ancestry on divergent heads.
+    /// across a retry, a resolution only from a pass that holds for the head and
+    /// that a record can count, ancestry deciding on divergent heads, and fails outside play.
     #[test]
     fn the_notes_open_blockers_are_the_gates() {
         let carried_fail = claiming(carried("agt_x", false, "c1"), &[("race", None)], &[]);
@@ -1241,7 +1295,18 @@ mod tests {
             &[],
         );
         let merged = claiming(read("agt_f", true, "m", None), &[], &["agt_s:1"]);
-        let cases: [(&[Placed], &str, &[&str]); 4] = [
+        // A delta from c2 nothing read up to: no record can count it.
+        let unanchored_pass = claiming(earlier("agt_u", true, "c3", Some("c2")), &[], &["agt_a:1"]);
+        let whole_pass = read("agt_w", true, "c1", None);
+        let unanchored_fail = Placed {
+            left_out: true,
+            ..claiming(
+                earlier("agt_l", false, "c3", Some("c2")),
+                &[("leak", None)],
+                &[],
+            )
+        };
+        let cases: [(&[Placed], &str, &[&str]); 6] = [
             (&[retried.clone(), carried_fail.clone()], "c2", &["agt_x:1"]),
             (&[retried, resolving, carried_fail], "c3", &[]),
             (
@@ -1249,7 +1314,9 @@ mod tests {
                 "c3",
                 &["agt_a:1", "agt_c:1"],
             ),
-            (&[first, side, held_pass, merged], "m", &["agt_a:1"]),
+            (&[first.clone(), side, held_pass, merged], "m", &["agt_a:1"]),
+            (&[first, unanchored_pass], "c3", &["agt_a:1"]),
+            (&[whole_pass, unanchored_fail], "c3", &["agt_l:1"]),
         ];
         for (placed, head, open) in cases {
             let expected: BTreeSet<String> = open.iter().map(|id| (*id).into()).collect();

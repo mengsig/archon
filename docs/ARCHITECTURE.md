@@ -2743,7 +2743,9 @@ lead which IDs it still owes. After `REVIEW_CAP_WAIT_MINUTES` (30) with no
 child of the lead running, counted for the trailers from the cap or the
 lead's last commit, and for the confirmation reviewer from its instructions,
 archond ends the stage itself with the `ESCALATE:` error below, naming what
-it waited for. The reviewer must explicitly resolve every capped ID and pass the
+it waited for. A tally saved before the bound existed, with its confirmation
+instructions delivered, is swept too until its confirmation passes, and its
+bound starts at that sweep. The reviewer must explicitly resolve every capped ID and pass the
 delta. A new or unresolved blocker ends the stage. The normal branch and
 coverage checks still apply. When a finding list is too large for an inbox
 message or a resumed objective, it is written in full to an ignored file
@@ -2789,7 +2791,10 @@ none is sent when no blocking finding is open, from this review or an earlier
 one: a pass that leaves an earlier blocker open is told again. The open set
 is the gate's own: the attempt's verdicts and the reads carried from earlier
 runs are placed on the branch and judged by the functions the gate judges
-with (`coverage::note_blockers`, `open_blockers`), so a carried blocker keeps
+with (`coverage::note_blockers`, `open_blockers`), for the record that names
+every reviewer of the attempt. As the gate's `in_play` keeps reads, a delta
+read nothing anchors counts for no record, so its pass resolves nothing and
+its fail stands beside the reads in play. So a carried blocker keeps
 its one ID across a retry, only a pass that holds for the current head
 resolves one, and ancestry, never reviewer order, decides IDs and resolutions,
 on divergent heads too. Only the

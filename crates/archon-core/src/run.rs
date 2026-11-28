@@ -1358,6 +1358,12 @@ struct StoredTally {
     confirm: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     stopped: Option<String>,
+    #[serde(default)]
+    lead_wait: Option<crate::Timestamp>,
+    #[serde(default)]
+    lead_wait_head: Option<ReadCommit>,
+    #[serde(default)]
+    confirmed: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -827,7 +827,8 @@ async fn a_continuation_from_a_diverged_head_keeps_its_own_id() {
     let root = change(&workspace);
     let ours = change(&workspace);
     let findings = json!([{"title": "missing null check", "blocking": true}]);
-    let first = fail(&h, &lead, &ours["commit"], Some(&root["commit"]), findings);
+    // A whole read anchors the deltas from `root`, as the gate needs to judge them.
+    let first = fail(&h, &lead, &ours["commit"], None, findings);
     let original = format!("{}:1", first.agent.as_ref().unwrap());
     handle(&h, &first).await;
 

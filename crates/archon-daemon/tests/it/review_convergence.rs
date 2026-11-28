@@ -223,6 +223,35 @@ async fn a_capped_lead_that_never_delegates_the_confirmation_is_ended() {
     );
 }
 
+/// A tally saved before the bound existed, its confirmation instructions
+/// delivered: the sweep still revisits it, starts the bound and ends the stage.
+#[tokio::test]
+async fn a_confirmation_delivered_before_the_upgrade_is_still_ended() {
+    let review = Loop::at_cap(Fixes::All).await;
+    review.h.dispatch().await;
+    let mut tally = read_tally(&review.h, &review.lead).await;
+    assert!(
+        tally["fix_wait"].is_null() && tally["confirm"].is_object(),
+        "{tally}"
+    );
+    let legacy = tally.as_object_mut().unwrap();
+    legacy.remove("lead_wait");
+    legacy.remove("lead_wait_head");
+    write_tally(&review.h, &review.lead, &tally).await;
+
+    review.h.dispatch().await;
+    assert_eq!(review.stage().await.state, StageState::Running);
+    age_lead_wait(&review.h, &review.lead).await;
+    review.h.dispatch().await;
+    let StageState::Failed { error } = review.stage().await.state else {
+        panic!("the sweep ends a legacy stage left waiting");
+    };
+    assert!(
+        error.contains("no confirmation reviewer passed or failed"),
+        "{error}"
+    );
+}
+
 async fn stage_of(h: &Harness, lead: &StageRun) -> StageRun {
     h.ctx.store.lock().await.stage_run(&lead.id).unwrap()
 }
@@ -237,6 +266,10 @@ async fn age_lead_wait(h: &Harness, lead: &StageRun) {
     let minutes = archon_pipeline::contract::REVIEW_CAP_WAIT_MINUTES + 1;
     let since = archon_core::now() - chrono::Duration::minutes(minutes);
     tally["lead_wait"] = json!(since);
+    write_tally(h, lead, &tally).await;
+}
+
+async fn write_tally(h: &Harness, lead: &StageRun, tally: &Value) {
     let key = review_tally_key(&lead.id);
     let mut store = h.ctx.store.lock().await;
     store.kv_set(&key, &tally.to_string()).unwrap();

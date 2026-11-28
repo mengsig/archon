@@ -122,7 +122,13 @@ pub(in crate::executor) fn review_fix_waiting(
         tally.stopped.is_none() || tally.lead_wait.is_none(),
         "a stopped review waits for nothing"
     );
-    Ok(tally.fix_wait.is_some() || tally.lead_wait.is_some())
+    assert!(
+        !tally.confirmed || tally.confirm.is_some(),
+        "only a confirmation passes"
+    );
+    // A tally saved before `lead_wait` existed may wait on a delivered confirmation alone.
+    let confirming = tally.confirm.is_some() && !tally.confirmed && tally.stopped.is_none();
+    Ok(tally.fix_wait.is_some() || tally.lead_wait.is_some() || confirming)
 }
 
 pub(in crate::executor) async fn revisit_fix_wait(
@@ -596,7 +602,8 @@ async fn confirmation_refusal(
     match confirm.status(lead, beneath, &tally.reports, &findings) {
         Status::Passed => {
             let waited = tally.lead_wait.take().is_some();
-            if tally.fix_wait.take().is_some() || waited {
+            let newly = !std::mem::replace(&mut tally.confirmed, true);
+            if tally.fix_wait.take().is_some() || waited || newly {
                 save(ctx, &stage.id, tally).await?;
             }
             return Ok(None);
@@ -615,7 +622,9 @@ async fn confirmation_refusal(
             save(ctx, &stage.id, tally).await?;
         }
         // Delivered once the fix wait closed: the sweep only checks the bound.
-        Status::Waiting if tally.fix_wait.is_none() => return Ok(None),
+        Status::Waiting if tally.fix_wait.is_none() => {
+            return start_legacy_bound(ctx, stage, tally).await.map(|()| None);
+        }
         Status::Waiting => {}
     }
     let confirm = tally
@@ -628,6 +637,21 @@ async fn confirmation_refusal(
     }
     Ok(refusal
         .map(|why| format!("the lead could not receive the confirmation instructions: {why}")))
+}
+
+/// Start the bound on a confirmation delivered by a tally saved before it existed.
+async fn start_legacy_bound(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    tally: &mut Tally,
+) -> Result<(), ArchonError> {
+    assert!(tally.confirm.is_some(), "only a confirmation is awaited");
+    assert!(tally.fix_wait.is_none(), "the instructions were delivered");
+    if tally.lead_wait.is_some() {
+        return Ok(());
+    }
+    tally.lead_wait = Some(archon_core::now());
+    save(ctx, &stage.id, tally).await
 }
 
 async fn stop(
@@ -726,10 +750,12 @@ async fn findings_note(
     tally: &Tally,
 ) -> Result<Result<Option<String>, String>, ArchonError> {
     assert!(!tally.reports.is_empty(), "a note follows a read verdict");
-    let open = match super::note_blockers(ctx, stage, &tally.reports).await? {
+    let mut open = match super::note_blockers(ctx, stage, &tally.reports).await? {
         Ok(open) => open,
         Err(why) => return Ok(Err(why)),
     };
+    // Listed by ID, as a resumed lead's handoff lists them.
+    open.sort_by(|a, b| a.id.cmp(&b.id));
     let workspace = ctx.store.lock().await.run(&stage.run)?.workspace;
     let findings: Vec<(&str, &str)> = open
         .iter()
@@ -970,6 +996,9 @@ pub(super) struct Tally {
     /// The branch head the fix wait last saw; a new one restarts `lead_wait`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lead_wait_head: Option<String>,
+    /// The confirmation reviewer passed: the capped review waits for nothing more.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    confirmed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1324,10 +1353,15 @@ mod tests {
                 (agent(1), Some("- a: open".into())),
                 (agent(2), None),
             ]),
+            lead_wait: Some(archon_core::now()),
+            lead_wait_head: Some("c".repeat(40)),
+            confirmed: true,
             ..Tally::default()
         };
         let stored = serde_json::to_string(&tally).unwrap();
-        assert!(stored.contains("findings_notes"), "{stored}");
+        for field in ["findings_notes", "lead_wait", "lead_wait_head", "confirmed"] {
+            assert!(stored.contains(field), "{field}: {stored}");
+        }
         let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
         assert_eq!(read.reviewers(), 2, "{stored}");
         let none = serde_json::to_string(&Tally::default()).unwrap();

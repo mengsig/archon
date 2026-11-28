@@ -13,7 +13,7 @@ from pathlib import Path
 BENCH = Path(__file__).resolve().parents[2]
 RUST_RERUN = ('multi-repo-currency', 'refactor-order-status')
 # Host jobs of this item beside the bench, in UTC. All four arms ran side by side from 07:20Z,
-# after the candidate's release build; make ci ran on the same tree before the bench (21:59-22:14Z).
+# after the candidate's release build; make ci ran on the candidate source before the bench (21:59-22:14Z).
 HOST_JOBS = [('release build (candidate)', '2026-11-28T07:13:09', '2026-11-28T07:19:30')]
 # Causes read by hand from a run's Aether event log where item counts alone mislead.
 TRACED_CAUSES = {

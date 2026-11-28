@@ -10,7 +10,7 @@ OLD is published Archon v1.6.6 with Aether v1.4.3. NEW is the 1.6.7 candidate `a
 
 The NEW arms include the restored 1.6.4 delta-reviewer rule: a delta reviewer fails only on a defect in its commits or an open finding left unfixed. A new finding in code that a pass already read is non-blocking. So NEW measures this review-gate change together with #511, Aether 1.4.4 and the #508/#509 code.
 
-`make ci`: **PASS.** `CARGO_BUILD_JOBS=6 make ci` ran through `scripts/ci-slot.sh` on `acaad050` (tree `e4cf51f3`), 2026-11-27 21:59 – 22:14 UTC: exit 0, 5,803 tests passed, 0 failed. The final head has the same tree, so the result holds for it.
+`make ci`: **PASS on the candidate.** `CARGO_BUILD_JOBS=6 make ci` ran through `scripts/ci-slot.sh` on `acaad050` (tree `e4cf51f3`), 2026-11-27 21:59 – 22:14 UTC: exit 0, 5,803 tests passed, 0 failed. Later commits change only `bench/results-release-1.6.7/`, so the tree is different. `make ci` was therefore run again on the final committed head. A file cannot record its own commit, so that run's head, tree and result are in the PR #509 "Release 1.6.7" section and in the item artifact `make-ci-final.log`.
 
 ## Results per tier
 
@@ -51,12 +51,29 @@ Fail-to-pass flips outnumber them: Haiku `quality-safe-extract` 0/3 → 3/3 and 
 
 ## Accuracy parity with direct Aether
 
-At the operator's request, the report compares each tier's Archon arm with its direct-Aether arm on the same run: pass counts overall and per task. The verdict is PARITY MET when Archon passes at least as many trials as Aether. `summary.json` has the same data under `parity` (`scripts/analyze.py`).
+At the operator's request, the report compares each tier's Archon arm with its direct-Aether arm on the same run: pass counts overall and per task. The verdict is PARITY MET when Archon passes at least as many trials as Aether. `summary.json` has the same data under `models.<tier>.parity` (`scripts/analyze.py`).
 
 | Tier | 1.6.6 Archon / Aether | 1.6.7 Archon / Aether | 1.6.7 verdict |
 |---|---|---|---|
 | Haiku | 29 / 33 | **32 / 32** | PARITY MET |
 | Luna | 30 / 33 | **30 / 33** | PARITY MISSED |
+
+Per task on 1.6.7 (Archon / Aether passes; bold where Archon passed fewer):
+
+| Task | Haiku Archon / Aether | Luna Archon / Aether |
+|---|---|---|
+| `ask-cache-invalidation` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `feature-token-bucket` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `fix-off-by-one` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `long-backlog` | 3/3 / 3/3 | **2/3 / 3/3** |
+| `multi-repo-currency` | 3/3 / 3/3 | **2/3 / 3/3** |
+| `multi-repo-pagination` | 3/3 / 2/3 | 3/3 / 3/3 |
+| `quality-ledger-transfer` | 3/3 / 3/3 | **2/3 / 3/3** |
+| `quality-retry-budget` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `quality-safe-extract` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `refactor-order-status` | 3/3 / 3/3 | 3/3 / 3/3 |
+| `review-seeded-bug` | **2/3 / 3/3** | 3/3 / 3/3 |
+| **Total** | 32 / 32 | 30 / 33 |
 
 Tasks where 1.6.7 Archon passed fewer trials than 1.6.7 Aether, with each Archon failure's reason from the trial log:
 
@@ -118,6 +135,42 @@ Luna:
 | `refactor-order-status` | 366 | 259 | 297 | 399 |
 | `review-seeded-bug` | 30 | 40 | 69 | 67 |
 
+### Direct-Aether mean wall per task (seconds)
+
+This is the control: no Archon in the loop. Its rise since 1.6.5 is the effort and load confound.
+
+Haiku:
+
+| Task | 1.6.4 | 1.6.5 | 1.6.6 | 1.6.7 |
+|---|---:|---:|---:|---:|
+| `ask-cache-invalidation` | 19 | 27 | 27 | 38 |
+| `feature-token-bucket` | 45 | 52 | 106 | 80 |
+| `fix-off-by-one` | 16 | 28 | 24 | 24 |
+| `long-backlog` | 113 | 128 | 150 | 153 |
+| `multi-repo-currency` | 74 | 95 | 112 | 124 |
+| `multi-repo-pagination` | 85 | 88 | 119 | 110 |
+| `quality-ledger-transfer` | 45 | 49 | 72 | 56 |
+| `quality-retry-budget` | 53 | 49 | 57 | 52 |
+| `quality-safe-extract` | 88 | 72 | 120 | 127 |
+| `refactor-order-status` | 63 | 61 | 80 | 99 |
+| `review-seeded-bug` | 37 | 38 | 51 | 53 |
+
+Luna:
+
+| Task | 1.6.4 | 1.6.5 | 1.6.6 | 1.6.7 |
+|---|---:|---:|---:|---:|
+| `ask-cache-invalidation` | 18 | 22 | 33 | 41 |
+| `feature-token-bucket` | 50 | 55 | 70 | 104 |
+| `fix-off-by-one` | 30 | 32 | 49 | 45 |
+| `long-backlog` | 97 | 125 | 176 | 148 |
+| `multi-repo-currency` | 100 | 87 | 160 | 152 |
+| `multi-repo-pagination` | 85 | 100 | 115 | 127 |
+| `quality-ledger-transfer` | 55 | 60 | 77 | 80 |
+| `quality-retry-budget` | 65 | 63 | 85 | 77 |
+| `quality-safe-extract` | 79 | 73 | 115 | 105 |
+| `refactor-order-status` | 57 | 65 | 65 | 73 |
+| `review-seeded-bug` | 25 | 30 | 58 | 45 |
+
 ### Every timed-out trial
 
 A timed-out trial counts as a failure. The cause of each comes from the trial's `archon-items.json`, and for the 1.6.7 Luna trial from the run's private Aether event log.
@@ -148,7 +201,7 @@ Causes, in short:
 
 ### Overlap with other host work
 
-The host has 12 cores and 15 GB of memory. A load logger sampled `/proc/loadavg` every minute (`load5` below, `.work/load.log`, not committed).
+The host has 12 cores and 15 GB of memory. A load logger sampled `/proc/loadavg` every minute (`load5` below, committed as `load.log`).
 
 | Job | UTC (2026-11-28) | Mean / peak load5 |
 |---|---|---|
@@ -157,7 +210,7 @@ The host has 12 cores and 15 GB of memory. A load logger sampled `/proc/loadavg`
 | Other Archon items' `cargo test` / `cargo clippy` (`-j 2`, not this item's) | seen at about 08:10 – 08:40 | 15.7 / 21.0 |
 | The last three, then two runs (OLD Luna ended 10:01, NEW Haiku 10:05, NEW Luna 10:34, OLD Haiku 10:45) | 10:01 – 10:45 | 9.5 / 12.8 |
 
-All four runs ran at the same time, so OLD and NEW saw the same host load throughout (orchestrator-approved). The load was heavy: at times more than one runnable task per core. That inflates every arm's wall time, direct Aether's included, which is why wall time is compared within this run, OLD against NEW, and only loosely against 1.6.4 and 1.6.5. `make ci` did not overlap the bench. It ran on the same tree before it (2026-11-27 21:59 – 22:14 UTC). Other items' cargo jobs overlapped the middle of the bench, equally for all four runs.
+All four runs ran at the same time, so OLD and NEW saw the same host load throughout (orchestrator-approved). The load was heavy: at times more than one runnable task per core. That inflates every arm's wall time, direct Aether's included, which is why wall time is compared within this run, OLD against NEW, and only loosely against 1.6.4 and 1.6.5. `make ci` did not overlap the bench. It ran on the candidate `acaad050` before it (2026-11-27 21:59 – 22:14 UTC), and on the final head after it. Other items' cargo jobs overlapped the middle of the bench, equally for all four runs.
 
 **Why the whole bench ran again.** Earlier attempts of this item had run the OLD arms (66/66 each, 2026-11-27 08:25 – 12:47 UTC) and three NEW attempts. Two of those were on the pre-fix candidate `9c121cc2`. One was on the merged candidate, and a host sign-in expiry stopped it after 16 minutes. All their raw data lived in the worktree's gitignored `.archon/reports/bench`. A worktree cleanup of ignored files deleted it at 2026-11-27 23:39 UTC, before any of it was copied out or published. No row from those attempts is used or kept, so this report has no pre-fix data. Both arms of both tiers were rerun from scratch on 2026-11-28 with the same flags, from a directory that is not gitignored. Redacted snapshots were published as item artifacts while the runs went on.
 
@@ -200,19 +253,27 @@ Three trials per cell leave wide intervals, and a single task flip is within noi
 
 ### Commands
 
-From the repository root (`scripts/run.py` builds the sandbox and runs the harness):
+From the repository root, at the candidate commit, with `gh` signed in. Stage the binaries first. `stage.sh` downloads Archon v1.6.6 and Aether v1.4.3 and v1.4.4 (x86_64 musl), checks each archive against its release's `SHA256SUMS`, unpacks it, builds the candidate with `cargo build --release --locked -p archon -p archon-bench`, and copies the results into `.work/bin`. It prints every SHA-256 and version for comparison with the table above.
 
 ```sh
-cargo build --release --locked -p archon -p archon-bench
-# all four side by side, each from the repository root:
-python3 -I bench/results-release-1.6.7/scripts/run.py old haiku old-haiku
-python3 -I bench/results-release-1.6.7/scripts/run.py old luna old-luna
-python3 -I bench/results-release-1.6.7/scripts/run.py new haiku new-haiku
-python3 -I bench/results-release-1.6.7/scripts/run.py new luna new-luna
+export CARGO_TARGET_DIR=<your cargo target dir>   # default: target
+sh bench/results-release-1.6.7/scripts/stage.sh
+```
+
+Start the load logger, then all four runs side by side, each from the repository root. `run.py` builds each run's private sandbox, copies the engine credentials into it (mode 600), runs the harness and removes the sandbox.
+
+```sh
+sh bench/results-release-1.6.7/scripts/loadlog.sh bench/results-release-1.6.7/.work/load.log & logger=$!
+python3 -I bench/results-release-1.6.7/scripts/run.py old haiku old-haiku & p1=$!
+python3 -I bench/results-release-1.6.7/scripts/run.py old luna old-luna & p2=$!
+python3 -I bench/results-release-1.6.7/scripts/run.py new haiku new-haiku & p3=$!
+python3 -I bench/results-release-1.6.7/scripts/run.py new luna new-luna & p4=$!
+wait "$p1" "$p2" "$p3" "$p4"
+kill "$logger"
+cp bench/results-release-1.6.7/.work/load.log bench/results-release-1.6.7/load.log
 ```
 
 No run used `--only`.
-
 
 Each run executes:
 
@@ -222,13 +283,15 @@ archon-bench run --archon-bin <sandbox>/bin/archon --aether-socket <sandbox>/run
   --effort high --max-usd 37 --model <claude-code/claude-haiku-5-5|codex/gpt-6-luna>
 ```
 
-Then the reports:
+Then the reports. `collect.py` copies the trial records and redacts them. The last three steps run on the committed `runs/` and `load.log` alone, so they reproduce `summary.json`, `walltime.json` and `report.html` from this checkout:
 
 ```sh
 python3 -I bench/results-release-1.6.7/scripts/collect.py bench/results-release-1.6.7/.work bench/results-release-1.6.7/runs
 python3 -I bench/results-release-1.6.7/scripts/analyze.py bench/results-release-1.6.7/runs bench/results-release-1.6.7
-python3 -I bench/results-release-1.6.7/scripts/walltime.py bench/results-release-1.6.7 bench/results-release-1.6.7/.work/load.log > bench/results-release-1.6.7/walltime.json
+python3 -I bench/results-release-1.6.7/scripts/walltime.py bench/results-release-1.6.7 bench/results-release-1.6.7/load.log > bench/results-release-1.6.7/walltime.json
 python3 -I bench/results-release-1.6.7/scripts/report.py bench/results-release-1.6.7 "<make ci result>"
 ```
+
+Afterwards, delete `bench/results-release-1.6.7/.work`. It holds the downloaded and built binaries and the unredacted raw runs.
 
 `runs/` holds the trial records and grading evidence. The configured Git email is redacted in copied logs.

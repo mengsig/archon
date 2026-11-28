@@ -4689,10 +4689,10 @@ cutoffs, and at each workspace whose runs have all finished:
   that failed, or that shares its worktree with a failed restack fix or
   refresh. A retry runs there and needs its reports and build output. Only
   `gc_after` removes such a worktree, or one set aside, logged at info
-  with the failed items and the path; one kept for uncommitted changes keeps its caches too. A pass
-  checks again before it sweeps, so a sharer that failed since its plan
-  keeps them as well. A snapshot it left still goes once its caches would
-  be due.
+  with the failed items and the path; one kept for uncommitted changes
+  keeps its caches too. A pass checks again before it sweeps and leaves
+  the item to a later pass if the set of failed items changed since its
+  plan. A snapshot it left still goes once its caches would be due.
 - `worktrees.gc_after` (default 7d, or `--older-than`) after, the worktree
   goes with `git worktree remove`, comparing symlink-resolved paths as git
   does. One with uncommitted changes is kept and reported as skipped, with

@@ -335,16 +335,18 @@ const MAX_CLOSE_FILLERS: usize = 4;
 
 /// For each word of `explanation`, split on non-alphanumerics as a pass's explanation
 /// is read, whether it names a blocker its own clause closes (`blockers were fixed`).
+/// A question (`Blocker fixed?`) closes nothing.
 pub(crate) fn settled_blockers(explanation: &str) -> Vec<bool> {
     let mut settled = Vec::new();
-    for clause in explanation.split(CLAUSE_ENDS) {
+    for clause in explanation.split_inclusive(CLAUSE_ENDS) {
+        let asks = clause.ends_with('?');
         let words: Vec<String> = clause
             .split(|c: char| !c.is_alphanumeric())
             .filter(|word| !word.is_empty())
             .map(str::to_lowercase)
             .collect();
         let words = as_strs(&words);
-        settled.extend((0..words.len()).map(|at| closes(&words[at + 1..])));
+        settled.extend((0..words.len()).map(|at| !asks && closes(&words[at + 1..])));
     }
     settled
 }

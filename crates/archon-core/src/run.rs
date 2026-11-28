@@ -2095,6 +2095,7 @@ mod tests {
             "Verdict: PASS (risk high). Four blocking findings are fixed; one blocker remains.",
             "Verdict: pass. One blocker is still open, the rest are fixed.",
             "Verdict: PASS. Blocker confirmed.",
+            "Verdict: PASS. Blocker fixed? It remains open.",
             "Verdict: PASS. All blockers verified.",
             "Verdict: PASS. Blocker tests expose a vulnerability.",
             "Verdict: pass. Regression tests show a regression in run.rs.",

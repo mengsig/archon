@@ -39,8 +39,8 @@ fn listed(repo: &Path) -> String {
     git(repo, &["worktree", "list", "--porcelain"]).unwrap()
 }
 
-/// Runs finished two minutes ago: caches due, removal not yet. A worktree
-/// run's workspace only loses its caches; the snapshot goes whole.
+/// Runs finished two minutes ago: caches due, removal not yet. The failed
+/// item's worktree keeps its caches for a retry; the snapshot goes whole.
 #[test]
 fn a_snapshot_is_planned_for_removal_once_its_caches_are_due() {
     let dir = tempfile::tempdir().unwrap();
@@ -67,15 +67,9 @@ fn a_snapshot_is_planned_for_removal_once_its_caches_are_due() {
         &policy,
     );
     assert_eq!(plans.len(), 1);
-    let expected = vec![
-        Candidate {
-            kind: Kind::Worktree,
-            action: Action::Reclaim,
-            ..snapshot_candidate(&item_dir, &repo, &id)
-        },
-        snapshot_candidate(&snapshot, &repo, &id),
-    ];
+    let expected = vec![snapshot_candidate(&snapshot, &repo, &id)];
     assert_eq!(plans[0].found.candidates, expected);
+    assert_eq!(plans[0].found.failed, [id], "a failed item may be retried");
 }
 
 #[test]

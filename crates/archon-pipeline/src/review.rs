@@ -1787,6 +1787,21 @@ mod tests {
         assert!(Verdict::read_result(&explained, None).unwrap().pass);
     }
 
+    #[test]
+    fn a_structured_pass_whose_prose_reports_blockers_fixed_passes_the_gate() {
+        let structured = json!({"verdict": "pass", "head": HEAD, "findings": []});
+        let fixed = "Verdict: PASS (risk high). All five blocking findings are verified fixed…";
+        let read = Verdict::read_result(fixed, Some(&structured));
+        assert!(read.as_ref().is_ok_and(|read| read.pass), "{read:?}");
+        for disputed in [
+            "Verdict: PASS (risk high). Four blocking findings are fixed; one blocker remains.",
+            "Verdict: FAIL. All five blocking findings are verified fixed.",
+        ] {
+            let read = Verdict::read_result(disputed, Some(&structured));
+            assert!(read.is_err(), "{disputed}: {read:?}");
+        }
+    }
+
     /// A summary opening with JSON keeps every check a fenced block or a
     /// second object below it was evidence for.
     #[test]

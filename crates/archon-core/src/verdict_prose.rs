@@ -323,3 +323,46 @@ fn follows(rest: &[&str], verbs: &[&[&str]]) -> Option<usize> {
         .any(|set| set.contains(word))
         .then_some(skipped + 1)
 }
+
+/// Where a clause ends, for [`settled_blockers`]: a blocker is closed only in its own clause.
+const CLAUSE_ENDS: [char; 11] = ['.', ';', ':', '!', '?', '—', '–', '(', ')', ',', '\n'];
+/// Words allowed between a blocker and the word that closes it (`findings are verified fixed`).
+const CLOSE_FILLERS: [&str; 17] = [
+    "finding", "findings", "issue", "issues", "is", "are", "was", "were", "have", "has", "been",
+    "now", "all", "each", "both", "also", "verified",
+];
+const MAX_CLOSE_FILLERS: usize = 4;
+
+/// For each word of `explanation`, split on non-alphanumerics as a pass's explanation
+/// is read, whether it names a blocker its own clause closes (`blockers were fixed`).
+/// A question (`Blocker fixed?`) closes nothing.
+pub(crate) fn settled_blockers(explanation: &str) -> Vec<bool> {
+    let mut settled = Vec::new();
+    for clause in explanation.split_inclusive(CLAUSE_ENDS) {
+        let asks = clause.ends_with('?');
+        let words: Vec<String> = clause
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        let words = as_strs(&words);
+        settled.extend((0..words.len()).map(|at| !asks && closes(&words[at + 1..])));
+    }
+    settled
+}
+
+/// Whether the words after a blocker close it: a [`CLOSED`] word or `closed`
+/// after at most [`MAX_CLOSE_FILLERS`] fillers. A bare `verified` or `confirmed` closes nothing.
+fn closes(rest: &[&str]) -> bool {
+    let skipped = rest
+        .iter()
+        .take(MAX_CLOSE_FILLERS)
+        .take_while(|w| CLOSE_FILLERS.contains(w))
+        .count();
+    assert!(
+        skipped <= MAX_CLOSE_FILLERS.min(rest.len()),
+        "fillers lie within the clause"
+    );
+    rest.get(skipped)
+        .is_some_and(|word| CLOSED.contains(word) || *word == "closed")
+}

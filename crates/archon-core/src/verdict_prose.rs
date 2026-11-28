@@ -334,8 +334,7 @@ const CLOSE_FILLERS: [&str; 17] = [
 const MAX_CLOSE_FILLERS: usize = 4;
 
 /// For each word of `explanation`, split on non-alphanumerics as a pass's explanation
-/// is read, whether it names a blocker its own clause closes (`blockers were fixed`)
-/// or is the noun `regression tests`, which reports no regression.
+/// is read, whether it names a blocker its own clause closes (`blockers were fixed`).
 pub(crate) fn settled_blockers(explanation: &str) -> Vec<bool> {
     let mut settled = Vec::new();
     for clause in explanation.split(CLAUSE_ENDS) {
@@ -345,17 +344,9 @@ pub(crate) fn settled_blockers(explanation: &str) -> Vec<bool> {
             .map(str::to_lowercase)
             .collect();
         let words = as_strs(&words);
-        settled.extend((0..words.len()).map(|at| {
-            let rest = &words[at + 1..];
-            closes(rest) || (words[at] == "regression" && names_tests(rest))
-        }));
+        settled.extend((0..words.len()).map(|at| closes(&words[at + 1..])));
     }
     settled
-}
-
-fn names_tests(rest: &[&str]) -> bool {
-    rest.first()
-        .is_some_and(|word| ["test", "tests"].contains(word))
 }
 
 /// Whether the words after a blocker close it: a [`CLOSED`] word or `closed`

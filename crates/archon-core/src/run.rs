@@ -2087,7 +2087,6 @@ mod tests {
             "Verdict: PASS (risk high). All five blocking findings are verified fixed…",
             "Verdict: pass. The two blockers were resolved.",
             "Verdict: pass. Blocking finding closed in abcdef1.",
-            "Verdict: pass. Blockers fixed, with regression tests for each.",
         ] {
             assert!(!Verdict::pass_disputed(summary, Some(&pass)), "{summary}");
             assert_eq!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
@@ -2101,6 +2100,7 @@ mod tests {
             "Verdict: pass. Regression tests show a regression in run.rs.",
             "Verdict: PASS. Regression tests fail.",
             "Verdict: PASS. Regression tests are still red.",
+            "Verdict: PASS. Regression tests expose a vulnerability.",
             "Verdict: FAIL. All five blocking findings are verified fixed.",
         ] {
             assert!(Verdict::pass_disputed(summary, Some(&pass)), "{summary}");

@@ -783,13 +783,16 @@ fn a_retry_that_failed_again_across_a_clock_step_unsettles() {
 }
 
 fn settled(item: QueueItem, runs: Vec<PipelineRun>, repo: Option<&Path>) -> Settled {
-    let may_run_again = matches!(item.state, QueueState::Failed { .. });
+    let failed = match item.state {
+        QueueState::Failed { .. } => vec![item.id.clone()],
+        _ => Vec::new(),
+    };
     Settled {
         item,
         runs,
         borrowed: Vec::new(),
         repo: repo.map(repo_at),
-        may_run_again,
+        failed,
     }
 }
 

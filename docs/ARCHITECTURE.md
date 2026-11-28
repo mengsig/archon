@@ -4688,8 +4688,8 @@ cutoffs, and at each workspace whose runs have all finished:
 - Nothing is reclaimed from the worktree of an item that may run again: one
   that failed, or that shares its worktree with a failed restack fix or
   refresh. A retry runs there and needs its reports and build output. Only
-  `gc_after` removes such a worktree, logged at info with the item and
-  path; one kept for uncommitted changes keeps its caches too. A pass
+  `gc_after` removes such a worktree, or one set aside, logged at info
+  with the failed items and the path; one kept for uncommitted changes keeps its caches too. A pass
   checks again before it sweeps, so a sharer that failed since its plan
   keeps them as well. A snapshot it left still goes once its caches would
   be due.

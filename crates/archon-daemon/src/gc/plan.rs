@@ -60,12 +60,17 @@ pub(super) struct Found {
     pub unreadable: Vec<(PathBuf, String)>,
     /// Team roots, removed once gc has emptied them.
     pub team_roots: Vec<PathBuf>,
-    /// The item, or another that works in its worktree, can still run: a
-    /// retry needs what its last run left, so no cache or report goes.
-    pub keep_caches: bool,
+    /// The items of its worktree that failed and may be retried there: a
+    /// retry needs what the last run left, so no cache or report goes.
+    pub failed: Vec<QueueItemId>,
 }
 
 impl Found {
+    /// Whether a retry may need what is here, so no cache is reclaimed.
+    pub fn keeps_caches(&self) -> bool {
+        !self.failed.is_empty()
+    }
+
     /// `result`'s value, or `None` with its error noted against `path`.
     pub fn or_note<T>(&mut self, path: &Path, result: Result<T, ArchonError>) -> Option<T> {
         match result {
@@ -137,8 +142,9 @@ pub(super) struct Settled {
     /// The runs of the other items that work in the item's worktree.
     pub borrowed: Vec<PipelineRun>,
     pub repo: Option<Repo>,
-    /// It, or another item of its worktree, failed and so may be retried.
-    pub may_run_again: bool,
+    /// It, or the other items of its worktree, that failed and so may be
+    /// retried there.
+    pub failed: Vec<QueueItemId>,
 }
 
 /// One item's share of a pass, collected only while the item is still as
@@ -178,25 +184,26 @@ pub(super) fn settled(store: &Store, before: Timestamp) -> Result<Vec<Settled>, 
         let runs = store.runs_for_item(&item.id)?;
         let borrowed = borrowed_runs(store, &item.id)?;
         let repo = item.repo.as_ref().and_then(|id| repos.get(id)).cloned();
-        let may_run_again = may_run_again(store, &item)?;
+        let failed = failed_users(store, &item)?;
         settled.push(Settled {
             item,
             runs,
             borrowed,
             repo,
-            may_run_again,
+            failed,
         });
     }
     debug_assert!(settled.iter().all(|s| s.item.state.is_terminal()));
     Ok(settled)
 }
 
-/// Whether `item`, or another item that works in its worktree, failed: a
-/// retry runs in the same worktree. Live ones keep it anyway (`keep_in_use`).
-fn may_run_again(store: &Store, item: &QueueItem) -> Result<bool, ArchonError> {
-    let can_run = |state: &QueueState| matches!(state, QueueState::Failed { .. });
-    if can_run(&item.state) {
-        return Ok(true);
+/// `item` and the other items of its worktree that failed: a retry runs in
+/// the same worktree. Live ones keep it anyway (`keep_in_use`).
+fn failed_users(store: &Store, item: &QueueItem) -> Result<Vec<QueueItemId>, ArchonError> {
+    let is_failed = |state: &QueueState| matches!(state, QueueState::Failed { .. });
+    let mut failed = Vec::new();
+    if is_failed(&item.state) {
+        failed.push(item.id.clone());
     }
     let owner = users::owner(store, &item.id)?;
     for sharer in users::sharers(store, &owner)? {
@@ -209,11 +216,16 @@ fn may_run_again(store: &Store, item: &QueueItem) -> Result<bool, ArchonError> {
             Err(error) => return Err(error),
         };
         assert_eq!(other.id, sharer, "the store returns the item asked for");
-        if can_run(&other.state) {
-            return Ok(true);
+        if is_failed(&other.state) {
+            failed.push(sharer);
         }
     }
-    Ok(false)
+    debug_assert!(
+        failed
+            .iter()
+            .all(|id| failed.iter().filter(|o| *o == id).count() == 1)
+    );
+    Ok(failed)
 }
 
 /// Whether the item is still settled as it was when `plan` was made; an
@@ -232,7 +244,7 @@ pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, Arch
         return Ok(false);
     }
     // A sharer retried since that failed at dispatch added no run.
-    if !plan.found.keep_caches && may_run_again(store, &item)? {
+    if !plan.found.keeps_caches() && !failed_users(store, &item)?.is_empty() {
         return Ok(false);
     }
     let runs = store.runs_for_item(&plan.item)?.len();
@@ -275,13 +287,13 @@ pub(super) fn plan_all(settled: &[Settled], roots: &Roots, policy: &Policy) -> V
 /// normal cutoffs: only the owed run workspace itself goes early.
 fn plan_item(settled: &Settled, roots: &Roots, policy: &Policy) -> ItemPlan {
     // A retry needs what a worktree holds; a snapshot holds nothing kept.
-    let keeping = settled.may_run_again.then(|| policy.keeping_caches());
+    let keeping = (!settled.failed.is_empty()).then(|| policy.keeping_caches());
     let kept = keeping.as_ref().unwrap_or(policy);
     let registered = settled.repo.as_ref().map(|r| r.path.as_path());
     let owed = owed_workspace(settled, policy);
     let item = &settled.item.id;
     let mut found = Found {
-        keep_caches: settled.may_run_again,
+        failed: settled.failed.clone(),
         ..Found::default()
     };
     for (workspace, finished) in last_use(&settled.runs, &settled.borrowed) {

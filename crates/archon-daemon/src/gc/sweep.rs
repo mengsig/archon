@@ -75,7 +75,7 @@ pub(super) struct Swept {
 /// Collect what was found, then each team root it emptied. A place gc could
 /// not read is a failure against its path; the rest is still collected.
 pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> Swept {
-    let keeping = found.keep_caches.then(|| policy.keeping_caches());
+    let keeping = found.keeps_caches().then(|| policy.keeping_caches());
     let policy = keeping.as_ref().unwrap_or(policy);
     let unreadable = found.unreadable.len();
     let mut report = GcReport::default();
@@ -87,6 +87,11 @@ pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> Swept {
         let (path, verdict) = collect(candidate, roots, policy);
         if let (Verdict::Removed { .. }, Some(repo)) = (&verdict, &candidate.repo) {
             repos.insert(repo.clone());
+        }
+        if !found.failed.is_empty() && loses_a_retry_worktree(candidate, &verdict) {
+            let failed: Vec<&str> = found.failed.iter().map(|id| id.as_str()).collect();
+            let worktree = path.display();
+            tracing::info!(failed = ?failed, %worktree, "gc removed a worktree a failed item may retry in");
         }
         record(&mut report, &path, verdict);
     }
@@ -101,6 +106,18 @@ pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> Swept {
             <= unreadable + found.candidates.len() + found.team_roots.len()
     );
     Swept { report, repos }
+}
+
+/// Whether `verdict` removed the worktree itself, or one a fresh retry or a
+/// team run set aside: not a disposable snapshot, a git directory or caches.
+pub(super) fn loses_a_retry_worktree(candidate: &Candidate, verdict: &Verdict) -> bool {
+    let removed = matches!(verdict, Verdict::Removed { .. });
+    let worktree = matches!(candidate.kind, Kind::Worktree | Kind::KeptWorktree { .. });
+    assert!(
+        !removed || candidate.action == Action::Remove,
+        "only a removal removes"
+    );
+    removed && worktree
 }
 
 /// Strictly below `root`, with no `..` that could climb out of it.

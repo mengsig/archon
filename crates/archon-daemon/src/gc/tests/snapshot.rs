@@ -69,7 +69,7 @@ fn a_snapshot_is_planned_for_removal_once_its_caches_are_due() {
     assert_eq!(plans.len(), 1);
     let expected = vec![snapshot_candidate(&snapshot, &repo, &id)];
     assert_eq!(plans[0].found.candidates, expected);
-    assert!(plans[0].found.keep_caches, "a failed item may be retried");
+    assert_eq!(plans[0].found.failed, [id], "a failed item may be retried");
 }
 
 #[test]

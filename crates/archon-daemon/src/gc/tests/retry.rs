@@ -230,3 +230,78 @@ fn a_partly_tracked_cache_loses_its_ignored_contents() {
     assert!(tree.join("target/.gitkeep").exists(), "tracked files stay");
     assert!(tree.join(".archon/reports/r").exists());
 }
+
+/// Only the removal of a worktree, or of one set aside, is logged as a loss
+/// for a failed item's retry: not a snapshot, a git directory or caches.
+#[test]
+fn only_a_removed_worktree_is_a_retry_s_loss() {
+    use super::plan::{Action, Candidate, Kind};
+    use super::sweep::{Verdict, loses_a_retry_worktree};
+    let item = archon_core::id::QueueItemId::new();
+    let within = PathBuf::from("/w");
+    let of = |kind: Kind, action| Candidate {
+        workspace: PathBuf::from("/w/qi_1"),
+        repo: None,
+        kind,
+        action,
+    };
+    let removed = Verdict::Removed { bytes: 1 };
+    let losses = [
+        (Kind::Worktree, Action::Remove, true),
+        (
+            Kind::KeptWorktree {
+                within: within.clone(),
+            },
+            Action::Remove,
+            true,
+        ),
+        (Kind::Snapshot { item }, Action::Remove, false),
+        (Kind::KeptGitDir { within }, Action::Remove, false),
+    ];
+    for (kind, action, lost) in losses {
+        let candidate = of(kind, action);
+        assert_eq!(
+            loses_a_retry_worktree(&candidate, &removed),
+            lost,
+            "{candidate:?}"
+        );
+    }
+    let reclaimed = Verdict::Reclaimed { bytes: 1 };
+    let candidate = of(Kind::Worktree, Action::Reclaim);
+    assert!(!loses_a_retry_worktree(&candidate, &reclaimed));
+}
+
+/// A cancelled owner whose refresh failed names the refresh, not itself, as
+/// the failed item a retry of which needs the worktree.
+#[test]
+fn a_failed_refresh_is_named_for_its_cancelled_owners_worktree() {
+    let mut store = Store::open_in_memory().unwrap();
+    let owner = store
+        .insert_item(&item_in(QueueState::Queued, 900), None)
+        .unwrap();
+    let mut run = run_in(Path::new("/w/owner"), Some(900));
+    run.item = owner.id.clone();
+    run.branch = "archon/owner".into();
+    let refresh = archon_queue::store::stacks::Refresh {
+        base: "main".into(),
+        sha: "a".repeat(40),
+        from: None,
+    };
+    let fix = store.enqueue_refresh(&owner, &run, &refresh).unwrap();
+    let at = ago(900);
+    store
+        .transition_item(&fix.id, QueueState::Dispatching, at)
+        .unwrap();
+    let failed = QueueState::Failed {
+        run: None,
+        error: "e".into(),
+    };
+    store.transition_item(&fix.id, failed, at).unwrap();
+    let cancelled = QueueState::Cancelled { reason: None };
+    store.transition_item(&owner.id, cancelled, at).unwrap();
+
+    let settled = plan::settled(&store, ago(-60)).unwrap();
+    let of = |id| settled.iter().find(|s| &s.item.id == id).unwrap();
+    assert_eq!(of(&owner.id).failed, [fix.id.clone()]);
+    assert_eq!(of(&fix.id).failed, [fix.id.clone()]);
+}

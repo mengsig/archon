@@ -411,13 +411,11 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
             ctx.design.gc_item(&mut store, &item_id)?;
         }
         let (r, p) = (roots.clone(), policy.clone());
-        let retryable = item.found.keep_caches.then(|| item.item.clone());
         let swept = blocking(move || {
             let _marks = marks;
             sweep::sweep(item.found, &r, &p)
         });
         let swept = swept.await?;
-        log_retryable_removals(retryable.as_ref(), &swept.report);
         repos.extend(swept.repos);
         report.absorb(swept.report);
     }
@@ -688,9 +686,7 @@ fn collect_locked(
     let mut repos = BTreeSet::new();
     for item in plans {
         if plan::still_settled(store, &item)? {
-            let retryable = item.found.keep_caches.then(|| item.item.clone());
             let swept = sweep::sweep(item.found, roots, policy);
-            log_retryable_removals(retryable.as_ref(), &swept.report);
             repos.extend(swept.repos);
             report.absorb(swept.report);
         }
@@ -702,22 +698,6 @@ fn collect_locked(
     let claimed = extras::claim(store, &in_flight, roots, extras, &mut report)?;
     report.absorb(extras::delete(claimed));
     Ok(report)
-}
-
-/// What gc removed of `item`, which failed and may be retried, so the loss a
-/// later retry finds is traceable to the pass.
-fn log_retryable_removals(item: Option<&QueueItemId>, report: &GcReport) {
-    let Some(item) = item else {
-        return;
-    };
-    for path in &report.removed {
-        assert!(path.is_absolute(), "gc reports canonical paths");
-        tracing::info!(
-            item = %item,
-            worktree = %path.display(),
-            "gc removed the worktree of an item that failed and may be retried"
-        );
-    }
 }
 
 async fn blocking<T: Send + 'static>(

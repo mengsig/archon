@@ -17,7 +17,7 @@ use super::{Policy, Roots, cache};
 pub(super) fn preview(plans: &[ItemPlan], roots: &Roots, policy: &Policy) -> GcReport {
     let mut report = GcReport::default();
     for found in plans.iter().map(|plan| &plan.found) {
-        let keeping = found.keep_caches.then(|| policy.keeping_caches());
+        let keeping = found.keeps_caches().then(|| policy.keeping_caches());
         let policy = keeping.as_ref().unwrap_or(policy);
         for (path, why) in &found.unreadable {
             report.failed.push((path.clone(), why.clone()));

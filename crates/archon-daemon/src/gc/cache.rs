@@ -82,13 +82,15 @@ fn clean_args(mode: &str, pathspecs: &[String]) -> Vec<String> {
 }
 
 /// One literal pathspec per cache: each of `cache_dirs`, or each known build
-/// cache git lists in `tree` when none are configured. Only literal paths:
-/// with a `:(glob)**/name` one, git deletes every wholly ignored directory.
+/// cache git lists in `tree` when none are configured, but none holding an
+/// `.archon` directory. Only literal paths: with a `:(glob)**/name` one, git
+/// deletes every wholly ignored directory.
 fn cache_pathspecs(tree: &Path, cache_dirs: &[PathBuf]) -> Result<Vec<String>, ArchonError> {
     let dirs: Vec<String> = match cache_dirs.is_empty() {
         true => default_caches(tree)?,
         false => cache_dirs.iter().map(|d| d.display().to_string()).collect(),
     };
+    let mut pathspecs = Vec::with_capacity(dirs.len());
     for dir in &dirs {
         assert!(
             !dir.is_empty() && !dir.starts_with('/'),
@@ -98,13 +100,46 @@ fn cache_pathspecs(tree: &Path, cache_dirs: &[PathBuf]) -> Result<Vec<String>, A
             !is_under_archon(dir),
             "{dir}: nothing under .archon/ is a cache"
         );
+        if !holds_archon_dir(&tree.join(dir))? {
+            pathspecs.push(format!(":(literal){dir}"));
+        }
     }
-    Ok(dirs.iter().map(|dir| format!(":(literal){dir}")).collect())
+    Ok(pathspecs)
 }
 
-/// The ignored directories of `tree` that are known build caches. Git lists
-/// a wholly ignored directory once, without what is in it, so a cache inside
-/// ignored data such as `bench/results/` is never listed, nor deleted.
+/// Whether a directory named `.archon` is at or below `path`, following no
+/// symlink: git would delete it with the cache that holds it.
+fn holds_archon_dir(path: &Path) -> Result<bool, ArchonError> {
+    assert!(path.is_absolute(), "a path inside a worktree");
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let meta = match std::fs::symlink_metadata(&next) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(ArchonError::io(format!("inspecting {}", next.display()), e)),
+        };
+        if !meta.file_type().is_dir() {
+            continue;
+        }
+        if next.file_name().is_some_and(|name| name == ARCHON_DIR) {
+            return Ok(true);
+        }
+        let reading = |e| ArchonError::io(format!("reading {}", next.display()), e);
+        let entries = match std::fs::read_dir(&next) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(reading(e)),
+        };
+        for entry in entries {
+            pending.push(entry.map_err(reading)?.path());
+        }
+    }
+    Ok(false)
+}
+
+/// The ignored paths of `tree` in known build caches. Git lists a wholly
+/// ignored directory once, without what is in it, so a cache inside ignored
+/// data such as `bench/results/` is never listed, nor deleted.
 fn default_caches(tree: &Path) -> Result<Vec<String>, ArchonError> {
     let args = [
         "ls-files",
@@ -117,9 +152,8 @@ fn default_caches(tree: &Path) -> Result<Vec<String>, ArchonError> {
     let listed = git(tree, &args)?;
     let caches: Vec<String> = listed
         .split('\0')
-        .filter_map(|entry| entry.strip_suffix('/'))
-        .filter(|dir| is_default_cache(dir))
-        .map(str::to_owned)
+        .filter(|entry| is_in_default_cache(entry))
+        .map(|entry| entry.trim_end_matches('/').to_owned())
         .collect();
     assert!(
         caches.iter().all(|dir| !dir.is_empty()),
@@ -128,14 +162,27 @@ fn default_caches(tree: &Path) -> Result<Vec<String>, ArchonError> {
     Ok(caches)
 }
 
-/// Whether the ignored directory `dir`, relative to the worktree, is a known
-/// build cache: a build-output root at the top, or a cache name at any depth.
-fn is_default_cache(dir: &str) -> bool {
-    if dir.is_empty() || is_under_archon(dir) {
+/// Whether the ignored `entry` as git lists it (a directory ends in `/`) is
+/// or lies in a known cache: a build-output root at the top, or a cache name
+/// at any depth, such as `target/debug/` of a `target/` with tracked files.
+fn is_in_default_cache(entry: &str) -> bool {
+    let (path, is_dir) = match entry.strip_suffix('/') {
+        Some(dir) => (dir, true),
+        None => (entry, false),
+    };
+    if path.is_empty() || is_under_archon(path) {
         return false;
     }
-    let name = dir.rsplit('/').next().unwrap_or(dir);
-    DEFAULT_CACHE_ROOTS.contains(&dir) || DEFAULT_CACHE_NAMES.contains(&name)
+    let parts: Vec<&str> = path.split('/').collect();
+    let dirs = if is_dir {
+        &parts[..]
+    } else {
+        &parts[..parts.len() - 1]
+    };
+    let at_root = dirs
+        .first()
+        .is_some_and(|top| DEFAULT_CACHE_ROOTS.contains(top));
+    at_root || dirs.iter().any(|dir| DEFAULT_CACHE_NAMES.contains(dir))
 }
 
 fn is_under_archon(dir: &str) -> bool {
@@ -168,8 +215,8 @@ pub(crate) fn preview_worktree(
 }
 
 /// Delete each of `cache_dirs` from the set-aside worktree `tree`, in which
-/// no git runs, where it is a real directory reached through no symlink.
-/// `None` when none was there, or none is configured.
+/// no git runs, where it is a real directory reached through no symlink and
+/// holds no `.archon` directory. `None` when none was there, or configured.
 pub(crate) fn reclaim_kept(
     tree: &Path,
     cache_dirs: &[PathBuf],
@@ -180,6 +227,9 @@ pub(crate) fn reclaim_kept(
         assert!(dir.is_relative(), "config validation keeps them relative");
         let path = tree.join(dir);
         let is_dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_dir());
+        if is_dir && holds_archon_dir(&path)? {
+            continue;
+        }
         // Its canonical form is itself only when no symlink leads there.
         if !is_dir || path.canonicalize().ok().as_ref() != Some(&path) {
             continue;

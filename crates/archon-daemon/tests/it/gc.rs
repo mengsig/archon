@@ -1172,3 +1172,18 @@ async fn cancel_settled(h: &Harness, item: &QueueItem) {
     }
     age_finished_runs(h, item).await;
 }
+
+/// A refresh retried after a pass planned, which failed at dispatch and so
+/// added no run, unsettles its owner's plan: the caches stay for its retry.
+#[tokio::test]
+async fn a_refresh_that_failed_after_a_pass_planned_keeps_the_caches() {
+    let h = harness(caches_due_at_once()).await;
+    let (_, first, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let pass = gc::plan(&h.ctx, None, false).await.expect("plan");
+    assert!(pass.items() >= 1, "{pass:?}");
+    fail_settled(&h, &first).await;
+
+    let report = gc::collect_planned(&h.ctx, pass).await.expect("pass");
+    assert!(report.reclaimed.is_empty(), "{report:?}");
+    assert!(tree.join("target/debug/app").exists(), "kept for the retry");
+}

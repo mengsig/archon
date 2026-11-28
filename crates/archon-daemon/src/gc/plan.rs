@@ -191,15 +191,10 @@ pub(super) fn settled(store: &Store, before: Timestamp) -> Result<Vec<Settled>, 
     Ok(settled)
 }
 
-/// Whether `item`, or another item that works in its worktree, has neither
-/// succeeded nor been cancelled: a failed one is retried in the same worktree.
+/// Whether `item`, or another item that works in its worktree, failed: a
+/// retry runs in the same worktree. Live ones keep it anyway (`keep_in_use`).
 fn may_run_again(store: &Store, item: &QueueItem) -> Result<bool, ArchonError> {
-    let can_run = |state: &QueueState| {
-        !matches!(
-            state,
-            QueueState::Succeeded { .. } | QueueState::Cancelled { .. }
-        )
-    };
+    let can_run = |state: &QueueState| matches!(state, QueueState::Failed { .. });
     if can_run(&item.state) {
         return Ok(true);
     }
@@ -222,7 +217,7 @@ fn may_run_again(store: &Store, item: &QueueItem) -> Result<bool, ArchonError> {
 }
 
 /// Whether the item is still settled as it was when `plan` was made; an
-/// item retried since may be using its worktree again.
+/// item retried since, or one of its worktree failed since, needs it again.
 pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, ArchonError> {
     if store.has_pending_stack_fix(&plan.item)? {
         return Ok(false);
@@ -234,6 +229,10 @@ pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, Arch
     };
     assert_eq!(item.id, plan.item, "the store returns the item asked for");
     if !item.state.is_terminal() || item.updated_at != plan.updated_at {
+        return Ok(false);
+    }
+    // A sharer retried since that failed at dispatch added no run.
+    if !plan.found.keep_caches && may_run_again(store, &item)? {
         return Ok(false);
     }
     let runs = store.runs_for_item(&plan.item)?.len();

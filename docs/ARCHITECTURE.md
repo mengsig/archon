@@ -4673,22 +4673,26 @@ cutoffs, and at each workspace whose runs have all finished:
 
 - `worktrees.cache_after` (default 1h) after its last run finished, a
   worktree's build caches go: with `worktrees.cache_dirs` set, the ignored
-  files inside the listed directories; else each ignored directory git
-  lists (`git ls-files --others --ignored --directory`) that is a known
-  build cache (`target`, `node_modules`, `__pycache__` and the like), none
-  under `.archon/`. Each goes by `git clean -dX` on its literal path, never
-  a nested repository: a `:(glob)**/name` pathspec would have git delete
-  every wholly ignored directory, `.archon/reports/` included. A cache
-  inside another ignored directory, such as bench results, stays with it.
+  files inside the listed directories; else each ignored path git lists
+  (`git ls-files --others --ignored --directory`) that is or lies in a
+  known build cache (`target`, `node_modules`, `__pycache__` and the like),
+  none under `.archon/`. Each goes by `git clean -dX` on its literal path,
+  never a nested repository: a `:(glob)**/name` pathspec would have git
+  delete every wholly ignored directory, `.archon/reports/` included. A
+  cache inside another ignored directory, such as bench results, stays with
+  it, and so does a cache, configured or not, that holds an `.archon`
+  directory, which git would delete with it.
   Untracked source, changes, commits and other ignored files stay. A
   worktree a team run set aside runs no git, so only the `cache_dirs` in
   it that are real directories, reached through no symlink, go.
 - Nothing is reclaimed from the worktree of an item that may run again: one
   that failed, or that shares its worktree with a failed restack fix or
   refresh. A retry runs there and needs its reports and build output. Only
-  `gc_after` removes such a worktree; one kept for uncommitted changes
-  keeps its caches too. A snapshot it left still goes once its caches
-  would be due.
+  `gc_after` removes such a worktree, logged at info with the item and
+  path; one kept for uncommitted changes keeps its caches too. A pass
+  checks again before it sweeps, so a sharer that failed since its plan
+  keeps them as well. A snapshot it left still goes once its caches would
+  be due.
 - `worktrees.gc_after` (default 7d, or `--older-than`) after, the worktree
   goes with `git worktree remove`, comparing symlink-resolved paths as git
   does. One with uncommitted changes is kept and reported as skipped, with

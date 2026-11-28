@@ -169,3 +169,64 @@ fn the_default_reclaim_lists_only_build_caches() {
     assert_eq!(exists(&tree, &CACHES), [false; 3]);
     assert_eq!(exists(&tree, &KEPT), [true; 5]);
 }
+
+fn write_all(dir: &Path, files: &[&str]) {
+    for file in files {
+        let path = dir.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, vec![1u8; 4096]).unwrap();
+    }
+}
+
+/// Git deletes an ignored directory whole, so a cache that holds an
+/// `.archon` directory stays whole: known, configured or set aside.
+#[test]
+fn a_cache_holding_an_archon_directory_is_kept_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let (_repo, tree) = worktree_with_reports(&base);
+    let nested = ["target/.archon/reports/a", "web/node_modules/.archon/b"];
+    write_all(&tree, &nested);
+
+    let listed = cache::preview_worktree(&tree, &[]).unwrap();
+    assert_eq!(listed, ["pkg/__pycache__/"]);
+    assert!(cache::reclaim_worktree(&tree, &[]).unwrap().is_some());
+    let target = [PathBuf::from("target")];
+    assert_eq!(cache::reclaim_worktree(&tree, &target).unwrap(), None);
+    assert_eq!(exists(&tree, &nested), [true; 2]);
+    assert_eq!(exists(&tree, &CACHES), [true, false, true]);
+
+    let kept = base.join("kept");
+    write_all(&kept, &["target/.archon/reports/a", "build/x"]);
+    let dirs = [PathBuf::from("target"), PathBuf::from("build")];
+    assert!(cache::reclaim_kept(&kept, &dirs).unwrap().is_some());
+    assert!(kept.join("target/.archon/reports/a").exists());
+    assert!(!kept.join("build").exists(), "a cache without one goes");
+}
+
+/// With `target/.gitkeep` tracked, git lists what is ignored inside
+/// `target/` rather than `target/` itself: that goes, the tracked file stays.
+#[test]
+fn a_partly_tracked_cache_loses_its_ignored_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let repo = base.join("repo");
+    init_repo(&repo);
+    let ignore = "/target/*\n!/target/.gitkeep\n/.archon/reports/\n";
+    std::fs::write(repo.join(".gitignore"), ignore).unwrap();
+    write_all(&repo, &["target/.gitkeep"]);
+    git_ok(&repo, &["add", ".gitignore", "target/.gitkeep"]);
+    git_ok(&repo, &["commit", "-q", "-m", "keep target"]);
+    let tree = base.join("trees/repo/qi_1");
+    add_worktree(&repo, &tree, "gc-partly");
+    let built = ["target/debug/app", "target/.rustc_info.json"];
+    write_all(&tree, &built);
+    write_all(&tree, &[".archon/reports/r"]);
+
+    let listed = cache::preview_worktree(&tree, &[]).unwrap();
+    assert_eq!(listed, ["target/.rustc_info.json", "target/debug/"]);
+    assert!(cache::reclaim_worktree(&tree, &[]).unwrap().is_some());
+    assert_eq!(exists(&tree, &built), [false; 2]);
+    assert!(tree.join("target/.gitkeep").exists(), "tracked files stay");
+    assert!(tree.join(".archon/reports/r").exists());
+}

@@ -75,6 +75,8 @@ pub(super) struct Swept {
 /// Collect what was found, then each team root it emptied. A place gc could
 /// not read is a failure against its path; the rest is still collected.
 pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> Swept {
+    let keeping = found.keep_caches.then(|| policy.keeping_caches());
+    let policy = keeping.as_ref().unwrap_or(policy);
     let unreadable = found.unreadable.len();
     let mut report = GcReport::default();
     let mut repos = BTreeSet::new();

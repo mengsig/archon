@@ -270,7 +270,7 @@ adaptive = 3
 
 [worktrees]
 auto_gc = true                 # archond collects finished runs' worktrees itself
-cache_after = "1h"             # then deletes their build caches (git-ignored files)
+cache_after = "1h"             # then deletes the build caches of succeeded or cancelled items
 gc_after = "7d"                # and removes worktrees without uncommitted changes
 cache_dirs = ["target"]        # only these caches; unset = target, node_modules, .venv and similar build output
 item_cache = true              # each item builds in its own cargo target dir, deleted when it ends
@@ -830,8 +830,8 @@ disk is full:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `[worktrees] auto_gc` | `true` | `archond` collects by itself: when it starts, every 30 minutes, and when low disk space holds dispatch. `false` leaves collecting to `archon gc`. |
-| `[worktrees] cache_after` | `"1h"` | This long after an item's last run finished, the build caches in its worktree are deleted. Source files, uncommitted changes and commits stay. |
-| `[worktrees] cache_dirs` | unset | What counts as a build cache. Unset: the ignored files under the known build-output directories: `target`, `dist`, `build`, `.venv`, `venv` and `.tox` at the top of the worktree, and `node_modules`, `__pycache__`, `.pytest_cache`, `.mypy_cache` and `.ruff_cache` at any depth. Other ignored files such as `.env` or a local database stay. `["target"]`: only ignored files under `target/`. |
+| `[worktrees] cache_after` | `"1h"` | This long after an item's last run finished, the build caches in its worktree are deleted, once the item succeeded or was cancelled. A failed item keeps them, and every other ignored file, for its retry. Source files, uncommitted changes and commits stay. |
+| `[worktrees] cache_dirs` | unset | What counts as a build cache. Unset: the ignored directories `target`, `dist`, `build`, `.venv`, `venv` and `.tox` at the top of the worktree, and `node_modules`, `__pycache__`, `.pytest_cache`, `.mypy_cache` and `.ruff_cache` at any depth, but none inside `.archon/` or inside another ignored directory. Other ignored files such as `.env`, `.archon/reports/`, bench results or a local database stay. `["target"]`: only ignored files under `target/`. A path under `.archon` is refused. |
 | `[worktrees] gc_after` | `"7d"` | This long after an item's last run finished, its worktree is removed. A worktree with uncommitted changes is kept; [three kinds of directory](#what-is-deleted-with-uncommitted-work) are not. |
 | `[limits] min_free_gb` | `10` | While the data directory's or the worktree root's filesystem has less free space than this, in GiB, no item and no stage agent starts; running agents finish. `0` turns the check off. |
 | `[limits] max_load_per_cpu` | unset (off) | While the host's 1-minute load average (`/proc/loadavg`) divided by the CPU count is above this, no item and no stage agent starts; running agents finish. Dispatch resumes once load is below 90% of the limit. Must be positive; remove the key to turn the check off. Off by default so a busy build machine is not held unless you choose a limit; `1.5` is a sensible start. `archon status` and each waiting item show the measured load and the next step. Without `/proc` (not Linux) the check cannot run and does not hold; `archon status` says so. |
@@ -860,7 +860,9 @@ it skipped:
 It removes build caches, the worktrees and scratch directories of finished
 items, and what a fresh retry or a team run set aside. It never touches an
 item that is still queued or running, your own checkout of the repository,
-any branch or commit, or the published copies of reports.
+any branch or commit, or the published copies of reports. It deletes no
+caches from the worktree of a failed item, which a retry runs in again: only
+`gc_after` removes that worktree.
 
 When a pass removed a worktree, it then has Aether delete the workspaces
 Aether made for the agents a stage delegated to, and runs `git worktree

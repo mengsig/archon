@@ -12,6 +12,7 @@ use super::sweep::{self, Verdict, is_inside};
 use super::{Policy, Roots, cache, canonical_root, preview, team};
 use crate::worktree::git;
 
+mod retry;
 mod snapshot;
 
 fn git_ok(dir: &Path, args: &[&str]) {
@@ -782,7 +783,19 @@ fn a_retry_that_failed_again_across_a_clock_step_unsettles() {
 }
 
 fn settled(item: QueueItem, runs: Vec<PipelineRun>, repo: Option<&Path>) -> Settled {
-    let repo = repo.map(|path| archon_core::repo::Repo {
+    let may_run_again = matches!(item.state, QueueState::Failed { .. });
+    Settled {
+        item,
+        runs,
+        borrowed: Vec::new(),
+        repo: repo.map(repo_at),
+        may_run_again,
+    }
+}
+
+/// A registered repository at `path` that ships pull requests.
+fn repo_at(path: &Path) -> archon_core::repo::Repo {
+    archon_core::repo::Repo {
         id: RepoId::new(),
         name: "repo".into(),
         path: path.to_path_buf(),
@@ -799,12 +812,6 @@ fn settled(item: QueueItem, runs: Vec<PipelineRun>, repo: Option<&Path>) -> Sett
         confirmed_full_check: None,
         confirmed_release_check: None,
         added_at: archon_core::now(),
-    });
-    Settled {
-        item,
-        runs,
-        borrowed: Vec::new(),
-        repo,
     }
 }
 
@@ -823,16 +830,13 @@ fn plans_remove_old_workspaces_reclaim_recent_ones_and_skip_the_repo() {
         run_in(&base.join("gone"), Some(900)),
         run_in(&repo, Some(900)),
     ];
-    let failed = QueueState::Failed {
-        run: None,
-        error: "e".into(),
-    };
+    let cancelled = QueueState::Cancelled { reason: None };
     let policy = Policy {
         remove_before: ago(600),
         reclaim_before: ago(60),
         ..policy(false)
     };
-    let item = settled(item_in(failed, 900), runs, Some(&repo));
+    let item = settled(item_in(cancelled, 900), runs, Some(&repo));
     let plans = plan::plan_all(&[item], &roots_in(&base), &policy);
     assert_eq!(plans.len(), 1);
     let expected = vec![

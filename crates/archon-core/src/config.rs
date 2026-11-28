@@ -1017,8 +1017,8 @@ pub struct WorktreeConfig {
     pub gc_after: Age,
     /// A finished run's build caches are deleted this long after it finished.
     pub cache_after: Age,
-    /// The caches to delete, relative to a worktree; empty: every file git
-    /// ignores.
+    /// The caches to delete, relative to a worktree; empty: the known build
+    /// caches (`target`, `node_modules`, `__pycache__` and the like).
     pub cache_dirs: Vec<PathBuf>,
     /// Stages of a repository build into one cargo target directory under
     /// `<data>/cache`, serialising on cargo's build lock. Off by default:
@@ -1148,17 +1148,18 @@ impl ArtifactsConfig {
 }
 
 impl WorktreeConfig {
-    /// Each cache directory names a place inside a worktree, and not git's own.
+    /// Each cache directory names a place inside a worktree, and neither
+    /// git's own nor Archon's `.archon`, whose reports a retry needs.
     fn validate(&self) -> Result<(), ArchonError> {
         for dir in &self.cache_dirs {
             let inside = dir.components().all(|c| match c {
-                std::path::Component::Normal(name) => name != ".git",
+                std::path::Component::Normal(name) => name != ".git" && name != ".archon",
                 _ => false,
             });
             if dir.as_os_str().is_empty() || !inside {
                 return Err(ArchonError::Config(format!(
                     "worktrees.cache_dirs: {} must be a relative path inside a worktree, \
-                     without `..` or `.git`",
+                     without `..`, `.git` or `.archon`",
                     dir.display()
                 )));
             }
@@ -2055,7 +2056,14 @@ mod tests {
         assert_eq!(set.worktrees.gc_after.secs(), 14 * 86_400);
         assert_eq!(set.worktrees.cache_dirs.len(), 2);
         assert!(toml::from_str::<Config>("[worktrees]\ngc_after = \"7\"").is_err());
-        for dir in ["../x", "/abs", "a/.git", ""] {
+        for dir in [
+            "../x",
+            "/abs",
+            "a/.git",
+            "",
+            ".archon/reports",
+            "web/.archon",
+        ] {
             let text = format!("[worktrees]\ncache_dirs = [{dir:?}]");
             let refused: Config = toml::from_str(&text).unwrap();
             assert!(

@@ -1,7 +1,7 @@
 //! Deleting a finished run's build caches while keeping its source: the
-//! ignored files in the configured `worktrees.cache_dirs`, or in the known
-//! build-output roots when none are set (`git clean -dX`), and measuring the
-//! space that frees.
+//! ignored files in the configured `worktrees.cache_dirs`, or the known
+//! build-cache directories when none are set (`git clean -dX` on literal
+//! paths), never anything under `.archon/`, and measuring the space freed.
 
 use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -41,18 +41,25 @@ const DEFAULT_CACHE_NAMES: [&str; 5] = [
     ".mypy_cache",
     ".ruff_cache",
 ];
+/// Archon's own directory in a worktree: reports, evidence and services a
+/// retry needs again. No cache is ever looked for in it.
+const ARCHON_DIR: &str = ".archon";
 
 /// Delete the ignored files of the worktree `tree` within `cache_dirs`, or
-/// within the known build-output roots when none are configured; other ignored
-/// files such as `.env` stay, as do untracked source, changes and commits.
-/// `None` when there was nothing to delete; else the bytes freed.
+/// the known build caches when none are configured; other ignored files such
+/// as `.env` or `.archon/reports/` stay, as do untracked source, changes and
+/// commits. `None` when there was nothing to delete; else the bytes freed.
 pub(crate) fn reclaim_worktree(
     tree: &Path,
     cache_dirs: &[PathBuf],
 ) -> Result<Option<u64>, ArchonError> {
     ensure_top_level(tree)?;
+    let pathspecs = cache_pathspecs(tree, cache_dirs)?;
+    if pathspecs.is_empty() {
+        return Ok(None);
+    }
     let clean = |mode| {
-        let args = clean_args(mode, cache_dirs);
+        let args = clean_args(mode, &pathspecs);
         git(tree, &args.iter().map(String::as_str).collect::<Vec<_>>())
     };
     if clean("-n")?.is_empty() {
@@ -64,22 +71,75 @@ pub(crate) fn reclaim_worktree(
     Ok(Some(before.saturating_sub(after)))
 }
 
-/// `git clean -dX` with `mode` (`-n` or `-f`): ignored files only, never
-/// nested repositories (that takes `-ff`), limited to `cache_dirs` if set,
-/// else to the known build-output roots.
-fn clean_args(mode: &str, cache_dirs: &[PathBuf]) -> Vec<String> {
+/// `git clean -dX` with `mode` (`-n` or `-f`) on exactly `pathspecs`:
+/// ignored files only, never nested repositories (that takes `-ff`).
+fn clean_args(mode: &str, pathspecs: &[String]) -> Vec<String> {
     assert!(matches!(mode, "-n" | "-f"), "a dry run or the real one");
+    assert!(!pathspecs.is_empty(), "no pathspec would clean everything");
     let mut args: Vec<String> = ["clean", mode, "-d", "-X", "--"].map(String::from).into();
-    if cache_dirs.is_empty() {
-        args.extend(DEFAULT_CACHE_ROOTS.map(|dir| format!(":(literal){dir}")));
-        args.extend(DEFAULT_CACHE_NAMES.map(|name| format!(":(glob)**/{name}")));
-        return args;
-    }
-    for dir in cache_dirs {
-        assert!(dir.is_relative(), "config validation keeps them relative");
-        args.push(format!(":(literal){}", dir.display()));
-    }
+    args.extend_from_slice(pathspecs);
     args
+}
+
+/// One literal pathspec per cache: each of `cache_dirs`, or each known build
+/// cache git lists in `tree` when none are configured. Only literal paths:
+/// with a `:(glob)**/name` one, git deletes every wholly ignored directory.
+fn cache_pathspecs(tree: &Path, cache_dirs: &[PathBuf]) -> Result<Vec<String>, ArchonError> {
+    let dirs: Vec<String> = match cache_dirs.is_empty() {
+        true => default_caches(tree)?,
+        false => cache_dirs.iter().map(|d| d.display().to_string()).collect(),
+    };
+    for dir in &dirs {
+        assert!(
+            !dir.is_empty() && !dir.starts_with('/'),
+            "relative to the worktree"
+        );
+        assert!(
+            !is_under_archon(dir),
+            "{dir}: nothing under .archon/ is a cache"
+        );
+    }
+    Ok(dirs.iter().map(|dir| format!(":(literal){dir}")).collect())
+}
+
+/// The ignored directories of `tree` that are known build caches. Git lists
+/// a wholly ignored directory once, without what is in it, so a cache inside
+/// ignored data such as `bench/results/` is never listed, nor deleted.
+fn default_caches(tree: &Path) -> Result<Vec<String>, ArchonError> {
+    let args = [
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+    ];
+    let listed = git(tree, &args)?;
+    let caches: Vec<String> = listed
+        .split('\0')
+        .filter_map(|entry| entry.strip_suffix('/'))
+        .filter(|dir| is_default_cache(dir))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        caches.iter().all(|dir| !dir.is_empty()),
+        "git names each path"
+    );
+    Ok(caches)
+}
+
+/// Whether the ignored directory `dir`, relative to the worktree, is a known
+/// build cache: a build-output root at the top, or a cache name at any depth.
+fn is_default_cache(dir: &str) -> bool {
+    if dir.is_empty() || is_under_archon(dir) {
+        return false;
+    }
+    let name = dir.rsplit('/').next().unwrap_or(dir);
+    DEFAULT_CACHE_ROOTS.contains(&dir) || DEFAULT_CACHE_NAMES.contains(&name)
+}
+
+fn is_under_archon(dir: &str) -> bool {
+    dir.split('/').any(|part| part == ARCHON_DIR)
 }
 
 /// What [`reclaim_worktree`] would delete from `tree`, one path as git lists
@@ -89,7 +149,11 @@ pub(crate) fn preview_worktree(
     cache_dirs: &[PathBuf],
 ) -> Result<Vec<String>, ArchonError> {
     ensure_top_level(tree)?;
-    let args = clean_args("-n", cache_dirs);
+    let pathspecs = cache_pathspecs(tree, cache_dirs)?;
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let args = clean_args("-n", &pathspecs);
     let listed = git(tree, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
     let paths: Vec<String> = listed
         .lines()

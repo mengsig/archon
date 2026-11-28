@@ -4390,7 +4390,7 @@ to `archon chat`.
 - Cleanup: after `succeeded` with a completed ship-kind stage in the run's
   frozen pipeline, repository ship mode `pr`, and when
   `keep_on_success = false`, the worktree's build caches are deleted
-  (`git clean -fdX`, or only within `cache_dirs`), then the worktree is
+  (as gc reclaims them, §13.2), then the worktree is
   removed with `git worktree remove`, never forced, and the branch is
   kept. A removal that fails, for a stray untracked file say, is reported
   in the feed with the space the deleted caches freed. Successful runs that
@@ -4672,12 +4672,23 @@ A pass looks at terminal items last changed before the later of its two
 cutoffs, and at each workspace whose runs have all finished:
 
 - `worktrees.cache_after` (default 1h) after its last run finished, a
-  worktree's build caches go: what `git clean -dX` deletes, the files git
-  ignores, but no nested repository, and with `worktrees.cache_dirs` set
-  only those inside the listed directories. Untracked source, changes and
-  commits stay. A worktree a team run set aside runs no git, so only the
-  `cache_dirs` in it that are real directories, reached through no
-  symlink, go.
+  worktree's build caches go: with `worktrees.cache_dirs` set, the ignored
+  files inside the listed directories; else each ignored directory git
+  lists (`git ls-files --others --ignored --directory`) that is a known
+  build cache (`target`, `node_modules`, `__pycache__` and the like), none
+  under `.archon/`. Each goes by `git clean -dX` on its literal path, never
+  a nested repository: a `:(glob)**/name` pathspec would have git delete
+  every wholly ignored directory, `.archon/reports/` included. A cache
+  inside another ignored directory, such as bench results, stays with it.
+  Untracked source, changes, commits and other ignored files stay. A
+  worktree a team run set aside runs no git, so only the `cache_dirs` in
+  it that are real directories, reached through no symlink, go.
+- Nothing is reclaimed from the worktree of an item that may run again: one
+  that failed, or that shares its worktree with a failed restack fix or
+  refresh. A retry runs there and needs its reports and build output. Only
+  `gc_after` removes such a worktree; one kept for uncommitted changes
+  keeps its caches too. A snapshot it left still goes once its caches
+  would be due.
 - `worktrees.gc_after` (default 7d, or `--older-than`) after, the worktree
   goes with `git worktree remove`, comparing symlink-resolved paths as git
   does. One with uncommitted changes is kept and reported as skipped, with

@@ -1107,3 +1107,68 @@ async fn offline_gc_prunes_git_but_leaves_aether_alone() {
     assert_eq!(report.aether_gc, None);
     assert!(!lists_worktree(&h, &delegated), "pruned offline");
 }
+
+/// Move the settled `item` to failed, as a run that failed at dispatch
+/// leaves it: a retry may run in its worktree again.
+async fn fail_settled(h: &Harness, item: &QueueItem) {
+    {
+        let mut store = h.ctx.store.lock().await;
+        let at = archon_core::now();
+        for next in [QueueState::Queued, QueueState::Dispatching] {
+            store.transition_item(&item.id, next, at).expect("legal");
+        }
+        let failed = QueueState::Failed {
+            run: None,
+            error: "login failed".into(),
+        };
+        store.transition_item(&item.id, failed, at).expect("legal");
+    }
+    age_finished_runs(h, item).await;
+}
+
+/// A refresh that failed in its owner's worktree may be retried there, so
+/// gc deletes nothing from it; once none of its items can run again, only
+/// the build caches go, never `.archon/reports/`.
+#[tokio::test]
+async fn a_failed_refresh_keeps_its_owners_caches_and_reports() {
+    let h = harness(caches_due_at_once()).await;
+    let (_, first, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let reports = tree.join(".archon/reports/bench");
+    std::fs::create_dir_all(&reports).expect("reports dir");
+    std::fs::write(reports.join("results.json"), "{}\n").expect("results");
+    std::fs::write(
+        tree.join(".gitignore"),
+        "target/\n*.log\n/.archon/reports/\n",
+    )
+    .expect("ignore reports");
+    fail_settled(&h, &first).await;
+
+    let report = gc_request(&h, None, false).await;
+    assert!(report.reclaimed.is_empty(), "{report:?}");
+    assert!(tree.join("target/debug/app").exists(), "kept for the retry");
+    assert!(reports.join("results.json").exists());
+
+    cancel_settled(&h, &first).await;
+    let report = gc_request(&h, None, false).await;
+    assert_eq!(report.reclaimed.len(), 1, "{report:?}");
+    assert!(!tree.join("target").exists(), "the caches go");
+    assert!(
+        reports.join("results.json").exists(),
+        "reports are no cache"
+    );
+}
+
+async fn cancel_settled(h: &Harness, item: &QueueItem) {
+    {
+        let mut store = h.ctx.store.lock().await;
+        let at = archon_core::now();
+        store
+            .transition_item(&item.id, QueueState::Queued, at)
+            .expect("legal");
+        let cancelled = QueueState::Cancelled { reason: None };
+        store
+            .transition_item(&item.id, cancelled, at)
+            .expect("legal");
+    }
+    age_finished_runs(h, item).await;
+}

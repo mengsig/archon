@@ -126,6 +126,20 @@ impl Policy {
         Ok(self)
     }
 
+    /// This policy with no cache reclaimed, for a worktree a retry may need:
+    /// its ignored files go only with the worktree itself.
+    pub(crate) fn keeping_caches(&self) -> Self {
+        let keeping = Self {
+            reclaim_before: Timestamp::MIN_UTC,
+            ..self.clone()
+        };
+        assert!(
+            keeping.remove_before == self.remove_before,
+            "removal is unchanged"
+        );
+        keeping
+    }
+
     /// Items settled before this may hold something to collect.
     fn settled_before(&self) -> Timestamp {
         self.remove_before.max(self.reclaim_before)

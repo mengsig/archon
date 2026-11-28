@@ -60,6 +60,9 @@ pub(super) struct Found {
     pub unreadable: Vec<(PathBuf, String)>,
     /// Team roots, removed once gc has emptied them.
     pub team_roots: Vec<PathBuf>,
+    /// The item, or another that works in its worktree, can still run: a
+    /// retry needs what its last run left, so no cache or report goes.
+    pub keep_caches: bool,
 }
 
 impl Found {
@@ -134,6 +137,8 @@ pub(super) struct Settled {
     /// The runs of the other items that work in the item's worktree.
     pub borrowed: Vec<PipelineRun>,
     pub repo: Option<Repo>,
+    /// It, or another item of its worktree, failed and so may be retried.
+    pub may_run_again: bool,
 }
 
 /// One item's share of a pass, collected only while the item is still as
@@ -173,15 +178,47 @@ pub(super) fn settled(store: &Store, before: Timestamp) -> Result<Vec<Settled>, 
         let runs = store.runs_for_item(&item.id)?;
         let borrowed = borrowed_runs(store, &item.id)?;
         let repo = item.repo.as_ref().and_then(|id| repos.get(id)).cloned();
+        let may_run_again = may_run_again(store, &item)?;
         settled.push(Settled {
             item,
             runs,
             borrowed,
             repo,
+            may_run_again,
         });
     }
     debug_assert!(settled.iter().all(|s| s.item.state.is_terminal()));
     Ok(settled)
+}
+
+/// Whether `item`, or another item that works in its worktree, has neither
+/// succeeded nor been cancelled: a failed one is retried in the same worktree.
+fn may_run_again(store: &Store, item: &QueueItem) -> Result<bool, ArchonError> {
+    let can_run = |state: &QueueState| {
+        !matches!(
+            state,
+            QueueState::Succeeded { .. } | QueueState::Cancelled { .. }
+        )
+    };
+    if can_run(&item.state) {
+        return Ok(true);
+    }
+    let owner = users::owner(store, &item.id)?;
+    for sharer in users::sharers(store, &owner)? {
+        if sharer == item.id {
+            continue;
+        }
+        let other = match store.item(&sharer) {
+            Ok(other) => other,
+            Err(ArchonError::NotFound(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        assert_eq!(other.id, sharer, "the store returns the item asked for");
+        if can_run(&other.state) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether the item is still settled as it was when `plan` was made; an
@@ -238,17 +275,28 @@ pub(super) fn plan_all(settled: &[Settled], roots: &Roots, policy: &Policy) -> V
 /// A team run's workspace brings everything under its team root, on the
 /// normal cutoffs: only the owed run workspace itself goes early.
 fn plan_item(settled: &Settled, roots: &Roots, policy: &Policy) -> ItemPlan {
+    // A retry needs what a worktree holds; a snapshot holds nothing kept.
+    let keeping = settled.may_run_again.then(|| policy.keeping_caches());
+    let kept = keeping.as_ref().unwrap_or(policy);
     let registered = settled.repo.as_ref().map(|r| r.path.as_path());
     let owed = owed_workspace(settled, policy);
     let item = &settled.item.id;
-    let mut found = Found::default();
+    let mut found = Found {
+        keep_caches: settled.may_run_again,
+        ..Found::default()
+    };
     for (workspace, finished) in last_use(&settled.runs, &settled.borrowed) {
         if registered == Some(workspace.as_path()) {
             continue;
         }
-        let action = action_for(finished, policy);
+        let due = if is_snapshot_of(&workspace, item) {
+            policy
+        } else {
+            kept
+        };
+        let action = action_for(finished, due);
         let early = owed == Some(workspace.as_path())
-            && finished.is_some_and(|at| at < policy.reclaim_before)
+            && finished.is_some_and(|at| at < due.reclaim_before)
             && workspace.exists();
         assert!(
             !early || action.is_some(),

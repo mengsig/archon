@@ -228,8 +228,8 @@ fn failed_users(store: &Store, item: &QueueItem) -> Result<Vec<QueueItemId>, Arc
     Ok(failed)
 }
 
-/// Whether the item is still settled as it was when `plan` was made; an
-/// item retried since, or one of its worktree failed since, needs it again.
+/// Whether the item is still settled as it was when `plan` was made: not
+/// retried since, and the items of its worktree that failed are the same.
 pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, ArchonError> {
     if store.has_pending_stack_fix(&plan.item)? {
         return Ok(false);
@@ -243,8 +243,10 @@ pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, Arch
     if !item.state.is_terminal() || item.updated_at != plan.updated_at {
         return Ok(false);
     }
-    // A sharer retried since that failed at dispatch added no run.
-    if !plan.found.keeps_caches() && !failed_users(store, &item)?.is_empty() {
+    // A sharer retried since that failed at dispatch added no run; the sweep
+    // keeps caches for, and logs, exactly the failed items planned with.
+    let failed: BTreeSet<_> = failed_users(store, &item)?.into_iter().collect();
+    if failed != plan.found.failed.iter().cloned().collect() {
         return Ok(false);
     }
     let runs = store.runs_for_item(&plan.item)?.len();

@@ -271,37 +271,187 @@ fn only_a_removed_worktree_is_a_retry_s_loss() {
     assert!(!loses_a_retry_worktree(&candidate, &reclaimed));
 }
 
-/// A cancelled owner whose refresh failed names the refresh, not itself, as
-/// the failed item a retry of which needs the worktree.
-#[test]
-fn a_failed_refresh_is_named_for_its_cancelled_owners_worktree() {
-    let mut store = Store::open_in_memory().unwrap();
+/// A cancelled owner and a refresh of it onto `sha` that failed at dispatch.
+fn owner_with_failed_refresh(store: &mut Store) -> (QueueItem, QueueItem) {
     let owner = store
         .insert_item(&item_in(QueueState::Queued, 900), None)
         .unwrap();
+    let fix = refresh_of(store, &owner, 'a');
+    fail_at_dispatch(store, &fix);
+    let cancelled = QueueState::Cancelled { reason: None };
+    store
+        .transition_item(&owner.id, cancelled, ago(900))
+        .unwrap();
+    (store.item(&owner.id).unwrap(), fix)
+}
+
+fn refresh_of(store: &mut Store, owner: &QueueItem, sha: char) -> QueueItem {
     let mut run = run_in(Path::new("/w/owner"), Some(900));
     run.item = owner.id.clone();
     run.branch = "archon/owner".into();
     let refresh = archon_queue::store::stacks::Refresh {
         base: "main".into(),
-        sha: "a".repeat(40),
+        sha: sha.to_string().repeat(40),
         from: None,
     };
-    let fix = store.enqueue_refresh(&owner, &run, &refresh).unwrap();
+    store.enqueue_refresh(owner, &run, &refresh).unwrap()
+}
+
+/// Dispatch the queued `item`, which fails before it starts a run.
+fn fail_at_dispatch(store: &mut Store, item: &QueueItem) {
     let at = ago(900);
     store
-        .transition_item(&fix.id, QueueState::Dispatching, at)
+        .transition_item(&item.id, QueueState::Dispatching, at)
         .unwrap();
     let failed = QueueState::Failed {
         run: None,
         error: "e".into(),
     };
-    store.transition_item(&fix.id, failed, at).unwrap();
-    let cancelled = QueueState::Cancelled { reason: None };
-    store.transition_item(&owner.id, cancelled, at).unwrap();
+    store.transition_item(&item.id, failed, at).unwrap();
+}
+
+/// A cancelled owner whose refresh failed names the refresh, not itself, as
+/// the failed item a retry of which needs the worktree.
+#[test]
+fn a_failed_refresh_is_named_for_its_cancelled_owners_worktree() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (owner, fix) = owner_with_failed_refresh(&mut store);
 
     let settled = plan::settled(&store, ago(-60)).unwrap();
     let of = |id| settled.iter().find(|s| &s.item.id == id).unwrap();
     assert_eq!(of(&owner.id).failed, [fix.id.clone()]);
     assert_eq!(of(&fix.id).failed, [fix.id.clone()]);
+}
+
+/// The owner's plan as a pass would make it now, for the recheck.
+fn owner_plan(store: &Store, owner: &QueueItem) -> plan::ItemPlan {
+    let settled = plan::settled(store, ago(-60)).unwrap();
+    let found = settled.iter().find(|s| s.item.id == owner.id).unwrap();
+    assert_eq!(found.item.updated_at, owner.updated_at);
+    plan::ItemPlan {
+        item: owner.id.clone(),
+        updated_at: found.item.updated_at,
+        runs: store.runs_for_item(&owner.id).unwrap().len(),
+        borrowed: Default::default(),
+        found: plan::Found {
+            failed: found.failed.clone(),
+            ..plan::Found::default()
+        },
+    }
+}
+
+/// A second sharer that fails at dispatch after planning, or a failed one
+/// cancelled since, adds no run but unsettles the plan: it named others.
+#[test]
+fn a_change_in_which_sharers_failed_unsettles_the_plan() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (owner, first) = owner_with_failed_refresh(&mut store);
+    let second = refresh_of(&mut store, &owner, 'b');
+    let cancelled = QueueState::Cancelled { reason: None };
+    store
+        .transition_item(&second.id, cancelled.clone(), ago(900))
+        .unwrap();
+
+    let planned = owner_plan(&store, &owner);
+    assert_eq!(planned.found.failed, [first.id.clone()]);
+    assert!(plan::still_settled(&store, &planned).unwrap());
+    store
+        .transition_item(&second.id, QueueState::Queued, ago(900))
+        .unwrap();
+    fail_at_dispatch(&mut store, &second);
+    assert!(
+        !plan::still_settled(&store, &planned).unwrap(),
+        "another sharer failed"
+    );
+
+    let planned = owner_plan(&store, &owner);
+    assert_eq!(planned.found.failed.len(), 2);
+    for next in [QueueState::Queued, cancelled] {
+        store.transition_item(&first.id, next, ago(900)).unwrap();
+    }
+    assert!(
+        !plan::still_settled(&store, &planned).unwrap(),
+        "a planned failed sharer was cancelled"
+    );
+}
+
+#[derive(Clone)]
+struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Sink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Plan and sweep `store` once, with the worktree past `gc_after`, and
+/// return what was logged at info and above.
+fn logged_pass(store: &Store, base: &Path) -> (usize, String) {
+    let policy = Policy {
+        remove_before: ago(3600),
+        reclaim_before: ago(3600),
+        ..policy(false)
+    };
+    let settled = plan::settled(store, policy.settled_before()).unwrap();
+    let plans = plan::plan_all(&settled, &roots_in(base), &policy);
+    let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Sink(bytes.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(move || sink.clone())
+        .finish();
+    let removed = tracing::subscriber::with_default(subscriber, || {
+        let mut removed = 0;
+        for item in plans {
+            assert!(plan::still_settled(store, &item).unwrap());
+            let report = sweep::sweep(item.found, &roots_in(base), &policy).report;
+            assert!(report.failed.is_empty(), "{:?}", report.failed);
+            removed += report.removed.len();
+        }
+        removed
+    });
+    let written = bytes.lock().unwrap().clone();
+    (removed, String::from_utf8(written).unwrap())
+}
+
+/// The worktree of an item that ran once, failing or succeeding, in a repo.
+fn finished_in_worktree(succeed: bool) -> (tempfile::TempDir, Store, QueueItem, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let (repo, tree) = worktree_with_reports(&base);
+    let mut store = Store::open_in_memory().unwrap();
+    let registered = repo_at(&repo);
+    store.insert_repo(&registered).unwrap();
+    let mut queued = item_in(QueueState::Queued, 9000);
+    queued.repo = Some(registered.id.clone());
+    let item = store.insert_item(&queued, None).unwrap();
+    run_once(&mut store, &item, &tree, succeed);
+    (dir, store, item, tree)
+}
+
+const RETRY_LOSS: &str = "gc removed a worktree a failed item may retry in";
+
+/// Removing a failed item's worktree at `gc_after` logs the item and the
+/// path at info, so its retry's loss is traceable; any other removal not.
+#[test]
+fn removing_a_failed_items_worktree_is_logged_with_the_item_and_path() {
+    let (dir, store, item, tree) = finished_in_worktree(false);
+    let (removed, logged) = logged_pass(&store, &dir.path().canonicalize().unwrap());
+    assert_eq!(removed, 1, "{logged}");
+    let line = logged.lines().find(|l| l.contains(RETRY_LOSS));
+    let line = line.unwrap_or_else(|| panic!("no retry loss in {logged:?}"));
+    assert!(line.contains(" INFO "), "{line}");
+    assert!(line.contains(item.id.as_str()), "{line}");
+    assert!(line.contains(&tree.display().to_string()), "{line}");
+
+    let (dir, store, _, _) = finished_in_worktree(true);
+    let (removed, logged) = logged_pass(&store, &dir.path().canonicalize().unwrap());
+    assert_eq!(removed, 1, "{logged}");
+    assert!(!logged.contains(RETRY_LOSS), "a succeeded item: {logged}");
 }

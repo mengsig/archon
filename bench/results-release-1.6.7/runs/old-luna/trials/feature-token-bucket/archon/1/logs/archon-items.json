@@ -1,0 +1,262 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GGK5ZKYGBG7265BFS4T3Y4",
+      "repo": "repo_01M8GGGW28FM66Q4GHQ3FB19YD",
+      "pipeline": "direct",
+      "title": "Implement spec-compliant token bucket rate limiter",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py; it currently contains stubs. Follow SPEC.md exactly, including all error cases and edge cases. Keep the implementation dependency-free (standard library only). The basic tests in test_ratelimit.py are not exhaustive, so cover the specified behavior beyond those basics as needed. Commit the completed work. Acceptance criteria: TokenBucket validation, full initial state, continuous fractional refill capped at capacity, atomic try_acquire behavior, available and non-consuming wait_time, validation for invalid n, and backwards-clock handling that freezes until time advances past the latest observed timestamp; KeyedLimiter validation, independent buckets per hashable key, LRU eviction on both try_acquire and wait_time, fresh-full buckets after eviction, and correct len(). Use only the injected clock for time.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GGK5ZKYGBG7265BFS4T3Y4",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:23:26.614601843Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T07:23:26.647143161Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T07:23:26.614601843Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GGK639H4QA48Q4V4NJTP2G",
+        "summary": "Implemented spec-compliant token buckets and keyed LRU limiting in ratelimit.py, with edge-case tests in test_ratelimit.py. Baseline: all 3 tests errored on stubs; after: all 8 tests pass. Reviewer passed with no findings. No open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGPK0FM36REYTNBGN2QJBD)\n\nSHIPPED: commit aa32eb103a1d6b410407d6379362082d36f9b9af on the run branch"
+      },
+      "created_at": "2026-11-28T07:23:26.579424816Z",
+      "updated_at": "2026-11-28T07:26:41.287470864Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GGK639H4QA48Q4V4NJTP2G",
+        "item": "qi_01M8GGK5ZKYGBG7265BFS4T3Y4",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GGK6NNVHE1PWX6YESD0CGE",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/62fbd21558d7a269b4125603/.archon/data/worktrees/feature-token-bucket/qi_01M8GGK5ZKYGBG7265BFS4T3Y4",
+        "branch": "archon/bfs4t3y4-implement-spec-compliant-token-bucket-ra",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented spec-compliant token buckets and keyed LRU limiting in ratelimit.py, with edge-case tests in test_ratelimit.py. Baseline: all 3 tests errored on stubs; after: all 8 tests pass. Reviewer passed with no findings. No open issues.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGPK0FM36REYTNBGN2QJBD)\n\nSHIPPED: commit aa32eb103a1d6b410407d6379362082d36f9b9af on the run branch"
+        },
+        "cost_usd": 0.01709402,
+        "started_at": "2026-11-28T07:23:27.118898633Z",
+        "finished_at": "2026-11-28T07:26:41.287470864Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GGK6JSZDPHB2NH5EDEYP74",
+        "run": "prun_01M8GGK639H4QA48Q4V4NJTP2G",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GGK6PS7VK8174X1RWSHASP",
+        "aether_task": "tsk_01M8GGK6PSE9EKP490B9SV7KSW",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented spec-compliant token buckets and keyed LRU limiting in ratelimit.py, with edge-case tests in test_ratelimit.py. Baseline: all 3 tests errored on stubs; after: all 8 tests pass. Reviewer passed with no findings. No open issues.",
+        "structured": {
+          "checks": [
+            "python -B -m unittest -v (8 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "aa32eb103a1d6b410407d6379362082d36f9b9af",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.001s; OK. git diff --check passed.",
+              "before": "Ran 3 tests; all errored because TokenBucket and KeyedLimiter constructors raised NotImplementedError.",
+              "caption": "Before and after behavior checks",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "aa32eb103a1d6b410407d6379362082d36f9b9af",
+          "pr": {
+            "body": "Implemented TokenBucket with full initial capacity, continuous refill capped at capacity, non-consuming wait_time, request validation, and a latest-observed timestamp that prevents refill during backward-clock movement. Implemented KeyedLimiter with independent per-key buckets, LRU tracking on both operations, eviction to fresh full buckets, parameter validation, and len(). Added deterministic fake-clock tests for specified edge cases. Checks: python -B -m unittest -v (8 passed); git diff --check (passed). Assumption: capacity and token requests may be fractional because the spec permits continuous fractional token availability and does not require integer-only requests.",
+            "summary": "Implemented fractional refill, validated and atomic token acquisition, backward-clock handling, and per-key LRU eviction. Before: limiter methods were stubs and all 3 tests errored; now: 8 tests pass across bucket and keyed limiter behavior.",
+            "title": "Implement token bucket rate limiter"
+          },
+          "review": {
+            "reviewed_head": "aa32eb103a1d6b410407d6379362082d36f9b9af",
+            "reviewer_agents": [
+              "agt_01M8GGPK0FM36REYTNBGN2QJBD"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GGPK0FM36REYTNBGN2QJBD",
+                "base": "eb8889007cc65f5509d2133a9c80a580c23b7443",
+                "findings": 0,
+                "head": "aa32eb103a1d6b410407d6379362082d36f9b9af",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GGPK0FM36REYTNBGN2QJBD"
+            ],
+            "risk": {
+              "level": "medium",
+              "why": "Reviewer confirmed contained in-memory behavior change and fresh-full buckets after LRU eviction."
+            },
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "aa32eb103a1d6b410407d6379362082d36f9b9af",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GGPK0FM36REYTNBGN2QJBD",
+                    "base": "eb8889007cc65f5509d2133a9c80a580c23b7443",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained in-memory behavior change in ratelimit.py with tests in test_ratelimit.py. It changes runtime rate-limiting behavior through a new public implementation. All 8 tests pass; independent review passed with no findings."
+          },
+          "tree": "df63b2e33d24e461e0623683a26b62235e187e4b"
+        },
+        "cost_usd": 0.01709402,
+        "started_at": "2026-11-28T07:23:27.192873920Z",
+        "finished_at": "2026-11-28T07:26:37.065585128Z"
+      }
+    ],
+    "spent_usd": 0.01709402,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GGK6JSZDPHB2NH5EDEYP74": {
+        "direct_usd": 0.010478980000000002,
+        "delegated_usd": 0.006615040000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8GGPK0FM36REYTNBGN2QJBD",
+            "parent": "agt_01M8GGK6PS7VK8174X1RWSHASP",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.006615040000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:23:26.614601843Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T07:23:26.647143161Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T07:23:26.614601843Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

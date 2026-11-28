@@ -1,0 +1,202 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GJ7K2S1RXSYG8SRKP037AE",
+      "repo": "repo_01M8GJ6QMSC8FF2MTVBPRW8FY1",
+      "pipeline": "direct",
+      "title": "Implement specified retry delay behavior and focused tests",
+      "brief": "Implement retry_budget.py according to SPEC.md while preserving the documented retry_delay API. Handle every specified validation rule, exhausted-attempt and exhausted-budget boundary, capped exponential backoff with efficient saturation for huge attempts, and an uncapped Retry-After minimum. Add focused standard-library tests covering the specified errors and boundary cases beyond existing basics. Keep the implementation pure, with no clock, sleep, randomness, network, or third-party dependencies. Run the focused tests and commit the work on the item branch.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GJ7K2S1RXSYG8SRKP037AE",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:52:04.601440864Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T07:52:04.618366385Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T07:52:04.601440864Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GJ7KSTGQZE9ZC223KQB8H3",
+        "summary": "Implemented and committed the specified retry delay behavior with strict input validation, capped exponential backoff that saturates efficiently, uncapped Retry-After minimums, attempt exhaustion, and strict budget exhaustion. Added focused standard-library boundary tests. Focused tests (8) and git diff --check pass. Delegated review was unavailable because this runtime exposes no reviewer/delegation tool; no review findings are available.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 358c8cfee8422137696c6ce49012c786c063587f on the run branch"
+      },
+      "created_at": "2026-11-28T07:52:03.929344118Z",
+      "updated_at": "2026-11-28T07:53:51.752154119Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GJ7KSTGQZE9ZC223KQB8H3",
+        "item": "qi_01M8GJ7K2S1RXSYG8SRKP037AE",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GJ7M0R1F34KHZ0V9MTX5DX",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/babc7c6f8e25e0c2c9dfee9d/.archon/data/worktrees/quality-retry-budget/qi_01M8GJ7K2S1RXSYG8SRKP037AE",
+        "branch": "archon/rkp037ae-implement-specified-retry-delay-behavior",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented and committed the specified retry delay behavior with strict input validation, capped exponential backoff that saturates efficiently, uncapped Retry-After minimums, attempt exhaustion, and strict budget exhaustion. Added focused standard-library boundary tests. Focused tests (8) and git diff --check pass. Delegated review was unavailable because this runtime exposes no reviewer/delegation tool; no review findings are available.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 358c8cfee8422137696c6ce49012c786c063587f on the run branch"
+        },
+        "cost_usd": 0.009163760000000002,
+        "started_at": "2026-11-28T07:52:04.835714654Z",
+        "finished_at": "2026-11-28T07:53:51.752154119Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GJ7M03Z98FQ6AT3771JNHH",
+        "run": "prun_01M8GJ7KSTGQZE9ZC223KQB8H3",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GJ7M1TXYZHMRNWN2PKYHSC",
+        "aether_task": "tsk_01M8GJ7M1TXYZHMRNWN2PKYHSD",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented and committed the specified retry delay behavior with strict input validation, capped exponential backoff that saturates efficiently, uncapped Retry-After minimums, attempt exhaustion, and strict budget exhaustion. Added focused standard-library boundary tests. Focused tests (8) and git diff --check pass. Delegated review was unavailable because this runtime exposes no reviewer/delegation tool; no review findings are available.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v test_retry_budget (8 passed)",
+            "git diff --check (passed)"
+          ],
+          "commit": "358c8cfee8422137696c6ce49012c786c063587f",
+          "evidence": [
+            {
+              "before": "Ran 3 tests; FAILED (errors=3).",
+              "caption": "Baseline focused test run on base commit: all three existing tests errored because retry_delay was unimplemented.",
+              "kind": "output"
+            },
+            {
+              "after": "Ran 8 tests in 0.000s\nOK",
+              "caption": "Focused tests on the committed change: all eight tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "358c8cfee8422137696c6ce49012c786c063587f",
+          "pr": {
+            "body": "Implemented validation of every numeric argument before stop conditions, efficient capped exponential backoff, an uncapped Retry-After floor, exhausted-attempt handling, and strict budget boundaries in retry_budget.py. Extended test_retry_budget.py with type/range validation and boundary cases, including huge attempts. Assumption: the repository has no additional contributor guidance or configured lint/build tooling; the standard-library unittest suite is the applicable check. Delegated review could not be started because no reviewer/delegation tool is available in this runtime.",
+            "summary": "Implemented the retry delay contract and focused boundary coverage. Before: retry_delay raised NotImplementedError and the three existing tests failed. Now: all eight focused tests pass.",
+            "title": "Implement bounded retry delay behavior"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change to retry_budget.py behind its existing function API, with focused tests in test_retry_budget.py. All eight focused tests and git diff --check passed. No persistence, concurrency, security, dependency, or public API changes."
+          },
+          "tree": "9179143d91dd6bde6dcb04c4c557a1279247f776"
+        },
+        "cost_usd": 0.009163760000000002,
+        "started_at": "2026-11-28T07:52:04.867575031Z",
+        "finished_at": "2026-11-28T07:53:51.502448821Z"
+      }
+    ],
+    "spent_usd": 0.009163760000000002,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:52:04.601440864Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T07:52:04.618366385Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T07:52:04.601440864Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

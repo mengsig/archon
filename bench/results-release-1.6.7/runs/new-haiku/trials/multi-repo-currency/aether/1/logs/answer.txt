@@ -1,0 +1,36 @@
+Added currency support to both repos and committed each on main.
+
+ledger (commit b48f83e): an optional 4th TSV column carries the ISO 4217 code (exactly three uppercase ASCII letters). A 3-field line defaults to USD. The CSV header is now date,account,amount_cents,currency. A bad code prints "line N: bad currency ..." to stderr and exits 2; other input errors still exit 1. parse_line now returns a ParseError enum (Malformed / BadCurrency) so main can pick the exit status. cargo test: 9 passed. The binary's exit codes and stderr are covered by integration tests.
+
+reports (commit d243077): totals are grouped by (account, currency), sorted by account then currency, with header account,currency,total_cents. A CSV without a currency column counts as USD. A bad or empty code prints "error: line N: ..." to stderr and exits 2. python3 -m unittest: 5 passed. The ledger-to-reports pipeline was checked end to end.
+
+READMEs in both repos are updated. Both repos are clean.
+
+Choices I made, for the user to redirect:
+- Currency fields are trimmed like the other fields, so "EUR " is accepted.
+- An empty fourth column (e.g. a trailing tab) is a bad currency and exits 2, not a default to USD.
+- Validation checks the shape only, not membership in the ISO 4217 list.
+- The commits use the configured mengsig identity and have no Co-Authored-By trailer, per the CLAUDE.md attribution rule.
+- The baseline already fails cargo fmt --check. I did not reformat unrelated code.
+
+Both repos now handle currency, and each change is committed on `main`. `cargo test` passes in `ledger` (9 tests) and `python3 -m unittest` passes in `reports` (5 tests). I also ran a ledger-to-reports pipeline end to end and got the expected totals.
+
+**ledger** (commit `b48f83e`)
+- An optional fourth TSV column holds the currency. A line without it defaults to `USD`. The header is now `date,account,amount_cents,currency`.
+- A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- `parse_line` now returns a `ParseError` enum so `main` can choose the exit status.
+- Integration tests run the binary and check both exit codes and the line number on stderr.
+
+**reports** (commit `d243077`)
+- Totals are grouped by account and currency, sorted by account then currency. The header is `account,currency,total_cents`.
+- A CSV without a `currency` column counts as `USD`.
+- A bad or empty code prints `error: line N: ...` to stderr and exits 2.
+
+Both READMEs are updated.
+
+Choices you may want to change:
+- Currency fields are trimmed like the other fields, so `EUR ` is accepted.
+- An empty fourth column, such as a trailing tab, is an error (exit 2), not a silent `USD`.
+- Validation checks the shape only (three uppercase ASCII letters), not membership in the ISO 4217 list.
+- The commits use the configured `mengsig` identity with no Co-Authored-By trailer. Your CLAUDE.md says not to add Claude attribution, and that takes precedence over the attribution reminder.
+- The baseline already fails `cargo fmt --check`. I did not reformat unrelated code.

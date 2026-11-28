@@ -1,0 +1,513 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GHQMJ9FVRZJ586W1NBAQZS",
+      "repo": "repo_01M8GHPX2P15EE5151YY68A7NT",
+      "pipeline": "adaptive",
+      "title": "Implement ledger.py per SPEC.md (atomic, thread-safe Ledger)",
+      "brief": "Operator request (authenticated, verbatim): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nRepository files: SPEC.md (the authoritative spec), ledger.py (stubs raising NotImplementedError: Ledger.__init__, transfer, snapshot; MAX_BALANCE = 2**63 - 1), test_ledger.py (two basic tests: transfer and insufficient funds).\n\nGoal: implement ledger.py exactly per SPEC.md, keep the API (Ledger(balances), transfer(source, destination, amount) -> bool, snapshot() -> dict, MAX_BALANCE), and add focused unittest tests in test_ledger.py covering every specified error and boundary case and the concurrency guarantees. Use the standard library only. Tests must not use external services, wall-clock timing, or random inputs.\n\nKey spec points:\n- Construction: a non-dict input, invalid account names (must be nonempty strings), or invalid balances (built-in int in [0, MAX_BALANCE]; booleans are not ints for this API) raise ValueError. Empty ledgers are allowed. Copy the input; neither it nor returned snapshots may alias internal mutable state. Transfers cannot create accounts.\n- Amount must be a built-in int in [1, MAX_BALANCE] else ValueError; validate it before looking up accounts. Either unknown account raises KeyError.\n- transfer returns False for insufficient source funds or destination overflow; every failure leaves balances unchanged. Success returns True, debits and credits exactly the amount, preserves the total.\n- Transfer to the same account: returns True iff the account has sufficient funds and never changes it (even at MAX_BALANCE); still validate amount and account first.\n- Thread safety: all calls on one ledger are linearizable across threads; source checks, overflow checks, and both writes are one indivisible operation; snapshots never see a half transfer; opposite transfers must not deadlock (e.g. a consistent lock ordering or a single ledger lock).\n\nAcceptance criteria: every spec rule above has a test; all tests pass with `python -m unittest` in the repository; functions stay under 60 lines with meaningful assertions at boundaries; no changes outside ledger.py and test_ledger.py. Commit the work locally on the item's branch (repository ships local; do not push).",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GHQMJ9FVRZJ586W1NBAQZS",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:43:21.346379249Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T07:43:21.346379249Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T07:43:21.346379249Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:concurrency",
+          "domain:security",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:concurrency",
+              "domain:security",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "Concurrency: linearizable transfers, snapshots that never see a half transfer, and deadlock-free opposite transfers need careful locking design; high is the ceiling here."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "cancelled",
+        "reason": "archon-bench: trial timeout"
+      },
+      "created_at": "2026-11-28T07:43:21.161442846Z",
+      "updated_at": "2026-11-28T08:03:02.829046822Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GHQMSK2G5CNBM297H02X19",
+        "item": "qi_01M8GHQMJ9FVRZJ586W1NBAQZS",
+        "pipeline": "adaptive",
+        "shipped": false,
+        "aether_run": "run_01M8GHQQSDP3FPNRR2MMH139VM",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/58e4f16765a94d69cdd018cc/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GHQMJ9FVRZJ586W1NBAQZS",
+        "branch": "archon/w1nbaqzs-implement-ledger-py-per-spec-md-atomic-t",
+        "state": {
+          "state": "cancelled",
+          "reason": "archon-bench: trial timeout"
+        },
+        "cost_usd": 0.38916194,
+        "started_at": "2026-11-28T07:43:21.706297963Z",
+        "finished_at": "2026-11-28T08:03:02.829046822Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY",
+        "run": "prun_01M8GHQMSK2G5CNBM297H02X19",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "high",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+        "aether_task": "tsk_01M8GHQQTZTB942FNGC903YXN0",
+        "state": {
+          "state": "cancelled"
+        },
+        "verdict": null,
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins high",
+        "summary": "pipeline run prun_01M8GHQMSK2G5CNBM297H02X19 finished",
+        "structured": {
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:1": {
+                "blocking": false,
+                "description": "Concurrency tests use JOIN_TIMEOUT_S and a Barrier timeout as wall-clock hang detection. SPEC.md says tests use no wall-clock calculations. at test_ledger.py (remedy: Optionally document that the timeouts are hang guards, not timing assertions, or drop the Barrier timeout.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:1",
+                "resolved_in": null
+              },
+              "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:2": {
+                "blocking": false,
+                "description": "_move's invariant checks are bare assert statements. They are stripped under python -O. at ledger.py (remedy: Keep as is, or convert to explicit checks if the invariants must hold in optimized runs.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:2",
+                "resolved_in": null
+              },
+              "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:3": {
+                "blocking": false,
+                "description": "_copy_balances uses isinstance(balances, dict), so dict subclasses are accepted. SPEC.md says 'a dict'. at ledger.py (remedy: Use type(balances) is dict if strict dict-only is intended. Otherwise leave as is.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:3",
+                "resolved_in": null
+              },
+              "agt_01M8GHTR9MRG25X3D1EH9E9DPW:1": {
+                "blocking": true,
+                "description": "ConcurrencyTests pass on four deliberately broken ledger variants under default CPython scheduling (0/60 runs each): no lock at all; check and write split across lock releases (oversell); debit and credit in separate lock sections (half-transfer visible to snapshot); per-account locks taken in argument order (opposite-transfer deadlock). With sys.setswitchinterval(1e-6) forced in the class, detect",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTR9MRG25X3D1EH9E9DPW:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTR9MRG25X3D1EH9E9DPW:2": {
+                "blocking": false,
+                "description": "_run_threads joins each thread with a full JOIN_TIMEOUT_S, sequentially, so worst-case hang time is about N_threads x 5 s per test. The deadlock mutant run took about 20 s for two failing tests. at test_ledger.py (remedy: Use one shared deadline (time.monotonic) across all joins in _run_threads, so a hang costs about 5 s per test.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTR9MRG25X3D1EH9E9DPW:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTR9MRG25X3D1EH9E9DPW:3": {
+                "blocking": false,
+                "description": "Non-threaded tests have no timeout. A same-thread re-acquisition of the non-reentrant lock hangs the whole suite until an outer timeout instead of failing; this was observed with a nested-lock variant that hung in SameAccountTests. The real ledger does not do this: the same-account branch runs inside the single lock acquisition. at test_ledger.py (remedy: Keep the outer CI/test timeout. Optionally",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTR9MRG25X3D1EH9E9DPW:3",
+                "resolved_in": null
+              },
+              "agt_01M8GHTR9MRG25X3D1EH9E9DPW:4": {
+                "blocking": false,
+                "description": "An untracked __pycache__/ directory with ledger.cpython-314.pyc appeared in the worktree at 11:45, before my runs. My runs had dont_write_bytecode=True and I did not delete it. at __pycache__/ (remedy: Delete __pycache__/ before any commit, and do not add it.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTR9MRG25X3D1EH9E9DPW:4",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:1": {
+                "blocking": true,
+                "description": "No test asserts MAX_BALANCE == 2**63 - 1, the value SPEC.md defines. Every boundary test uses the constant symbolically (MAX_BALANCE, MAX_BALANCE + 1), so changing the constant to another value would still pass the suite. at test_ledger.py (remedy: Add a ConstructionTests case: self.assertEqual(MAX_BALANCE, 2**63 - 1).)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:2": {
+                "blocking": false,
+                "description": "The concurrency tests do not detect a removed lock. A mutant with no lock in transfer() passed all runs: default switch interval, sys.setswitchinterval(1e-6), and 5000 attempts per thread. A split critical section (lock released between debit and credit) was caught 0/5 at the default interval and 4/5 at the tight interval. at test_ledger.py (remedy: Force interleaving deterministically, for exampl",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:3": {
+                "blocking": false,
+                "description": "JOIN_TIMEOUT_S and the Barrier(timeout=...) use wall-clock timeouts. They are hang guards and never change the outcome of a correct run, but the acceptance criteria say no wall-clock timing. at test_ledger.py (remedy: Keep as a hang guard and note it in the test module, or document the exception to the no-wall-clock rule.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:3",
+                "resolved_in": null
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:4": {
+                "blocking": false,
+                "description": "Internal invariants in _move() are bare assert statements, which python -O strips. transfer() has no boundary assertion of its own. Validation in _copy_balances() uses raise, which is correct. at ledger.py (remedy: Optionally convert the post-condition asserts into explicit checks, or accept them as internal invariants and say so.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:4",
+                "resolved_in": null
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:5": {
+                "blocking": false,
+                "description": "SnapshotTests.test_snapshot_reflects_later_transfers asserts that an earlier snapshot is point-in-time and unchanged, not that it reflects later transfers. The name is misleading. at test_ledger.py (remedy: Rename to something like test_snapshot_is_point_in_time.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:5",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GHTZ15PK5W950J3NGMTEVD:6": {
+                "blocking": false,
+                "description": "An untracked __pycache__/ledger.cpython-314.pyc appeared in the worktree during review (mtime 11:45:25, after the first listing showed none). It is not in the commit diff. My test run set PYTHONDONTWRITEBYTECODE=1, so I cannot attribute it. at __pycache__/ledger.cpython-314.pyc (remedy: Delete the directory before merge and make sure it is not committed.)",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GHTZ15PK5W950J3NGMTEVD:6",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                }
+              },
+              "agt_01M8GJDVS8VNA7WBT7383G7KCK:1": {
+                "blocking": true,
+                "description": "No test pins the SPEC rule that balances and amounts must be built-in integers. A mutant using isinstance(x, int) with bool excluded passes all 36 tests and accepts an int subclass: Ledger({'a': MyInt(5)}) works and transfer(..., MyInt(1)) returns True. This predates 45e1fed and is not introduced by 72f7564. at test_ledger.py (remedy: Add an int-subclass case (class _MyInt(int)) to ConstructionTes",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GJDVS8VNA7WBT7383G7KCK:1",
+                "resolved_in": null
+              },
+              "agt_01M8GJDVS8VNA7WBT7383G7KCK:2": {
+                "blocking": false,
+                "description": "The wait test and both probe tests bind to the private attribute ledger._lock. An implementation that renames its lock attribute, or uses a different lock object, would fail or silently skip the probe even though its behaviour is correct. at test_ledger.py:266,282,291 (remedy: Document the coupling in one place, or give the tests a single helper that finds the lock. Optional.)",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GJDVS8VNA7WBT7383G7KCK:2",
+                "resolved_in": null
+              },
+              "agt_01M8GJDVS8VNA7WBT7383G7KCK:3": {
+                "blocking": false,
+                "description": "The 'still blocked' check uses a 0.2 s join (BLOCKED_PROBE_S), which is a wall-clock wait. A correct implementation always passes, since a thread blocked on a held lock stays alive. A non-blocking variant can false-pass if its thread has not run within 0.2 s under heavy load. at test_ledger.py:270 (remedy: Optional: drop this probe and rely on the deterministic probe tests, or keep it as a documen",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY"
+                },
+                "id": "agt_01M8GJDVS8VNA7WBT7383G7KCK:3",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "45e1fedbd9399587ad2f92804cfedbcc5fa0ac6d",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GHTJCPB5S1RQBXF0TVCR2W",
+                    "base": "94d86bf1eca789967cc0b6ad387f6293f6a8e89f",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:1",
+                      "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:2",
+                      "agt_01M8GHTJCPB5S1RQBXF0TVCR2W:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GHTR9MRG25X3D1EH9E9DPW",
+                    "base": "94d86bf1eca789967cc0b6ad387f6293f6a8e89f",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GHTR9MRG25X3D1EH9E9DPW:1",
+                      "agt_01M8GHTR9MRG25X3D1EH9E9DPW:2",
+                      "agt_01M8GHTR9MRG25X3D1EH9E9DPW:3",
+                      "agt_01M8GHTR9MRG25X3D1EH9E9DPW:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  },
+                  {
+                    "agent": "agt_01M8GHTZ15PK5W950J3NGMTEVD",
+                    "base": "94d86bf1eca789967cc0b6ad387f6293f6a8e89f",
+                    "finding_count": 6,
+                    "finding_ids": [
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:1",
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:2",
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:3",
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:4",
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:5",
+                      "agt_01M8GHTZ15PK5W950J3NGMTEVD:6"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "72f756424b7c74c808b49a08c31bd29c1062ec46",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GJDVS8VNA7WBT7383G7KCK",
+                    "base": "45e1fedbd9399587ad2f92804cfedbcc5fa0ac6d",
+                    "finding_count": 3,
+                    "finding_ids": [
+                      "agt_01M8GJDVS8VNA7WBT7383G7KCK:1",
+                      "agt_01M8GJDVS8VNA7WBT7383G7KCK:2",
+                      "agt_01M8GJDVS8VNA7WBT7383G7KCK:3"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "fail"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "cost_usd": 0.38916193999999993,
+        "started_at": "2026-11-28T07:43:24.026820363Z",
+        "finished_at": "2026-11-28T08:03:13.813202101Z"
+      }
+    ],
+    "spent_usd": 0.38916194,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GHQQBVKGM8BNWVHFCBZ2ZY": {
+        "direct_usd": 0.25531530999999996,
+        "delegated_usd": 0.13384663,
+        "agents": [
+          {
+            "agent": "agt_01M8GHTJCPB5S1RQBXF0TVCR2W",
+            "parent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.01320866
+          },
+          {
+            "agent": "agt_01M8GHTR9MRG25X3D1EH9E9DPW",
+            "parent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.03260061
+          },
+          {
+            "agent": "agt_01M8GHTZ15PK5W950J3NGMTEVD",
+            "parent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.0281728
+          },
+          {
+            "agent": "agt_01M8GJDVS8VNA7WBT7383G7KCK",
+            "parent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.03747716
+          },
+          {
+            "agent": "agt_01M8GJRWXB5WJARAZCM3HWTMMQ",
+            "parent": "agt_01M8GHQQTZTB942FNGC903YXMZ",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.0223874
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:43:21.346379249Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T07:43:21.346379249Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T07:43:21.346379249Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

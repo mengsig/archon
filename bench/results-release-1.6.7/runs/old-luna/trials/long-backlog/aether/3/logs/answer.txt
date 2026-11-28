@@ -1,0 +1,8 @@
+Implemented all four tickets, added coverage, and committed each separately:
+
+- TT-101 `7773823` — reject impossible due dates
+- TT-102 `f4b097d` — RFC 4180 CSV export
+- TT-103 `a60f4b3` — search query syntax
+- TT-104 `12609e8` — undo add, complete, and delete
+
+`python3 -m unittest discover -s tests -t .` passes: 9 tests. The working tree is clean.

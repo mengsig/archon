@@ -1,0 +1,52 @@
+Both changes are queued as one initiative, `ini_01M8GRMCMAJTQ9A3AW3CJMSH5R`, with the CSV format as the shared contract. Nothing has been built yet.
+
+- **`ledger`** (`qi_01M8GRMCMB1D5BWS64Q3C35D0T`): adds the optional fourth currency column, defaults to USD, and emits the new header. Malformed currency exits 2 with the line number on stderr; other input errors still exit 1.
+- **`reports`** (`qi_01M8GRMCMSVCV31W1Q9FAQWMPG`): totals per account and currency, sorted by account then currency, and still reads the old three-column CSV as USD. Malformed currency exits 2.
+
+Both items use the `direct` pipeline with standard review, and the repositories ship locally, so each gets a commit on a local branch and nothing is pushed. Both members must update their tests and READMEs. They do not depend on each other, so they build in parallel against the contract. I'll report when each finishes.
+
+Done: ledger: add per-transaction currency column. ledger: per-transaction currency column implemented and committed locally as 6117174 on archon/q3c35d0t-ledger-add-per-transaction-currency-colu (base 3bc0641). Not pushed. Output header is now date,account,amount_cents,currency, and every row carries a currency. A 3-column input line defaults to USD. A 4-column line uses its fourth field, which must be exactly three ASCII uppercase letters. A malformed currency prints "line N: ..." to stderr and exits 2. Other input errors still exit 1. The README documents the format and exit codes. Checks: cargo test passes (9 tests: 4 in tests/cli.rs, 5 in tests/ledger.rs); cargo clippy --all-targets -- -D warnings is clean. cargo fmt --check reports only two pre-existing lines that I left unchanged. Review: one reviewer (agt_01M8GRPZKQKFDSZP24VM8192VA, claude-haiku-5-5, high effort) read the whole change and passed head 6117174 with no blocking findings. Its risk confirmation is high. Open non-blocking follow-ups: (1) the README should say that a trailing empty currency field exits 2 and that surrounding whitespace is trimmed, since the code trims before validating; (2) parse_line's return type and Entry's fields changed, which breaks library callers (CLI unaffected; crate version still 0.3.0); (3) the author's "11 tests" note in the commit reasoning was wrong, and the suite has 9. No processes were started, so nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRPZKQKFDSZP24VM8192VA)
+
+SHIPPED: commit 6117174c1e1240f2198d89dc2d6a62f61f7523b4 on the run branch
+Branch `archon/q3c35d0t-ledger-add-per-transaction-currency-colu` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/e5552beaa73c5b8e8dd128a5/ledger holds it (5 files changed, 187 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M8GRMCMB1D5BWS64Q3C35D0T`; land it in `main`: `archon merge qi_01M8GRMCMB1D5BWS64Q3C35D0T`.
+
+Freed 0.0 GiB of build output: item qi_01M8GRMCMB1D5BWS64Q3C35D0T ended and its cargo target directory went.
+
+Done: reports: total per account and currency. reports now totals per (account, currency). Output header is account,currency,total_cents, sorted by account then currency. A 4-column input (date,account,amount_cents,currency) is supported; the legacy 3-column input counts as USD. A malformed currency code (not exactly three uppercase ASCII letters, including a missing cell) prints an error to stderr and exits 2 with no stdout. Changes are in reports.py, test_reports.py and README.md, committed locally on archon/9faqwmpg-reports-total-per-account-and-currency as 0f0038f (tree 8167b6e). Nothing pushed.
+
+Checks: python3 -m unittest passes (3 tests: 4-column, legacy USD, malformed codes including a missing cell). Before/after output for legacy input is in the structured evidence.
+
+Review: first head 91ade23 failed on a missing currency cell raising TypeError (exit 1) and a test gap. Fixed in 62eeb60. Delta review passed at 62eeb60 and at 0f0038f, which is the head. The operator's findings list: items 1, 2, 4 and 7 are fixed; item 3 (misspelled 4-column header silently counts as USD) is a non-blocking follow-up; item 5 (short amount_cents row raises TypeError, exit 1) is pre-existing and a follow-up. Item 6 is the same as item 3.
+
+Left open: the two follow-ups above. Only the reviewers' stopped processes remain (claude -p and socat relays from completed reviewer agents, PIDs 13395, 13459, 19297, 19369, 22464, 22540). They were not started by me and stop when the run ends. Nothing else I started is still running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRNA793AY0PT3D4PHBKYNX), claude-code/claude-haiku-5-5 (agent agt_01M8GRQ4K9B7KFJK7X26C9JFCS), claude-code/claude-haiku-5-5 (agent agt_01M8GRR6RZM1ZQZPHNDA513JB8)
+
+SHIPPED: commit 0f0038fe77731ca930e97bed001eac8fb13d4fc5 on the run branch
+Branch `archon/9faqwmpg-reports-total-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/wor…
+
+Initiative finished; coordinated result queued.
+
+reports now totals per (account, currency). Output header is account,currency,total_cents, sorted by account then currency. A 4-column input (date,account,amount_cents,currency) is supported; the legacy 3-column input counts as USD. A malformed currency code (not exactly three uppercase ASCII letters, including a missing cell) prints an error to stderr and exits 2 with no stdout. Changes are in reports.py, test_reports.py and README.md, committed locally on archon/9faqwmpg-reports-total-per-account-and-currency as 0f0038f (tree 8167b6e). Nothing pushed.
+
+Checks: python3 -m unittest passes (3 tests: 4-column, legacy USD, malformed codes including a missing cell). Before/after output for legacy input is in the structured evidence.
+
+Review: first head 91ade23 failed on a missing currency cell raising TypeError (exit 1) and a test gap. Fixed in 62eeb60. Delta review passed at 62eeb60 and at 0f0038f, which is the head. The operator's findings list: items 1, 2, 4 and 7 are fixed; item 3 (misspelled 4-column header silently counts as USD) is a non-blocking follow-up; item 5 (short amount_cents row raises TypeError, exit 1) is pre-existing and a follow-up. Item 6 is the same as item 3.
+
+Left open: the two follow-ups above. Only the reviewers' stopped processes remain (claude -p and socat relays from completed reviewer agents, PIDs 13395, 13459, 19297, 19369, 22464, 22540). They were not started by me and stop when the run ends. Nothing else I started is still running.
+
+REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRNA793AY0PT3D4PHBKYNX), claude-code/claude-haiku-5-5 (agent agt_01M8GRQ4K9B7KFJK7X26C9JFCS), claude-code/claude-haiku-5-5 (agent agt_01M8GRR6RZM1ZQZPHNDA513JB8)
+
+SHIPPED: commit 0f0038fe77731ca930e97bed001eac8fb13d4fc5 on the run branch
+
+ledger: per-transaction currency column implemented and committed locally as 6117174 on archon/q3c35d0t-ledger-add-per-transaction-currency-colu (base 3bc0641). Not pushed. Output header is now date,account,amount_cents,currency, and every row carries a currency. A 3-column input line defaults to USD. A 4-column line uses its fourth field, which must be exactly three ASCII uppercase letters. A malformed currency prints "line N: ..." to stderr and exits 2. Other input errors still exit 1. The README documents the format and exit codes. Checks: cargo test passes (9 tests: 4 in tests/cli.rs, 5 in tests/ledger.rs); cargo clippy --all-targets -- -D warnings is clean. cargo fmt --check reports only two pre-existing lines that I left unchanged. Review: one reviewer (agt_01M8GRPZKQKFDSZP24VM8192VA, claude-haiku-5-5, high effort) read the whole change and passed head 6117174 with no blocking findings. Its risk confirmation is high. Open non-blocking follow-ups: (1) the README should say that a trailing empty currency field exits 2 and that surrounding whitespace is trimmed, since the code trims before validating; (2) parse_line's return type and Entry's fields changed, which breaks library callers (CLI unaffected; crate version still 0.3.0); (3) the author's "11 tests" note in the commit reasoning was wrong, and the suite has 9. No processes were started, so nothing is left running.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRPZKQKFDSZP24VM8192VA)
+
+SHIPPED: commit 6117174c1e1240f2198d89dc2d6a62f61f7523b4 on the run branch

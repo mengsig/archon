@@ -1,0 +1,14 @@
+Queued as `qi_01M8GP1JF99HGQ6GNM79RXSZTB` in `quality-retry-budget`. The mirror matches the repository’s base commit; the task includes implementation, focused tests for the specified edge cases, and a commit. I’ll report the outcome when the run finishes.
+
+Done: Implement specified retry delay budget behavior. Implemented the specified retry delay validation, capped backoff, Retry-After floor, and strict budget behavior; expanded coverage to 11 passing standard-library tests. Committed as 0127674f25cb2ccc03169bb6f59b2444a5586334 (tree 806049b40c11329803554b15359ea1197159c654). `python -m unittest -v` and `git diff --check` pass. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GP43GEYXJZ57FFWN9642X1)
+
+SHIPPED: commit 0127674f25cb2ccc03169bb6f59b2444a5586334 on the run branch
+Branch `archon/79rxsztb-implement-specified-retry-delay-budget-b` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8e49fab12a520ee3010f8a3c/quality-retry-budget holds it (2 files changed, 87 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GP1JF99HGQ6GNM79RXSZTB`; land it in `main`: `archon merge qi_01M8GP1JF99HGQ6GNM79RXSZTB`.
+
+Implemented the specified retry delay validation, capped backoff, Retry-After floor, and strict budget behavior; expanded coverage to 11 passing standard-library tests. Committed as 0127674f25cb2ccc03169bb6f59b2444a5586334 (tree 806049b40c11329803554b15359ea1197159c654). `python -m unittest -v` and `git diff --check` pass. Independent review passed with no findings. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GP43GEYXJZ57FFWN9642X1)
+
+SHIPPED: commit 0127674f25cb2ccc03169bb6f59b2444a5586334 on the run branch

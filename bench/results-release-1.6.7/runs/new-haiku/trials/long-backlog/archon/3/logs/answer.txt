@@ -1,0 +1,70 @@
+I've queued the four tickets from `BACKLOG.md` as separate items. They run in parallel, not yet started building in a sequence, and nothing has been built or committed so far.
+
+| Ticket | Item | Pipeline |
+|---|---|---|
+| TT-101: reject impossible due dates in `parse_due` | `qi_01M8GQH7RRX7063EXEDF8VVTWA` | `direct`, review `standard` |
+| TT-102: RFC 4180 CSV export in `to_csv` | `qi_01M8GQH9PKE4TACHF344QV73AZ` | `direct`, review `standard` |
+| TT-103: search query syntax in `search` | `qi_01M8GQHBQEX4N0268KXJ3AQCKH` | `direct`, review `standard` |
+| TT-104: `TaskStore.undo()` | `qi_01M8GQHE1HSFRZDJZ422QHYQVC` | `direct`, review `standard` |
+
+Each item carries its ticket's acceptance criteria verbatim, the standard-library-only rule, the test command, and a per-ticket commit that names the ticket. Each item also tells its agent to leave out Co-Authored-By and generated-by lines, following your CLAUDE.md over the attribution reminder.
+
+Choices I made that you should know about:
+
+- **Repository name.** There is no repository called `tasktracker` registered with Archon. The only one is `long-backlog`, which contains `BACKLOG.md`, `README.md`, `tasktracker/` and `tests/`. I queued against `long-backlog`.
+- **Branches.** The four tickets are independent, so each item starts from `main` on its own branch. Nothing is merged for you. Ship mode is local, so the commits stay on local branches. If you want them stacked on one branch instead, I can chain them with `depends_on`, which runs them one after another.
+- **Review.** I used `standard` review for all four. They change shared library code and data handling, but none involve security, concurrency or migrations.
+
+The items report back on their own when they finish. I'll tell you what failed or was blocked, and summarise the outcome once all four have finished.
+
+Done: TT-102: RFC 4180 CSV export in tasktracker.export.to_csv. TT-102 implemented on archon/44qv73az-tt-102-rfc-4180-csv-export-in-tasktracke as commit 65d581c (tree 451ad0c09aa015c504abf800d54f965a10759b97), on top of base b8e4f32. tasktracker/export.py now uses a small explicit formatter: fields with comma, double quote, CR or LF are quoted with quotes doubled; every line, header included, ends CRLF. Tests are in tests/test_export.py (10 cases covering each acceptance point). Full check: python3 -m unittest discover -s tests -t . gives 14 tests OK. Before the change a title with a comma broke its row. Independent reviewer agt_01M8GQJGAEVQG08FPSZ10MX1Q1 passed the head with one non-blocking note: the id int assert goes beyond the ticket. Nothing left open; no servers were started. Untracked __pycache__ directories were left uncommitted.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQJGAEVQG08FPSZ10MX1Q1)
+
+SHIPPED: commit 65d581c1371924e67edb2bca0a12d07a6f3316b3 on the run branch
+Branch `archon/44qv73az-tt-102-rfc-4180-csv-export-in-tasktracke` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/7f11dea349088a9ab5c91dd4/long-backlog holds it (2 files changed, 77 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GQH9PKE4TACHF344QV73AZ`; land it in `main`: `archon merge qi_01M8GQH9PKE4TACHF344QV73AZ`.
+
+Done: TT-103: Search query syntax in tasktracker.search.search. TT-103 is implemented and committed as aa74521 (tree 3cef082aca404429c0f864b383ea121f6b536b3f) on archon/xj3aqckh-tt-103-search-query-syntax-in-tasktracke, on top of b8e4f32. The change adds the query language to tasktracker.search: whitespace-split terms with quoted phrases, AND semantics, case-insensitive title matching, tag:NAME and status:open|done, and QueryError for unknown fields, unknown statuses, empty tag names and unterminated quotes. Blank queries match everything in input order. Checks: python3 -m unittest discover -s tests -t . gives 22 tests OK (4 existing, 18 new), and the 4 existing tests passed before the change. Review: one read-only reviewer on aa74521 passed with no blocking findings. Non-blocking follow-ups, not fixed: a quoted tag value such as tag:"work stuff" is treated as a title phrase and matches nothing; an empty phrase "" matches every task; no tests yet for uppercase field names (TAG:, STATUS:) or quoted tag values. Nothing is left running. Review: pass (agt_01M8GQJZZ5QDTHJGDN6T04KJFP).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQJZZ5QDTHJGDN6T04KJFP)
+
+SHIPPED: commit aa74521aa742ef47ac05b8db3cab20e1018325fc on the run branch
+Branch `archon/xj3aqckh-tt-103-search-query-syntax-in-tasktracke` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/7f11dea349088a9ab5c91dd4/long-backlog holds it (2 files changed, 160 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GQHBQEX4N0268KXJ3AQCKH`; land it in `main`: `archon merge qi_01M8GQHBQEX4N0268KXJ3AQCKH`.
+
+Done: TT-104: Undo for TaskStore (add, complete, delete). TT-104 implemented and committed as a947f51 on archon/22qhyqvc-tt-104-undo-for-taskstore-add-complete-d (not pushed). TaskStore now keeps a LIFO _history of add, complete and delete records; undo() reverts the most recent one: add removes the task, complete restores the previous status, delete restores a deepcopy snapshot under the same id. Ids are not reused, failed operations are not recorded, and an empty history raises NothingToUndo (defined in tasktracker/store.py). Tests are in new tests/test_undo.py (12 cases covering each acceptance point, LIFO across mixed kinds, exact restore, aliasing, id non-reuse, failed ops). Full check `python3 -m unittest discover -s tests -t .` on the final head: 16 tests OK (baseline was 4). Tree 95d19dece98d0a700167d9bf0e6a49d893ee23. Review: reviewer agt_01M8GQK69NMQ948A2KJ824HQT6 passed the head with no blocking findings; one non-blocking note: after undoing a delete, store.get returns a new object, not the one originally returned, which the ticket does not require. Nothing left open for TT-104; TT-101 to TT-103 untouched. No services started by me.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQK69NMQ948A2KJ824HQT6)
+
+SHIPPED: commit a947f5142941b6e7f412389af577298e3befec09 on the run branch
+Branch `archon/22qhyqvc-tt-104-undo-for-taskstore-add-complete-d` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/7f11dea349088a9ab5c91dd4/long-backlog holds it (2 files changed, 162 insertions(+)). Review: `archon diff qi_01M8GQHE1HSFRZDJZ422QHYQVC`; land it in `main`: `archon merge qi_01M8GQHE1HSFRZDJZ422QHYQVC`.
+
+Done: TT-101: Reject impossible due dates in tasktracker.dates.parse_due. TT-101 is implemented and committed on d8baf9c (tree 75b3827ab7dc70a302905496701aec1614735d57), unchanged in this repair attempt. The full check `python3 -m unittest discover -s tests -t .` gives 13 tests, OK, exit 0. One whole-change reviewer (agt_01M8GQMGMDQ8467CTPRY347PCD, claude-code/claude-haiku-5-5, medium) passed the branch head with no blocking findings. Its three non-blocking follow-ups are carried forward unchanged: parse_due has one assert where the house rule asks for two, the \d regexes accept non-ASCII digits (pre-existing), and the 2026-02-30 clamp-to-raise change is intended and should be noted in release notes. Risk is medium. Nothing is pushed. The reviewer's claude process had already exited, so nothing is left running from this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQMGMDQ8467CTPRY347PCD)
+
+SHIPPED: commit d8baf9cf49a28a586c06bad142dddf6411e969ef on the run branch
+Branch `archon/df8vvtwa-tt-101-reject-impossible-due-dates-in-ta` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/7f11dea349088a9ab5c91dd4/long-backlog holds it (2 files changed, 83 insertions(+), 9 deletions(-)). Review: `archon diff qi_01M8GQH7RRX7063EXEDF8VVTWA`; land it in `main`: `archon merge qi_01M8GQH7RRX7063EXEDF8VVTWA`.
+
+TT-104 implemented and committed as a947f51 on archon/22qhyqvc-tt-104-undo-for-taskstore-add-complete-d (not pushed). TaskStore now keeps a LIFO _history of add, complete and delete records; undo() reverts the most recent one: add removes the task, complete restores the previous status, delete restores a deepcopy snapshot under the same id. Ids are not reused, failed operations are not recorded, and an empty history raises NothingToUndo (defined in tasktracker/store.py). Tests are in new tests/test_undo.py (12 cases covering each acceptance point, LIFO across mixed kinds, exact restore, aliasing, id non-reuse, failed ops). Full check `python3 -m unittest discover -s tests -t .` on the final head: 16 tests OK (baseline was 4). Tree 95d19dece98d0a700167d9bf0e6a49d893ee23. Review: reviewer agt_01M8GQK69NMQ948A2KJ824HQT6 passed the head with no blocking findings; one non-blocking note: after undoing a delete, store.get returns a new object, not the one originally returned, which the ticket does not require. Nothing left open for TT-104; TT-101 to TT-103 untouched. No services started by me.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQK69NMQ948A2KJ824HQT6)
+
+SHIPPED: commit a947f5142941b6e7f412389af577298e3befec09 on the run branch
+
+TT-103 is implemented and committed as aa74521 (tree 3cef082aca404429c0f864b383ea121f6b536b3f) on archon/xj3aqckh-tt-103-search-query-syntax-in-tasktracke, on top of b8e4f32. The change adds the query language to tasktracker.search: whitespace-split terms with quoted phrases, AND semantics, case-insensitive title matching, tag:NAME and status:open|done, and QueryError for unknown fields, unknown statuses, empty tag names and unterminated quotes. Blank queries match everything in input order. Checks: python3 -m unittest discover -s tests -t . gives 22 tests OK (4 existing, 18 new), and the 4 existing tests passed before the change. Review: one read-only reviewer on aa74521 passed with no blocking findings. Non-blocking follow-ups, not fixed: a quoted tag value such as tag:"work stuff" is treated as a title phrase and matches nothing; an empty phrase "" matches every task; no tests yet for uppercase field names (TAG:, STATUS:) or quoted tag values. Nothing is left running. Review: pass (agt_01M8GQJZZ5QDTHJGDN6T04KJFP).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQJZZ5QDTHJGDN6T04KJFP)
+
+SHIPPED: commit aa74521aa742ef47ac05b8db3cab20e1018325fc on the run branch
+
+TT-102 implemented on archon/44qv73az-tt-102-rfc-4180-csv-export-in-tasktracke as commit 65d581c (tree 451ad0c09aa015c504abf800d54f965a10759b97), on top of base b8e4f32. tasktracker/export.py now uses a small explicit formatter: fields with comma, double quote, CR or LF are quoted with quotes doubled; every line, header included, ends CRLF. Tests are in tests/test_export.py (10 cases covering each acceptance point). Full check: python3 -m unittest discover -s tests -t . gives 14 tests OK. Before the change a title with a comma broke its row. Independent reviewer agt_01M8GQJGAEVQG08FPSZ10MX1Q1 passed the head with one non-blocking note: the id int assert goes beyond the ticket. Nothing left open; no servers were started. Untracked __pycache__ directories were left uncommitted.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQJGAEVQG08FPSZ10MX1Q1)
+
+SHIPPED: commit 65d581c1371924e67edb2bca0a12d07a6f3316b3 on the run branch
+
+TT-101 is implemented and committed on d8baf9c (tree 75b3827ab7dc70a302905496701aec1614735d57), unchanged in this repair attempt. The full check `python3 -m unittest discover -s tests -t .` gives 13 tests, OK, exit 0. One whole-change reviewer (agt_01M8GQMGMDQ8467CTPRY347PCD, claude-code/claude-haiku-5-5, medium) passed the branch head with no blocking findings. Its three non-blocking follow-ups are carried forward unchanged: parse_due has one assert where the house rule asks for two, the \d regexes accept non-ASCII digits (pre-existing), and the 2026-02-30 clamp-to-raise change is intended and should be noted in release notes. Risk is medium. Nothing is pushed. The reviewer's claude process had already exited, so nothing is left running from this stage.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQMGMDQ8467CTPRY347PCD)
+
+SHIPPED: commit d8baf9cf49a28a586c06bad142dddf6411e969ef on the run branch

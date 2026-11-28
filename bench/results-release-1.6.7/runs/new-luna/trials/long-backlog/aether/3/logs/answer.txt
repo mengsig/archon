@@ -1,0 +1,10 @@
+Implemented TT-101 through TT-104, with tests for each. The full suite passed: `python3 -m unittest discover -s tests -t .` (12 tests).
+
+Each ticket has its own commit:
+
+- TT-101 `bd0dbde` — reject impossible due dates
+- TT-102 `8f4e0a1` — RFC 4180 CSV export
+- TT-103 `3152f4d` — search query syntax
+- TT-104 `f87bb58` — undo history
+
+The working tree is clean.

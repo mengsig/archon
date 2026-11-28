@@ -1,0 +1,3 @@
+Fixed the off-by-one boundary in [window.py](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/4bfe2475e406e24f3d0912c0/fix-off-by-one/window.py). `python3 -m unittest` passes all 3 tests, and the working tree is clean.
+
+Commit: `b9772d4` — `Fix sliding window end boundary`

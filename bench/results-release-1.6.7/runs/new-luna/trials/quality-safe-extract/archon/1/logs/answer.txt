@@ -1,0 +1,14 @@
+Queued as **`qi_01M8GJE70SAXRTHXXTEXVQ2HPF`** in the `adaptive` pipeline with strict review. It will implement the spec, add focused boundary and error tests, and commit the work.
+
+Done: Implement safe extraction per SPEC.md. Implemented safe extraction and regression coverage in safe_extract.py and test_safe_extract.py. Before: both baseline tests failed on the unimplemented stub; now 17 tests pass, covering full-batch validation, path/root and symlink conflicts, no mutation on validation errors, byte/order fidelity, and visible I/O failures. Commits 28a4986 and c8c4fd6; whole-change and fix-delta reviews passed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJJV7ZA05W6A3Y7QB6YV5J), codex/gpt-6-luna (agent agt_01M8GJJV5VC4TNG1C79SQMM8S7), codex/gpt-6-luna (agent agt_01M8GJJV3S36YDPMDS68VTCHAJ), codex/gpt-6-luna (agent agt_01M8GJPC816R77NVQASW91RA44)
+
+SHIPPED: commit c8c4fd611586bac3c6f778b6f89180a339636ab5 on the run branch
+Branch `archon/exvq2hpf-implement-safe-extraction-per-spec-md` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/2ac013693867559d5e1bf7b0/quality-safe-extract holds it (2 files changed, 233 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GJE70SAXRTHXXTEXVQ2HPF`; land it in `main`: `archon merge qi_01M8GJE70SAXRTHXXTEXVQ2HPF`.
+
+Implemented safe extraction and regression coverage in safe_extract.py and test_safe_extract.py. Before: both baseline tests failed on the unimplemented stub; now 17 tests pass, covering full-batch validation, path/root and symlink conflicts, no mutation on validation errors, byte/order fidelity, and visible I/O failures. Commits 28a4986 and c8c4fd6; whole-change and fix-delta reviews passed.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJJV7ZA05W6A3Y7QB6YV5J), codex/gpt-6-luna (agent agt_01M8GJJV5VC4TNG1C79SQMM8S7), codex/gpt-6-luna (agent agt_01M8GJJV3S36YDPMDS68VTCHAJ), codex/gpt-6-luna (agent agt_01M8GJPC816R77NVQASW91RA44)
+
+SHIPPED: commit c8c4fd611586bac3c6f778b6f89180a339636ab5 on the run branch

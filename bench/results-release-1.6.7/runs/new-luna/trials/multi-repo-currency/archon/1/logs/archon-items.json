@@ -1,0 +1,387 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GHCGPNM8S2FYFRDBY2Y47F",
+      "repo": "repo_01M8GHBME53TEYDWW102YNW0AB",
+      "pipeline": "direct",
+      "title": "Total reports by account and currency",
+      "brief": "Implement the reports side of the shared currency contract: parse ledger CSV with a currency column and total amount_cents by account and currency; retain compatibility with legacy CSV lacking currency by treating all rows as USD; reject malformed currency codes (exactly three uppercase ASCII letters) with an error on stderr and exit 2; output CSV header account,currency,total_cents, sorted by account then currency. Add or update tests, keep existing python3 -m unittest passing, update the README, and commit the change in this repository.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GHCGPNM8S2FYFRDBY2Y47F",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-28T07:37:16.760087758Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-28T07:37:16.760087758Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GHCFSR7R06XPPZBD8JPYPH",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GHCGR4XWP7Q5VCBRQ5Q7V1",
+        "summary": "Added currency-aware report aggregation with legacy CSV defaulting to USD, strict currency validation, tests, and README updates. `python3 -m unittest` passed (4 tests) and `git diff --check` passed on commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 (tree b64d5f3d36f8067c588ff117a02bf18600f73396). Working tree is clean.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 on the run branch"
+      },
+      "created_at": "2026-11-28T07:37:15.832593553Z",
+      "updated_at": "2026-11-28T07:39:03.566652753Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GHCGR4XWP7Q5VCBRQ5Q7V1",
+        "item": "qi_01M8GHCGPNM8S2FYFRDBY2Y47F",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GHCH31B3WV0FB0RHH3HM6S",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/31c66f55b75df80c6c7f8ca9/.archon/data/worktrees/reports/qi_01M8GHCGPNM8S2FYFRDBY2Y47F",
+        "branch": "archon/dby2y47f-total-reports-by-account-and-currency",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added currency-aware report aggregation with legacy CSV defaulting to USD, strict currency validation, tests, and README updates. `python3 -m unittest` passed (4 tests) and `git diff --check` passed on commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 (tree b64d5f3d36f8067c588ff117a02bf18600f73396). Working tree is clean.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 on the run branch"
+        },
+        "cost_usd": 0.007968720000000002,
+        "started_at": "2026-11-28T07:37:17.081418940Z",
+        "finished_at": "2026-11-28T07:39:03.566652753Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GHCH1YBXV796M2BJPDWEMB",
+        "run": "prun_01M8GHCGR4XWP7Q5VCBRQ5Q7V1",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GHCH43V02QD072VCYPG5XV",
+        "aether_task": "tsk_01M8GHCH43YZS9AAZVDR7VQ08Z",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "Added currency-aware report aggregation with legacy CSV defaulting to USD, strict currency validation, tests, and README updates. `python3 -m unittest` passed (4 tests) and `git diff --check` passed on commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 (tree b64d5f3d36f8067c588ff117a02bf18600f73396). Working tree is clean.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest",
+            "git diff --check"
+          ],
+          "commit": "2ae521890696ed2c94fd5a5fd5733dbdeda56d09",
+          "evidence": [
+            {
+              "caption": "Before: legacy input produced account-only totals.",
+              "kind": "output",
+              "text": "account,total_cents\ngroceries,-5500\nrent,-120000"
+            },
+            {
+              "caption": "After: amounts are grouped and sorted by account then currency.",
+              "kind": "output",
+              "text": "account,currency,total_cents\ntravel,EUR,150\ntravel,USD,200"
+            },
+            {
+              "caption": "Malformed lowercase currency reports its input line and fails with exit status 2; covered by unittest.",
+              "kind": "output",
+              "text": "reports: line 2: invalid currency code 'eur'"
+            }
+          ],
+          "local_commit": "2ae521890696ed2c94fd5a5fd5733dbdeda56d09",
+          "pr": {
+            "body": "Updated reports.py to validate three uppercase ASCII currency letters and aggregate amount_cents by (account, currency). Legacy CSV without a currency field defaults to USD. Updated test_reports.py and README.md. Checks: python3 -m unittest (4 tests, pass); git diff --check (pass). Assumption: blank currency values in a currency column count as absent and default to USD.",
+            "summary": "Reports now total amounts by account and currency with deterministic sorting. Legacy CSV defaults to USD; malformed currency codes are rejected. Before: account-only totals; now: account/currency totals.",
+            "title": "Add currency-aware report totals"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior and output schema change in reports.py, with focused coverage for currency grouping, sorting, legacy compatibility, and malformed codes. No persistence, security, concurrency, or locking changes."
+          },
+          "tree": "b64d5f3d36f8067c588ff117a02bf18600f73396"
+        },
+        "cost_usd": 0.007968720000000002,
+        "started_at": "2026-11-28T07:37:17.118433177Z",
+        "finished_at": "2026-11-28T07:39:02.332126573Z"
+      }
+    ],
+    "spent_usd": 0.007968720000000002,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-28T07:37:16.760087758Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-28T07:37:16.760087758Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GHCFSS9EB7K6F0DTYR3V3Z",
+      "repo": "repo_01M8GHBMD65Z1VTZ04KBVB97S9",
+      "pipeline": "direct",
+      "title": "Add optional currency column to ledger TSV/CSV",
+      "brief": "Implement the ledger side of the shared currency contract: parse an optional fourth TSV column as an ISO 4217 code constrained to exactly three uppercase ASCII letters, default missing currency to USD, emit CSV header date,account,amount_cents,currency and currency per row, and report malformed currency with input line number to stderr and exit 2 while preserving exit 1 for other input errors. Add or update tests, keep existing cargo test passing, update the README, and commit the change in this repository.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GHCFSS9EB7K6F0DTYR3V3Z",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:37:16.752346474Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T07:37:16.779020254Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T07:37:16.752346474Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GHCFSR7R06XPPZBD8JPYPH",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GHCGQW4M6CC1J1ENBPFWHE",
+        "summary": "Added optional currency parsing and currency-aware CSV output, defaulting omitted currency to USD and reporting malformed currency with a line number and exit 2. Updated README and tests. Final checks passed: cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Commit 2d855dbda9f53492b0f89e7e9b8af025278447e3; tree 744ea9a82655b841f76c4b6fd1596cae5cc0d562.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 2d855dbda9f53492b0f89e7e9b8af025278447e3 on the run branch"
+      },
+      "created_at": "2026-11-28T07:37:15.832593553Z",
+      "updated_at": "2026-11-28T07:39:57.763320509Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GHCGQW4M6CC1J1ENBPFWHE",
+        "item": "qi_01M8GHCFSS9EB7K6F0DTYR3V3Z",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GHCH2W40SBTH8TX7MQ9BRY",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/31c66f55b75df80c6c7f8ca9/.archon/data/worktrees/ledger/qi_01M8GHCFSS9EB7K6F0DTYR3V3Z",
+        "branch": "archon/dtyr3v3z-add-optional-currency-column-to-ledger-t",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added optional currency parsing and currency-aware CSV output, defaulting omitted currency to USD and reporting malformed currency with a line number and exit 2. Updated README and tests. Final checks passed: cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Commit 2d855dbda9f53492b0f89e7e9b8af025278447e3; tree 744ea9a82655b841f76c4b6fd1596cae5cc0d562.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 2d855dbda9f53492b0f89e7e9b8af025278447e3 on the run branch"
+        },
+        "cost_usd": 0.011933880000000004,
+        "started_at": "2026-11-28T07:37:17.058070804Z",
+        "finished_at": "2026-11-28T07:39:57.763320509Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GHCH1PQGR9DZBBH4CP7F2P",
+        "run": "prun_01M8GHCGQW4M6CC1J1ENBPFWHE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GHCH3VP8RW7CHDKHZ8ZHS8",
+        "aether_task": "tsk_01M8GHCH3WCFGJS833N06ZG5MY",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Added optional currency parsing and currency-aware CSV output, defaulting omitted currency to USD and reporting malformed currency with a line number and exit 2. Updated README and tests. Final checks passed: cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Commit 2d855dbda9f53492b0f89e7e9b8af025278447e3; tree 744ea9a82655b841f76c4b6fd1596cae5cc0d562.",
+        "structured": {
+          "checks": [
+            "cargo fmt --check",
+            "cargo test",
+            "cargo clippy --all-targets -- -D warnings",
+            "git diff --check"
+          ],
+          "commit": "2d855dbda9f53492b0f89e7e9b8af025278447e3",
+          "evidence": [
+            {
+              "after": "date,account,amount_cents,currency\n2026-03-01,groceries,-4510,USD\n2026-03-02,travel,1200,EUR\n",
+              "before": "date,account,amount_cents\n2026-03-01,groceries,-4510",
+              "caption": "Before and after exporter output: old three-column CSV versus four-column output with USD default and explicit EUR.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "2d855dbda9f53492b0f89e7e9b8af025278447e3",
+          "pr": {
+            "body": "Implemented optional fourth TSV field validation for exactly three uppercase ASCII letters, USD defaulting, and per-row currency output. Updated README and integration tests for supported/rejected codes and CLI exit statuses. Checks on final commit: cargo fmt --check, cargo test (3 integration tests passed), cargo clippy --all-targets -- -D warnings, and git diff --check. Assumption: input fields retain existing whitespace-trimming behavior.",
+            "summary": "Added optional currency parsing and currency-aware CSV output. Ledger now defaults omitted currency to USD and rejects malformed currency with a line-numbered stderr error and exit 2. Before: three-column CSV; now: four-column date,account,amount_cents,currency.",
+            "title": "Add optional currency to ledger CSV"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained CLI and CSV format behavior change in src/lib.rs and src/main.rs, with matching documentation and regression coverage. It implements the requested shared output contract. Full tests, formatting, and clippy passed; no security, concurrency, or persistence changes."
+          },
+          "tree": "744ea9a82655b841f76c4b6fd1596cae5cc0d562"
+        },
+        "cost_usd": 0.011933880000000004,
+        "started_at": "2026-11-28T07:37:17.110469087Z",
+        "finished_at": "2026-11-28T07:39:57.510941037Z"
+      }
+    ],
+    "spent_usd": 0.011933880000000004,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:37:16.752346474Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T07:37:16.779020254Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T07:37:16.752346474Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

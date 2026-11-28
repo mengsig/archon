@@ -1,0 +1,37 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md (stdlib only) and added focused tests. All 34 tests pass (`python3 -m unittest`). Committed as c5d1a75 "Implement validated safe extraction" on main, author mengsig.
+
+Behaviour: the whole batch is validated before any write. Checks cover the list-only batch type (tuples, generators and iterators are rejected unconsumed), root (str or Path, existing real directory, not a symlink), entry shape (2-tuple), names, bytes data, batch duplicates and file/directory collisions in either order, and on-disk targets below root (no symlinks, dangling links included; ancestors must be directories; target must be absent). Files are written with exclusive 'xb' mode so existing content is never overwritten. Empty batches return [] after root validation. Names are returned in input order.
+
+Choices I made where the spec was silent:
+- Entries must be tuples; lists of length 2 are rejected.
+- Names that cannot be UTF-8 encoded (e.g. lone surrogates) are rejected up front.
+- An empty-string root is rejected.
+- A non-directory ancestor, including a root below a file, is reported as ValueError rather than an OSError.
+- Any unexpected OSError (e.g. PermissionError) propagates unchanged.
+
+Not covered: a failure mid-write leaves a partial batch, which the spec places out of scope. Case-insensitive filesystems are not handled specially.
+
+Commit omits the Co-Authored-By trailer because the repo's CLAUDE.md says not to add Claude attribution to commits, and that takes precedence over the reminder.
+
+`extract(entries, root)` is implemented in `safe_extract.py` per `SPEC.md`, using only the standard library. The 34 tests pass (`python3 -m unittest`), and the work is committed as `c5d1a75` on `main` under mengsig.
+
+**What it does:** the whole batch is validated before anything is written. The checks cover:
+- **Batch type:** only a `list` is accepted. Tuples, generators and iterators are rejected without being consumed.
+- **Root:** must be a `str` or `Path` naming an existing real directory, not a symlink.
+- **Entries:** each must be a 2-tuple with a `str` name and `bytes` data.
+- **Names:** nonempty, relative, no leading `/`, backslash, colon or NUL, and no empty, `.` or `..` components. Names are not normalized or decoded.
+- **Batch conflicts:** duplicates, and file/directory collisions in either order.
+- **On disk:** no symlinks below root (dangling ones included), ancestors must be directories, and the target must be absent.
+
+Files are created with exclusive mode, so existing content is never overwritten. Empty batches return `[]` after root validation. Names are returned in input order.
+
+**Choices where the spec was silent:**
+- Lists of length 2 are rejected as entries; only tuples are accepted.
+- Names that can't be UTF-8 encoded, such as lone surrogates, are rejected up front.
+- An empty-string root is rejected.
+- A root below a file is a `ValueError`, not an `OSError`.
+- Unexpected OS errors such as `PermissionError` propagate unchanged.
+
+**Not covered:** a failure partway through writing leaves a partial batch, which the spec places out of scope. Case-insensitive filesystems are not handled specially.
+
+**Commit message:** I omitted the Co-Authored-By trailer. The repo's CLAUDE.md says not to add Claude attribution to commits, and that takes precedence over the attribution reminder.

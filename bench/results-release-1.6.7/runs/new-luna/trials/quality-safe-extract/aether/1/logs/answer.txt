@@ -1,0 +1,3 @@
+Implemented `extract` with full batch and path validation before filesystem changes. It rejects malformed input, unsafe paths, duplicates and file/directory collisions, symlinks, and existing targets; valid entries are written as exact bytes without overwriting.
+
+Added focused validation tests. All 10 tests pass, `git diff --check` is clean, and the work is committed as `5d07eb8` (`Implement safe file extraction validation`).

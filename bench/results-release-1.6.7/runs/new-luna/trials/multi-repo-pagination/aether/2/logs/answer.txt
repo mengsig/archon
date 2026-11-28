@@ -1,0 +1,6 @@
+Implemented cursor pagination and committed both repositories.
+
+- API commit: `d8b3a47` — default limit 20, supports limits 1–100, returns `next_cursor`, and responds with 400 for invalid pagination parameters.
+- Client commit: `7c2334e` — `listItems` follows cursors until `next_cursor` is null or absent.
+- Updated both READMEs and added pagination regression tests.
+- Verification passed: `python3 -m unittest` (5 tests) and `npm test` (4 tests). Both worktrees are clean.

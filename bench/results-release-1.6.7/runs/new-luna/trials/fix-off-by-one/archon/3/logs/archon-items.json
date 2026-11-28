@@ -1,0 +1,198 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GRW53N25KMD8VFW0Y0FC1P",
+      "repo": "repo_01M8GRTXJ9S131FSATDKVQ71VZ",
+      "pipeline": "direct",
+      "title": "Fix sliding window boundary",
+      "brief": "Fix the bug in `window.py` so `python3 -m unittest` passes, without changing tests. Make `sliding_windows(items, size)` correct for every valid input to its existing sequence API: reject non-positive sizes with ValueError; include every contiguous window of the requested positive size exactly once in order, including the final window and the whole-sequence window; return an empty list when size exceeds the sequence length. Do not narrow correctness to the current tests. Run `python3 -m unittest` and any useful additional boundary checks, inspect the final diff, then commit the fix. Do not modify tests.",
+      "priority": "high",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GRW53N25KMD8VFW0Y0FC1P",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:48:09.931361099Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T09:48:09.965172089Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T09:48:09.931361099Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GRW5XAQ2F8ZRAPR0JFAZVQ",
+        "summary": "Fixed sliding_windows to include every valid start position, including the final and whole-sequence windows. python3 -m unittest passes (3 tests); additional boundary checks pass (6 valid cases, 2 invalid sizes). Committed as 8b2a1c649a747a44bb0fbf819e63f78611e28748; no remaining work.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 8b2a1c649a747a44bb0fbf819e63f78611e28748 on the run branch"
+      },
+      "created_at": "2026-11-28T09:48:09.205603777Z",
+      "updated_at": "2026-11-28T09:49:02.187971464Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GRW5XAQ2F8ZRAPR0JFAZVQ",
+        "item": "qi_01M8GRW53N25KMD8VFW0Y0FC1P",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GRW64DQG7YN2ADKE6BP0C4",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/ea6a23351a01ba1909bb61fc/.archon/data/worktrees/fix-off-by-one/qi_01M8GRW53N25KMD8VFW0Y0FC1P",
+        "branch": "archon/w0y0fc1p-fix-sliding-window-boundary",
+        "state": {
+          "state": "succeeded",
+          "summary": "Fixed sliding_windows to include every valid start position, including the final and whole-sequence windows. python3 -m unittest passes (3 tests); additional boundary checks pass (6 valid cases, 2 invalid sizes). Committed as 8b2a1c649a747a44bb0fbf819e63f78611e28748; no remaining work.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 8b2a1c649a747a44bb0fbf819e63f78611e28748 on the run branch"
+        },
+        "cost_usd": 0.0041846800000000005,
+        "started_at": "2026-11-28T09:48:10.217972640Z",
+        "finished_at": "2026-11-28T09:49:02.187971464Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GRW63Z3XVDHGKJDRY8Q8JN",
+        "run": "prun_01M8GRW5XAQ2F8ZRAPR0JFAZVQ",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GRW657PS7WSG5ERD8FGM6Q",
+        "aether_task": "tsk_01M8GRW657PS7WSG5ERD8FGM6R",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Fixed sliding_windows to include every valid start position, including the final and whole-sequence windows. python3 -m unittest passes (3 tests); additional boundary checks pass (6 valid cases, 2 invalid sizes). Committed as 8b2a1c649a747a44bb0fbf819e63f78611e28748; no remaining work.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest",
+            "boundary checks: 6 valid cases and 2 invalid sizes",
+            "git diff --check"
+          ],
+          "commit": "8b2a1c649a747a44bb0fbf819e63f78611e28748",
+          "evidence": [
+            {
+              "caption": "Tests and boundary checks after the fix.",
+              "kind": "output",
+              "text": "Ran 3 tests in 0.000s\nOK\nboundary checks passed: 6 valid cases and 2 invalid sizes"
+            }
+          ],
+          "local_commit": "8b2a1c649a747a44bb0fbf819e63f78611e28748",
+          "pr": {
+            "body": "Updated the range boundary in window.py. Oversized windows and empty sequences return an empty list, and existing ValueError handling for nonpositive sizes remains. Verified with python3 -m unittest (3 tests), additional boundary checks (6 valid cases, 2 invalid sizes), and git diff --check.",
+            "summary": "Sliding windows now include every contiguous window, including the final and whole-sequence windows. Before: the last valid window was omitted; now all valid windows are returned once in order.",
+            "title": "Fix sliding window boundary"
+          },
+          "risk": {
+            "level": "low",
+            "why": "One isolated off-by-one correction in window.py, with no API changes. The behavior is covered by the unittest suite and additional boundary cases."
+          },
+          "tree": "86fa2570260a2e082a57848f99c47518a99b485c"
+        },
+        "cost_usd": 0.0041846800000000005,
+        "started_at": "2026-11-28T09:48:10.238831318Z",
+        "finished_at": "2026-11-28T09:49:01.909088239Z"
+      }
+    ],
+    "spent_usd": 0.0041846800000000005,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:48:09.931361099Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T09:48:09.965172089Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T09:48:09.931361099Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

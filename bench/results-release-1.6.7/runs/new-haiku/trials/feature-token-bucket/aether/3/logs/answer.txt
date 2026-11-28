@@ -1,0 +1,13 @@
+The rate limiter is implemented in `ratelimit.py` per `SPEC.md`, committed as `80a3430` on `main`, and all 16 tests pass (the 3 original plus 13 new ones covering the spec's edge cases). It uses only the standard library.
+
+**What's in the commit**
+- **`TokenBucket`**: rejects non-positive `capacity`/`refill_per_sec` and out-of-range `n` with `ValueError`, before any state changes. Tokens refill continuously and cap at `capacity`. `try_acquire`, `available`, and `wait_time` all share one refill path.
+- **`KeyedLimiter`**: one bucket per key, kept in an `OrderedDict` so the least recently used key is evicted first. Both `try_acquire` and `wait_time` count as a use. Validation runs before a bucket is created, so an invalid call can't evict another key.
+- **`test_ratelimit.py`**: added tests for validation, refill capping, fractional tokens, the clock-going-backwards rule, `wait_time` not consuming tokens, acquiring exactly at the `wait_time` mark, LRU eviction, and `len()`.
+
+**Choices I made that you may want to check**
+- **Clock going backwards:** the bucket remembers the latest clock reading it has seen and refills only from that point. The spec's wording ("until the clock passes the latest time the bucket has already seen") implies this, and a test covers it.
+- **Float tolerance:** I added a `1e-9` token tolerance in the "enough tokens?" check. Without it, a caller who sleeps exactly `wait_time()` can still be refused by floating-point rounding. The tolerance is applied consistently, so `wait_time` returns 0 exactly when `try_acquire` would succeed. The spec doesn't mention this, so say if you'd rather have strict comparison.
+- **Commit message:** I omitted the `Co-Authored-By` line from the attribution reminder. The project CLAUDE.md says not to add Claude attribution to commits, and it takes precedence over that reminder.
+
+I also removed the `__pycache__` directory left by the test run; the working tree is clean.

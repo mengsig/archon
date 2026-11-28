@@ -1,0 +1,8 @@
+Implemented and committed both repositories. Both working trees are clean.
+
+- `ledger`: optional TSV currency defaults to USD; CSV includes `currency`; malformed codes report the line and exit 2.
+- `reports`: totals are grouped and sorted by account and currency; legacy CSV without a currency column defaults to USD; malformed codes exit 2.
+
+Verification passed: `cargo test`, `python3 -m unittest`, and direct `ledger` CLI checks.
+
+Commits: `ledger` `0828d5a`; `reports` `7e40997`.

@@ -1,0 +1,152 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GNZYY2Y0TRCR6EWYDRGVSS",
+      "repo": "repo_01M8GNZBK9YJVBSCHBPHTBYTGR",
+      "pipeline": "direct",
+      "title": "Implement ledger.py to SPEC.md",
+      "brief": "Implement `ledger.py` according to the repository's `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests beyond the existing basic coverage. Use only the Python standard library. Run the relevant tests and commit the completed work. Treat SPEC.md as the source of truth; do not change its contract. Acceptance: implementation conforms to every specified behavior and error/boundary case, focused tests cover those cases and pass, and the change is committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GNZYY2Y0TRCR6EWYDRGVSS",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-28T08:57:48.919784405Z"
+              },
+              "effort": {
+                "source": "learned",
+                "by": "daemon",
+                "at": "2026-11-28T08:57:48.919784405Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged: the learned route's effort"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "cancelled",
+        "reason": "archon-bench: trial timeout"
+      },
+      "created_at": "2026-11-28T08:57:48.226544503Z",
+      "updated_at": "2026-11-28T09:17:30.316080405Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GNZZP26F6KWWTT2F2DEB21",
+        "item": "qi_01M8GNZYY2Y0TRCR6EWYDRGVSS",
+        "pipeline": "direct",
+        "shipped": false,
+        "aether_run": "run_01M8GNZZYDPQCAH06K9WWVE4XA",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/b45e95a9461128e26ec0df8b/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GNZYY2Y0TRCR6EWYDRGVSS",
+        "branch": "archon/wydrgvss-implement-ledger-py-to-spec-md",
+        "state": {
+          "state": "cancelled",
+          "reason": "archon-bench: trial timeout"
+        },
+        "cost_usd": 0.0023768,
+        "started_at": "2026-11-28T08:57:49.180377244Z",
+        "finished_at": "2026-11-28T09:17:30.316080405Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GNZZXMN96MS8B19N83JRJ9",
+        "run": "prun_01M8GNZZP26F6KWWTT2F2DEB21",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium"
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GNZZZ5H47NVG8F8D0P1SZK",
+        "aether_task": "tsk_01M8GNZZZ5H47NVG8F8D0P1SZM",
+        "state": {
+          "state": "cancelled"
+        },
+        "verdict": null,
+        "risk_class": "ordinary",
+        "effort_source": "learned",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged: the learned route's effort",
+        "summary": "pipeline run prun_01M8GNZZP26F6KWWTT2F2DEB21 finished",
+        "structured": null,
+        "cost_usd": 0.0023768,
+        "started_at": "2026-11-28T08:57:49.236038605Z",
+        "finished_at": "2026-11-28T09:17:30.428900910Z"
+      }
+    ],
+    "spent_usd": 0.0023768,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-28T08:57:48.919784405Z"
+          },
+          "effort": {
+            "source": "learned",
+            "by": "daemon",
+            "at": "2026-11-28T08:57:48.919784405Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

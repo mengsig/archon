@@ -1,0 +1,110 @@
+diff --git a/retry_budget.py b/retry_budget.py
+index 07b3b5e..ac81d15 100644
+--- a/retry_budget.py
++++ b/retry_budget.py
+@@ -3,4 +3,46 @@
+ 
+ def retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000,
+                 base_ms=100, cap_ms=400, retry_after_ms=None):
+-    raise NotImplementedError
++    """Return the delay before another attempt, or ``None`` if none may start.
++
++    Values are integer milliseconds. ``attempt`` counts the initial attempt
++    and is the number of attempts that have already failed.
++    """
++    values = {
++        "attempt": (attempt, 1),
++        "elapsed_ms": (elapsed_ms, 0),
++        "max_attempts": (max_attempts, 1),
++        "budget_ms": (budget_ms, 0),
++        "base_ms": (base_ms, 0),
++        "cap_ms": (cap_ms, 0),
++    }
++    for name, (value, minimum) in values.items():
++        if type(value) is not int or value < minimum:
++            raise ValueError(f"{name} must be an integer >= {minimum}")
++    if retry_after_ms is not None and (
++        type(retry_after_ms) is not int or retry_after_ms < 0
++    ):
++        raise ValueError("retry_after_ms must be None or an integer >= 0")
++
++    if attempt >= max_attempts:
++        return None
++
++    if base_ms == 0 or cap_ms == 0:
++        delay = 0
++    elif base_ms >= cap_ms:
++        delay = cap_ms
++    else:
++        exponent = attempt - 1
++        # For a positive base, 2**exponent is greater than cap_ms once
++        # exponent reaches cap_ms.bit_length(). Avoid constructing that power.
++        if exponent >= cap_ms.bit_length():
++            delay = cap_ms
++        else:
++            delay = min(cap_ms, base_ms << exponent)
++
++    if retry_after_ms is not None:
++        delay = max(delay, retry_after_ms)
++
++    if elapsed_ms + delay >= budget_ms:
++        return None
++    return delay
+diff --git a/test_retry_budget.py b/test_retry_budget.py
+index f3df8dd..edd49c1 100644
+--- a/test_retry_budget.py
++++ b/test_retry_budget.py
+@@ -16,3 +16,53 @@ class RetryBasics(unittest.TestCase):
+     def test_retry_after(self):
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=250), 250)
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=25), 100)
++
++
++class RetryBoundaries(unittest.TestCase):
++    def test_validates_every_argument_before_exhaustion(self):
++        invalid = (
++            {"attempt": True},
++            {"elapsed_ms": 1.0},
++            {"max_attempts": False},
++            {"budget_ms": -1},
++            {"base_ms": -1},
++            {"cap_ms": -1},
++            {"retry_after_ms": -1},
++            {"retry_after_ms": True},
++        )
++        for kwargs in invalid:
++            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
++                retry_delay(**{"attempt": 4, "elapsed_ms": 0, **kwargs})
++
++    def test_rejects_invalid_positional_values(self):
++        for args in ((0, 0), (1, -1), (1.0, 0)):
++            with self.subTest(args=args), self.assertRaises(ValueError):
++                retry_delay(*args)
++
++    def test_attempt_above_limit_is_legal_but_exhausted(self):
++        self.assertIsNone(retry_delay(9, 0, max_attempts=4))
++
++    def test_retry_after_is_not_capped(self):
++        self.assertEqual(retry_delay(1, 0, retry_after_ms=900), 900)
++        self.assertIsNone(retry_delay(1, 0, budget_ms=900, retry_after_ms=900))
++
++    def test_next_attempt_must_start_strictly_before_budget(self):
++        self.assertIsNone(retry_delay(1, 900))
++        self.assertIsNone(retry_delay(1, 999, base_ms=1, cap_ms=1))
++        self.assertEqual(retry_delay(1, 998, base_ms=1, cap_ms=1), 1)
++        self.assertIsNone(retry_delay(1, 0, budget_ms=0, base_ms=0))
++
++    def test_zero_backoff_and_zero_cap(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=0), 0)
++        self.assertEqual(retry_delay(1, 0, base_ms=100, cap_ms=0), 0)
++
++    def test_huge_attempt_saturates_without_building_huge_power(self):
++        huge = 10**10000
++        self.assertEqual(
++            retry_delay(huge, 0, max_attempts=huge + 1, cap_ms=400),
++            400,
++        )
++
++    def test_large_cap_backoff_and_base_above_cap(self):
++        self.assertEqual(retry_delay(2, 0, base_ms=10**100, cap_ms=7), 7)
++        self.assertEqual(retry_delay(3, 0, base_ms=3, cap_ms=10**100), 12)

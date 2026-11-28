@@ -1,0 +1,8 @@
+Implemented all four tickets and added coverage. The requested unittest suite passes: **12 tests, OK**. Working tree is clean.
+
+Commits:
+
+- TT-101: `a011a83` — Fix due date validation
+- TT-102: `240481d` — Export RFC 4180 CSV
+- TT-103: `920a0bd` — Add task search query syntax
+- TT-104: `63ff567` — Add task store undo history

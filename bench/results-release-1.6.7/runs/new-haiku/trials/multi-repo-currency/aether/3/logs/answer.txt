@@ -1,0 +1,40 @@
+Added per-currency support to both repos and committed each as `mengsig`. Tests pass: `cargo test` in ledger (3 CLI + 6 unit) and `python3 -m unittest` in reports (5). Clippy is clean. A pipeline check through both tools produced the expected totals.
+
+ledger (commit b18ea88):
+- Lines take an optional fourth column, an ISO 4217 code. Missing means USD.
+- Header is `date,account,amount_cents,currency`; every row carries its currency.
+- A malformed code prints `line N: bad currency ...` and exits 2. Other input errors still exit 1. `parse_line` now returns a `LineError` enum with `exit_status()`.
+- README updated. New `tests/cli.rs` covers exit codes.
+
+reports (commit d15339d):
+- Totals are keyed by (account, currency). Output is `account,currency,total_cents`, sorted by account then currency.
+- CSV without a `currency` column counts as USD.
+- A malformed or missing currency prints `error: line N: ...` to stderr and exits 2.
+- README updated. Four new tests cover the new behaviour; the existing test still passes.
+
+Assumptions:
+- An empty fourth column (a trailing tab) is treated as a malformed code (exit 2), not as missing.
+- Currency fields are trimmed, like the other fields.
+- No Co-Authored-By trailer was added, because the project CLAUDE.md forbids attribution and takes precedence over the reminder.
+- Both work trees are clean; `ledger/target/` is gitignored.
+
+Both repositories now handle currency, and each change is committed (`ledger` b18ea88, `reports` d15339d). `cargo test` passes in `ledger` (9 tests), `python3 -m unittest` passes in `reports` (5 tests), and clippy is clean.
+
+**ledger**
+- Lines take an optional fourth column, the ISO 4217 code. A missing column means `USD`.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code prints `line N: bad currency ...` to stderr and exits 2. Other input errors still exit 1.
+- `parse_line` now returns a `LineError` enum so the exit status can be chosen per error. This changes the library's public signature.
+- A new `tests/cli.rs` checks the exit codes through the real binary.
+
+**reports**
+- Totals are keyed by account and currency. Output is `account,currency,total_cents`, sorted by account, then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed or missing currency prints `error: line N: ...` to stderr and exits 2.
+
+I ran the two tools together on a small sample. The totals came out as expected, and a lowercase code made `ledger` exit 2 with the line named.
+
+Assumptions you may want to check:
+- An empty fourth column (a trailing tab) counts as a malformed code and exits 2. I did not treat it as "missing".
+- Currency values are trimmed like the other fields.
+- The commits carry no Co-Authored-By trailer. The project CLAUDE.md forbids attribution, and I followed it over the session reminder.

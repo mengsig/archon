@@ -1,0 +1,9 @@
+## Critical — forged tokens are accepted
+
+- **File:** [src/tokens.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/dc55ef77b37ef7ee5197c440/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:27)
+- **Function:** `verify`
+- **What goes wrong:** `expected.startsWith(signature)` accepts any prefix of the valid HMAC, including an empty signature. An attacker can base64url-encode `{"user":"root","exp":4102444800000}` and pass the token `<encoded-payload>.`; verification accepts the forged claims because every string starts with the empty string. This can bypass session authentication.
+- **Severity:** Critical
+- **Fix:** Require a full-length signature and compare its bytes with the expected HMAC using a constant-time comparison such as `crypto.timingSafeEqual`. Reject malformed tokens before parsing the payload.
+
+No code was changed.

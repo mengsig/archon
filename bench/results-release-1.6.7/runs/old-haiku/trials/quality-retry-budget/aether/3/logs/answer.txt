@@ -1,0 +1,24 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests; committed as aa84cda on main. All 30 tests pass (python3 -m unittest test_retry_budget).
+
+Behavior:
+- All numeric args must be exact built-in int (bool, float, and int subclasses are rejected) with the spec minimums; invalid values raise ValueError. Validation runs before any early return.
+- attempt >= max_attempts returns None (max_attempts counts the initial attempt).
+- Backoff min(cap, base * 2**(attempt-1)) is computed without large powers: zero base/cap gives 0, base >= cap returns cap, and shifts >= cap.bit_length() return cap.
+- retry_after_ms is an uncapped floor: delay = max(backoff, retry_after).
+- Returns None when elapsed + delay >= budget; otherwise returns delay, including 0.
+
+Verification: a grid cross-check of _backoff against the naive formula (b, c in 0..69, attempt in 1..79) had 0 mismatches.
+
+Notes: The commit has no attribution lines, because the project CLAUDE.md forbids them and takes precedence over the attribution reminder. The commit uses the configured git user mengsig. __pycache__ was removed and not committed.
+
+I implemented `retry_delay` in `retry_budget.py` to match `SPEC.md`, added focused tests, and committed the work as `aa84cda` on `main`. All 30 tests pass.
+
+- **Validation:** every numeric argument must be an exact built-in `int`, so `bool`, `float`, and int subclasses are rejected. Values below each minimum raise `ValueError`. Validation runs before any early return.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`, and `max_attempts` counts the initial attempt.
+- **Backoff:** `min(cap, base * 2**(attempt-1))` is computed without building large powers. A zero base or cap gives 0, and a base at or above the cap gives the cap.
+- **Retry-After:** the server value is a floor that is not limited by the cap, so the delay is `max(backoff, retry_after_ms)`.
+- **Budget:** returns `None` when `elapsed_ms + delay >= budget_ms`, and otherwise returns the delay, including 0. The required wait is never shortened.
+
+I cross-checked the backoff against the naive formula over a grid of small base, cap, and attempt values, with no mismatches.
+
+The commit has no attribution lines. The project CLAUDE.md forbids them and takes precedence over the attribution reminder, so I followed CLAUDE.md. The commit uses your configured git identity.

@@ -1,0 +1,1 @@
+Fixed `sliding_windows` to include the final valid window. The unittest suite passes (3 tests), and the change is committed as `d1069d5` (`Fix sliding window endpoint`).

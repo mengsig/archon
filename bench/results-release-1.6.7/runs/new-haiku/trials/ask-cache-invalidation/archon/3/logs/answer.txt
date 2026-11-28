@@ -1,0 +1,28 @@
+**Root cause: `updatePrice` invalidates only the product cache entry. Category listings are cached separately for 600 seconds and are never invalidated, so they serve the old price until they expire.** This is from reading the code only. I did not run the tests or change anything.
+
+I read the mirror at `repos/ask-cache-invalidation` (HEAD `e2893f4`, package name `catalog-service`).
+
+**The code path**
+
+1. A merchant price change goes through `updatePrice` in `src/pricing.js:6-13`. It writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))` (line 11). That removes only `product:<sku>`.
+2. The product page calls `Catalog.product()` (`src/catalog.js:12-20`). It reads `product:<sku>`, which was just deleted, so it refetches from the store and shows the new price immediately.
+3. The category page calls `Catalog.listing()` (`src/catalog.js:22-33`). It reads `listing:<category>:<page>`, which is not touched. Each listing entry stores its own copies of `{sku, name, priceCents}` (line 29), so the old price is returned until the entry expires.
+4. The listing TTL is `LISTING_TTL_SECONDS: 600` (`src/config.js:7`), which is the roughly ten-minute window support is seeing.
+
+**Why it is this long**
+
+Nothing ever removes a listing entry early. `TtlCache` (`src/cache.js`) only expires entries by time, and there is no index from a SKU or category to the listing keys that contain it. The 600-second TTL was chosen because listings are expensive to build (`src/config.js:5-6`), so the stale copies live for the full TTL.
+
+**Why the test suite does not catch it**
+
+`test/catalog.test.js` checks that product pages update after `updatePrice` (lines 13-18), but has no test that reads `catalog.listing('tools')` after a price change.
+
+**Fix options**
+
+- **Recommended:** make `updatePrice` also invalidate the category's listing entries. It needs the product's category, which is available from `store.find(sku)` before the update. Then it must delete every page key `listing:<category>:<page>`, since a SKU can sit on any page. `TtlCache` has no prefix delete, so add one, or add a `Catalog.invalidateCategory(category)` that walks the pages. Add a test that calls `listing()`, updates the price, and expects the new price from `listing()`.
+- **Alternative:** stop caching listing rows by value. Cache only the sorted SKU order per category and read prices from the product cache or store at request time. This removes the staleness, at some extra read cost.
+- **Mitigation only:** lower `LISTING_TTL_SECONDS`. This shrinks the window but does not fix it.
+
+**Caveat on scope**
+
+`TtlCache` lives in process memory. If the storefront runs as several instances, `updatePrice` clears the cache only in the instance that handled the change. Product pages on other instances would then be stale for up to `PRODUCT_TTL_SECONDS` (3600 s). The operator's report implies a single process, so I did not treat this as the cause here. If production runs multiple instances, the fix needs a shared cache or a cross-instance invalidation signal.

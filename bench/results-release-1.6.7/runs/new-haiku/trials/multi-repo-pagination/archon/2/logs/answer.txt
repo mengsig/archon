@@ -1,0 +1,36 @@
+Both changes are queued as one initiative, `ini_01M8GN9R6TFV1VSYSWT731TNJH`, with a shared contract covering the `/items` parameters, the response shape, the 400 errors and the client's paging loop.
+
+- **API (`qi_01M8GN9R6TFV1VSYSWT731TNJJ`, inventory-api):** cursor pagination with `limit` and `cursor`, `next_cursor` in the body, and 400 responses for invalid input. Review is `strict` because this changes a public API. It also covers tests and the README.
+- **Client (`qi_01M8GN9RTQ9RM5XH87KRN5QCGC`, inventory-client):** `listItems` follows `next_cursor` until it is null or absent, and passes the cursor back unchanged. Review is `standard`. It also covers tests and the README.
+
+Both members run on the `direct` pipeline. The client does not wait for the API, since its tests use a fake transport. Both repositories ship `local`, so the work is committed on local branches and nothing is pushed. Each member's brief asks for `python3 -m unittest` (API) and `npm test` (client) to pass.
+
+I'll report back when the items finish. Merging is manual, and I have not merged anything.
+
+Done: API: cursor pagination for GET /items. Implemented cursor pagination for GET /items in inventory-api on archon/t731tnjj-api-cursor-pagination-for-get-items (not pushed). Head 5a0d8725dbfb11b88c93bf2b60c169eb99878703, tree 934245706d7d8d52fe21006a3036021c6728da71; base d743929. Changes: api.py parses limit (1..100, default 20) and cursor, returns {items, next_cursor}, 400 with error body for invalid or non-string values; test_api.py adds 9 tests (default page size, limit bounds, invalid limits, invalid cursors, repeated/non-string params, full walk, last-page null cursor, exact-fill boundary); README documents the parameters, response shape and the breaking default-size change. Checks: python3 -m unittest 11/11 OK on the final tree; py_compile OK. Before: GET /items returns all 57 items. After: first 20 with next_cursor. Review: 3 whole-change reviews plus one delta review. One blocking finding (non-string query values raised an exception) was fixed in 5a0d872 and verified. Risk: high, because the default page size changes what unparameterised GET /items returns. Open non-blocking follow-ups: a non-dict query container still raises (pre-existing); cursor is the raw item id, so it is not opaque in practice; leading-zero values longer than 18 characters are rejected; the inventory-client listItems change is a sibling item and is not part of this branch. Processes: none started by me are left running; reviewer agent processes (pids 3437102, 3438770, 3447049) are handed-off children that stop when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNBQBXM0KQHCXMETD0YR1W), claude-code/claude-haiku-5-5 (agent agt_01M8GNBXPATB2KMZ6DFCPVFK5Q), claude-code/claude-haiku-5-5 (agent agt_01M8GNC48T785BEHFV3C1MB4PC), claude-code/claude-haiku-5-5 (agent agt_01M8GNEP5NVNWYB4BS54YBAXPB)
+
+SHIPPED: commit 5a0d8725dbfb11b88c93bf2b60c169eb99878703 on the run branch
+Branch `archon/t731tnjj-api-cursor-pagination-for-get-items` in /home/mengsig/.local/shar…
+
+Done: Client: listItems follows next_cursor. listItems in client.js now returns every item, in order, by following next_cursor from GET /items. Cursor handling and failure rules are as described in the commit. npm test passes 12/12 on HEAD 79538e3. Review passed after one blocking fix.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNAXN2HN3FKXR8MCZP7HJE), claude-code/claude-haiku-5-5 (agent agt_01M8GNC75M3J1M9QH08DDKNSZP), claude-code/claude-haiku-5-5 (agent agt_01M8GNGP3KMF8W1Q0A2E1KBHEP)
+
+SHIPPED: commit 79538e35f251ead3910e61df6a71f985a8f13672 on the run branch
+Branch `archon/krn5qcgc-client-listitems-follows-next-cursor` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/25967087af3058e9885c85e7/inventory-client holds it (3 files changed, 113 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GN9RTQ9RM5XH87KRN5QCGC`; land it in `main`: `archon merge qi_01M8GN9RTQ9RM5XH87KRN5QCGC`.
+
+Initiative finished; coordinated result queued.
+
+listItems in client.js now returns every item, in order, by following next_cursor from GET /items. Cursor handling and failure rules are as described in the commit. npm test passes 12/12 on HEAD 79538e3. Review passed after one blocking fix.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNAXN2HN3FKXR8MCZP7HJE), claude-code/claude-haiku-5-5 (agent agt_01M8GNC75M3J1M9QH08DDKNSZP), claude-code/claude-haiku-5-5 (agent agt_01M8GNGP3KMF8W1Q0A2E1KBHEP)
+
+SHIPPED: commit 79538e35f251ead3910e61df6a71f985a8f13672 on the run branch
+
+Implemented cursor pagination for GET /items in inventory-api on archon/t731tnjj-api-cursor-pagination-for-get-items (not pushed). Head 5a0d8725dbfb11b88c93bf2b60c169eb99878703, tree 934245706d7d8d52fe21006a3036021c6728da71; base d743929. Changes: api.py parses limit (1..100, default 20) and cursor, returns {items, next_cursor}, 400 with error body for invalid or non-string values; test_api.py adds 9 tests (default page size, limit bounds, invalid limits, invalid cursors, repeated/non-string params, full walk, last-page null cursor, exact-fill boundary); README documents the parameters, response shape and the breaking default-size change. Checks: python3 -m unittest 11/11 OK on the final tree; py_compile OK. Before: GET /items returns all 57 items. After: first 20 with next_cursor. Review: 3 whole-change reviews plus one delta review. One blocking finding (non-string query values raised an exception) was fixed in 5a0d872 and verified. Risk: high, because the default page size changes what unparameterised GET /items returns. Open non-blocking follow-ups: a non-dict query container still raises (pre-existing); cursor is the raw item id, so it is not opaque in practice; leading-zero values longer than 18 characters are rejected; the inventory-client listItems change is a sibling item and is not part of this branch. Processes: none started by me are left running; reviewer agent processes (pids 3437102, 3438770, 3447049) are handed-off children that stop when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNBQBXM0KQHCXMETD0YR1W), claude-code/claude-haiku-5-5 (agent agt_01M8GNBXPATB2KMZ6DFCPVFK5Q), claude-code/claude-haiku-5-5 (agent agt_01M8GNC48T785BEHFV3C1MB4PC), claude-code/claude-haiku-5-5 (agent agt_01M8GNEP5NVNWYB4BS54YBAXPB)
+
+SHIPPED: commit 5a0d8725dbfb11b88c93bf2b60c169eb99878703 on the run branch

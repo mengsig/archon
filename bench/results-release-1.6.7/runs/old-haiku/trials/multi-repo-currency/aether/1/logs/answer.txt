@@ -1,0 +1,43 @@
+Both repos now handle per-row currency. Committed in each repo on main as mengsig, no attribution lines (CLAUDE.md forbids mentioning Claude Code; the reminder's Co-Authored-By line was left out for that reason).
+
+ledger (commit d487e51):
+- Lines take 3 or 4 tab fields. The fourth is the currency and defaults to USD when absent. Codes must be exactly three uppercase ASCII letters, trimmed.
+- Output header is `date,account,amount_cents,currency`, with the currency on every row.
+- parse_line now returns a ParseError enum. BadCurrency exits 2, everything else (field count, date, account, amount) exits 1. Both print `line N: ...` to stderr.
+- Tests: `cargo test` passes (5 unit tests in tests/ledger.rs, 3 CLI tests in new tests/cli.rs that check exit codes and stderr). Clippy is clean.
+
+reports (commit b3d1e0f):
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- A currency column is detected from the CSV header. Without one, rows count as USD (legacy CSV).
+- A malformed currency prints `line N: bad currency ...` (CSV line number) to stderr and exits 2, with no partial stdout.
+- Tests: `python3 -m unittest` passes (4 tests: sorting, multi-currency totals, legacy CSV, bad currency exit 2).
+- End-to-end check: the real ledger binary piped into reports.py produced the expected totals; a bad code gave exit 2 from both tools.
+
+READMEs updated in both repos.
+
+Choices I made that you may want to change:
+- A present but empty fourth column (`...\t`) is a malformed currency (exit 2), not "missing" (USD).
+- Currency is trimmed of surrounding whitespace, like the other fields.
+- Cargo.toml version is still 0.3.0. The CSV format changed, so you may want a bump.
+- I did not run rustfmt over the whole file; the two pre-existing unformatted functions are untouched.
+
+Both repos now handle a per-row currency, and each has a commit on `main`. Tests pass in both, and an end-to-end run of the real `ledger` binary piped into `reports.py` gave the expected totals.
+
+**ledger** (commit `d487e51`)
+- Lines take 3 or 4 tab fields. A missing fourth field defaults to `USD`. Codes must be exactly three uppercase ASCII letters.
+- The header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed currency exits 2. Other input errors still exit 1. Both print `line N: ...` to stderr.
+- `cargo test` passes: 5 unit tests in `tests/ledger.rs`, plus 3 new CLI tests in `tests/cli.rs` that check exit codes and stderr. Clippy is clean.
+
+**reports** (commit `b3d1e0f`)
+- Output is `account,currency,total_cents`, sorted by account, then currency.
+- CSV without a `currency` column counts as `USD`.
+- A malformed currency prints `line N: bad currency ...` to stderr and exits 2, with no partial output.
+- `python3 -m unittest` passes all 4 tests.
+
+READMEs are updated in both repos. Commits use the repo's configured `mengsig` identity with no attribution lines. I left out the Co-Authored-By line from the harness reminder because your CLAUDE.md says commits must not mention Claude.
+
+Choices you may want to change:
+- An empty fourth column (a trailing tab) is treated as a malformed currency (exit 2), not as "missing" (USD).
+- Currency values are trimmed of surrounding whitespace, like the other fields.
+- `Cargo.toml` is still at version 0.3.0. The CSV format changed, so you may want a bump.

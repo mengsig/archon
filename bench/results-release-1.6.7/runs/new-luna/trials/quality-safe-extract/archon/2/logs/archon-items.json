@@ -1,0 +1,396 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GQDN4DD51G5FX7FGMQVX14",
+      "repo": "repo_01M8GQC3VPQCP0RHG6YFPF1EHY",
+      "pipeline": "adaptive",
+      "title": "Implement safe_extract API and boundary tests",
+      "brief": "Implement `extract(entries, root) -> list[str]` exactly as specified in SPEC.md, preserving the documented API. Use only the Python standard library. Add focused tests beyond the existing basics covering every specified validation error and boundary case. Required behavior: entries must be an actual list (reject tuple/iterator/generator with ValueError without consuming or filesystem changes); entries must be valid (name str, data bytes, exactly a two-part tuple); names are nonempty relative POSIX paths and reject leading slash, backslash, colon, NUL, empty/dot/dot-dot components without normalization or decoding; percent signs remain legal; reject duplicate paths and file/directory prefix collisions in either order; root must be a string or pathlib.Path naming an existing directory and cannot itself be a symlink; reject any symlink at every existing component below root including dangling symlinks and target, any non-directory intermediate component, and any existing target; never overwrite/follow links. Validate the whole batch and root before creating anything. Invalid inputs/conflicts raise ValueError and leave root and outside filesystem unchanged. Empty list succeeds after root validation. Valid inputs create missing parents and write exact bytes, preserving input order in returned names. Unexpected I/O failures remain visible. The caller guarantees a stable filesystem; concurrent mutation and rollback after I/O errors are outside scope. Run the focused tests and any existing relevant test suite; commit the completed implementation and tests on the item branch. Do not modify the spec unless necessary; if ambiguous, follow its literal requirements and document the assumption in the completion report.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GQDN4DD51G5FX7FGMQVX14",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:22:46.162103484Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:22:46.162103484Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:22:46.162103484Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:concurrency",
+          "review:strict",
+          "scope:api"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:concurrency",
+              "review:strict",
+              "scope:api"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "Filesystem path validation is security-sensitive and the acceptance criteria cover symlink and collision boundaries."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GQDNSRXD7NPZ0VYGWDB2NC",
+        "summary": "Implemented safe_extract with full preflight and boundary tests in safe_extract.py and test_safe_extract.py, then fixed a reviewer-found list-subclass validation bypass by snapshotting validated entries. Verification passed: 14 unit tests, py_compile, and diff checks; working tree is clean. Three whole-change reviewers and one fix-delta reviewer completed; all blocking findings are resolved.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQKF276GWKA9AHJ6DPFKAM), codex/gpt-6-luna (agent agt_01M8GQKF60B9F0P3XDN2W2QSSZ), codex/gpt-6-luna (agent agt_01M8GQKF3Y0QAPAAM121TVZ4NJ), codex/gpt-6-luna (agent agt_01M8GQQXPG3DB3DWEHTX3RNABG)\n\nSHIPPED: commit 4613e3ac6f015953bd7c056f4223af29906392c4 on the run branch"
+      },
+      "created_at": "2026-11-28T09:22:45.517295905Z",
+      "updated_at": "2026-11-28T09:30:05.512928759Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GQDNSRXD7NPZ0VYGWDB2NC",
+        "item": "qi_01M8GQDN4DD51G5FX7FGMQVX14",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8GQDNZRQPY7WANKRT9K8ZZR",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d5e88454abb7f351a03c9ff0/.archon/data/worktrees/quality-safe-extract/qi_01M8GQDN4DD51G5FX7FGMQVX14",
+        "branch": "archon/fgmqvx14-implement-safe-extract-api-and-boundary",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented safe_extract with full preflight and boundary tests in safe_extract.py and test_safe_extract.py, then fixed a reviewer-found list-subclass validation bypass by snapshotting validated entries. Verification passed: 14 unit tests, py_compile, and diff checks; working tree is clean. Three whole-change reviewers and one fix-delta reviewer completed; all blocking findings are resolved.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GQKF276GWKA9AHJ6DPFKAM), codex/gpt-6-luna (agent agt_01M8GQKF60B9F0P3XDN2W2QSSZ), codex/gpt-6-luna (agent agt_01M8GQKF3Y0QAPAAM121TVZ4NJ), codex/gpt-6-luna (agent agt_01M8GQQXPG3DB3DWEHTX3RNABG)\n\nSHIPPED: commit 4613e3ac6f015953bd7c056f4223af29906392c4 on the run branch"
+        },
+        "cost_usd": 0.03777072,
+        "started_at": "2026-11-28T09:22:46.354341510Z",
+        "finished_at": "2026-11-28T09:30:05.512928759Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GQDNZ12WQ98J6CGXKN6CBK",
+        "run": "prun_01M8GQDNSRXD7NPZ0VYGWDB2NC",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "high",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GQDP1469552MG43NCAHHJV",
+        "aether_task": "tsk_01M8GQDP14W0B8F1BRPA1RZK0B",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins high",
+        "summary": "Implemented safe_extract with full preflight and boundary tests in safe_extract.py and test_safe_extract.py, then fixed a reviewer-found list-subclass validation bypass by snapshotting validated entries. Verification passed: 14 unit tests, py_compile, and diff checks; working tree is clean. Three whole-change reviewers and one fix-delta reviewer completed; all blocking findings are resolved.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — 14 tests passed",
+            "python -m py_compile safe_extract.py test_safe_extract.py — passed",
+            "git diff 003288cf6dfcc2c977ca35a700e724279b2ab4db..HEAD --check — passed"
+          ],
+          "commit": "4613e3ac6f015953bd7c056f4223af29906392c4",
+          "evidence": [
+            {
+              "after": "python -m unittest -v — Ran 14 tests; OK.",
+              "before": "safe_extract.py contained raise NotImplementedError; no extraction behavior was available.",
+              "caption": "The extraction API now passes the complete boundary suite.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "4613e3ac6f015953bd7c056f4223af29906392c4",
+          "pr": {
+            "body": "Implemented the API in safe_extract.py and added boundary coverage in test_safe_extract.py. Preflight validates names, batch collisions, root, and every existing destination component; validated entry pairs are snapshotted once and reused for checks and writes, preventing a list subclass from changing paths after validation. Verification on 4613e3ac6f015953bd7c056f4223af29906392c4: python -m unittest -v (14 passed), python -m py_compile safe_extract.py test_safe_extract.py (passed), and git diff 003288cf6dfcc2c977ca35a700e724279b2ab4db..HEAD --check (passed). No separate build or lint configuration exists. Three reviewers read the whole change from 6f60418e666c842cab1f23d8010c9d30374954e5 through 003288cf6dfcc2c977ca35a700e724279b2ab4db; two passed and one reported a blocking list-subclass validation bypass, which was fixed in 4613e3ac6f015953bd7c056f4223af29906392c4. A delta reviewer read 003288cf6dfcc2c977ca35a700e724279b2ab4db through 4613e3ac6f015953bd7c056f4223af29906392c4 and passed, confirming agt_01M8GQKF60B9F0P3XDN2W2QSSZ:1 resolved. No follow-up findings remain. Assumptions and limits follow SPEC.md: caller guarantees a stable filesystem, and rollback after unexpected I/O failures is outside scope.",
+            "summary": "Implemented safe regular-file extraction with complete batch and filesystem preflight. Before: extract was unimplemented; now invalid paths, conflicts, roots, and symlinks are rejected before writes, and valid bytes are written in input order.",
+            "title": "feat: implement safe extraction"
+          },
+          "review": {
+            "reviewed_head": "4613e3ac6f015953bd7c056f4223af29906392c4",
+            "reviewer_agents": [
+              "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+              "agt_01M8GQKF60B9F0P3XDN2W2QSSZ",
+              "agt_01M8GQKF3Y0QAPAAM121TVZ4NJ",
+              "agt_01M8GQQXPG3DB3DWEHTX3RNABG"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+                "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                "findings": 0,
+                "head": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GQKF60B9F0P3XDN2W2QSSZ",
+                "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                "findings": 1,
+                "head": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GQKF3Y0QAPAAM121TVZ4NJ",
+                "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                "findings": 0,
+                "head": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GQQXPG3DB3DWEHTX3RNABG",
+                "base": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                "findings": 0,
+                "head": "4613e3ac6f015953bd7c056f4223af29906392c4",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+              "agt_01M8GQKF60B9F0P3XDN2W2QSSZ",
+              "agt_01M8GQKF3Y0QAPAAM121TVZ4NJ",
+              "agt_01M8GQQXPG3DB3DWEHTX3RNABG"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GQKF60B9F0P3XDN2W2QSSZ:1": {
+                "blocking": true,
+                "description": "extract() validates entries in _validate_entries(), then iterates the caller-provided list again while writing. A list subclass can return valid tuples during validation and different tuples during the write pass. at safe_extract.py (remedy: Have validation return the validated (name, data) pairs and use that snapshot for target validation and writing; alternatively reject list subclasses explicit",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GQDNZ12WQ98J6CGXKN6CBK"
+                },
+                "id": "agt_01M8GQKF60B9F0P3XDN2W2QSSZ:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GQDNZ12WQ98J6CGXKN6CBK"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+                    "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GQKF3Y0QAPAAM121TVZ4NJ",
+                    "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GQKF60B9F0P3XDN2W2QSSZ",
+                    "base": "6f60418e666c842cab1f23d8010c9d30374954e5",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GQKF60B9F0P3XDN2W2QSSZ:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "4613e3ac6f015953bd7c056f4223af29906392c4",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GQQXPG3DB3DWEHTX3RNABG",
+                    "base": "003288cf6dfcc2c977ca35a700e724279b2ab4db",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+            "why": "The change implements path containment and filesystem safety validation. The full boundary suite passes; three whole-change reviewers and a fix-delta reviewer reviewed the commits. The list-subclass validation bypass was fixed and verified."
+          },
+          "tree": "89f55e88aa04cd7264abdca653f0f32ddce08428"
+        },
+        "cost_usd": 0.03777072,
+        "started_at": "2026-11-28T09:22:46.369725851Z",
+        "finished_at": "2026-11-28T09:30:02.126491089Z"
+      }
+    ],
+    "spent_usd": 0.03777072,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GQDNZ12WQ98J6CGXKN6CBK": {
+        "direct_usd": 0.02250522,
+        "delegated_usd": 0.0152655,
+        "agents": [
+          {
+            "agent": "agt_01M8GQKF276GWKA9AHJ6DPFKAM",
+            "parent": "agt_01M8GQDP1469552MG43NCAHHJV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.00251452
+          },
+          {
+            "agent": "agt_01M8GQKF3Y0QAPAAM121TVZ4NJ",
+            "parent": "agt_01M8GQDP1469552MG43NCAHHJV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.0032769400000000003
+          },
+          {
+            "agent": "agt_01M8GQKF60B9F0P3XDN2W2QSSZ",
+            "parent": "agt_01M8GQDP1469552MG43NCAHHJV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.0050962
+          },
+          {
+            "agent": "agt_01M8GQQXPG3DB3DWEHTX3RNABG",
+            "parent": "agt_01M8GQDP1469552MG43NCAHHJV",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.004377840000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:22:46.162103484Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:22:46.162103484Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:22:46.162103484Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

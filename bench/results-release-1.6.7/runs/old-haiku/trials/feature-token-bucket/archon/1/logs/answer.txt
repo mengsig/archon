@@ -1,0 +1,21 @@
+I queued the rate limiter as item `qi_01M8GGE0ZJRF95DMFXPDC97NR2` on the `feature-token-bucket` repo, using the `direct` pipeline with standard review.
+
+- **What it covers:** `TokenBucket` and `KeyedLimiter` in `ratelimit.py`, following `SPEC.md`, including its error cases, the clock-going-backwards rule, and LRU eviction. The brief asks for extra tests in `test_ratelimit.py` for those edge cases, and for the existing tests to keep passing.
+- **Dependencies:** standard library only.
+- **Commit:** the repo ships locally, so the work is committed on a local branch and not pushed.
+- **Review:** I chose standard review, not strict, because the module is small and fully specified. Strict would only be needed for concurrency or security concerns, and the spec mentions neither.
+
+The item is tagged `notify`, so you'll hear back when it finishes, and any failure will be reported as well.
+
+Done: Implement TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 13 edge-case tests in test_ratelimit.py. Committed c716a04 on archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i (tree 0aae8d7); not pushed. Checks: python3 -m unittest -v gives 16/16 OK; py_compile passes (pyflakes not installed, so no lint run). Before: stubs gave 3 errors (NotImplementedError); after: 16 pass. Independent review agt_01M8GGFS7203GTPKNSD287M7SX passed head c716a04 with no blocking findings. Open non-blocking follow-ups: capacity=inf is accepted; no direct test for KeyedLimiter.wait_time with invalid n or a backwards clock at the keyed level. Risk low. Review: pass by agt_01M8GGFS7203GTPKNSD287M7SX.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGFS7203GTPKNSD287M7SX)
+
+SHIPPED: commit c716a04ed41d364dd529cbd95ac84a9204cb6e11 on the run branch
+Branch `archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/c4830605f51ef189424c3c69/feature-token-bucket holds it (2 files changed, 175 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GGE0ZJRF95DMFXPDC97NR2`; land it in `main`: `archon merge qi_01M8GGE0ZJRF95DMFXPDC97NR2`.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 13 edge-case tests in test_ratelimit.py. Committed c716a04 on archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i (tree 0aae8d7); not pushed. Checks: python3 -m unittest -v gives 16/16 OK; py_compile passes (pyflakes not installed, so no lint run). Before: stubs gave 3 errors (NotImplementedError); after: 16 pass. Independent review agt_01M8GGFS7203GTPKNSD287M7SX passed head c716a04 with no blocking findings. Open non-blocking follow-ups: capacity=inf is accepted; no direct test for KeyedLimiter.wait_time with invalid n or a backwards clock at the keyed level. Risk low. Review: pass by agt_01M8GGFS7203GTPKNSD287M7SX.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGFS7203GTPKNSD287M7SX)
+
+SHIPPED: commit c716a04ed41d364dd529cbd95ac84a9204cb6e11 on the run branch

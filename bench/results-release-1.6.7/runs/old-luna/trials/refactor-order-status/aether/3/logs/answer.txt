@@ -1,0 +1,5 @@
+Implemented and committed as `26306cb` (`Refactor order status to enum`).
+
+`OrderStatus` and `ParseStatusError` are re-exported from the crate root. Lifecycle checks and reporting now use the enum; status names are centralized in [status.rs](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/74ba2f089c6946f0f20d5d98/refactor-order-status/src/status.rs). Existing parsing messages and report ordering are preserved.
+
+`cargo test` passed: all 3 integration tests passed. The working tree is clean.

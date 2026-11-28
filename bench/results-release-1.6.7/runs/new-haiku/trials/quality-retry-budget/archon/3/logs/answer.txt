@@ -1,0 +1,21 @@
+I queued the work as one item, `qi_01M8GREES2HJCX6Q9892H017BZ`, in the `quality-retry-budget` repo. I did not edit the repo myself.
+
+- **Pipeline:** `direct`, one implementing agent at balanced tier and high effort. I chose high effort because the spec has several subtle points: validation order before early returns, rejecting `bool` and `float`, and saturating the power of two for huge attempt values.
+- **Review:** `standard`, one reviewer. The function is small and pure, but a validation or boundary slip could hide in it.
+- **Shipping:** the repo ships locally, so the agent commits on a branch and nothing is pushed.
+- **Brief:** it restates the spec and asks for focused tests in `test_retry_budget.py` covering each error and boundary case. It also asks the agent to run `python3 -m unittest` before committing.
+
+I'll post the outcome when the item finishes.
+
+Done: Implement retry_budget.retry_delay per SPEC.md with focused tests. Implemented retry_delay per SPEC.md in retry_budget.py and extended test_retry_budget.py with 23 focused tests. Committed as 5a6ce28 (tree 3bedf49f22ac5c123b3e144f5e73706c71dbfffa) on archon/92h017bz-implement-retry-budget-retry-delay-per-s under the repo's configured identity; not pushed. Before: 3 tests, all erroring with NotImplementedError. After: python3 -B -m unittest gives 26 tests OK. An independent reviewer (agt_01M8GRGJ3XP5Y3ZM28XBWTSWGS) passed the head with no blocking findings. Non-blocking follow-ups: the _backoff comment is 3 lines (CLAUDE.md allows 2), and no test covers invalid budget_ms while attempts are exhausted. Assumption: type-check failures raise ValueError as the spec states. The reviewer's leftover claude -p process (pid 4191556) is still running; it stops when this task ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRGJ3XP5Y3ZM28XBWTSWGS)
+
+SHIPPED: commit 5a6ce286782adcf1cfb111f621029e8d895bff1a on the run branch
+Branch `archon/92h017bz-implement-retry-budget-retry-delay-per-s` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/6e128acd5caf03c81e4ce33c/quality-retry-budget holds it (2 files changed, 174 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GREES2HJCX6Q9892H017BZ`; land it in `main`: `archon merge qi_01M8GREES2HJCX6Q9892H017BZ`.
+
+Implemented retry_delay per SPEC.md in retry_budget.py and extended test_retry_budget.py with 23 focused tests. Committed as 5a6ce28 (tree 3bedf49f22ac5c123b3e144f5e73706c71dbfffa) on archon/92h017bz-implement-retry-budget-retry-delay-per-s under the repo's configured identity; not pushed. Before: 3 tests, all erroring with NotImplementedError. After: python3 -B -m unittest gives 26 tests OK. An independent reviewer (agt_01M8GRGJ3XP5Y3ZM28XBWTSWGS) passed the head with no blocking findings. Non-blocking follow-ups: the _backoff comment is 3 lines (CLAUDE.md allows 2), and no test covers invalid budget_ms while attempts are exhausted. Assumption: type-check failures raise ValueError as the spec states. The reviewer's leftover claude -p process (pid 4191556) is still running; it stops when this task ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GRGJ3XP5Y3ZM28XBWTSWGS)
+
+SHIPPED: commit 5a6ce286782adcf1cfb111f621029e8d895bff1a on the run branch

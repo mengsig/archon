@@ -1,0 +1,50 @@
+**Do not ship `src/tokens.js` as written.** The verifier accepts forged tokens. I reviewed by reading the code only; I did not execute the exploit or the test suite, and I changed nothing.
+
+**Repository note:** the registered repository here is `review-seeded-bug`, not `session-lib`. I reviewed `src/tokens.js` in that repo's mirror (commit `373775d`, "bench fixture"). If your `session-lib` checkout has a newer version, or uncommitted changes that the mirror doesn't hold, tell me and I'll review that version.
+
+## Findings
+
+**1. Critical: signature check is a prefix match, so an empty signature bypasses HMAC entirely**
+- **File/function:** `src/tokens.js`, `verify()`, line 27: `if (!expected.startsWith(signature)) return null;`
+- **What goes wrong:** `startsWith` accepts any prefix of the real MAC. An empty string is a prefix of everything, so a token with no signature passes the MAC check, and the payload is returned without any cryptographic check.
+- **Concrete input:** `body = base64url(JSON.stringify({user:'root', exp: Date.now() + 1e9}))`, token `body + '.'`. `split('.')` gives `signature === ''`, so `verify` returns `{user:'root', ...}`.
+- **Also:** a one-character signature matches with probability 1/64 for any chosen body, so forging a token takes about 64 online attempts.
+- **Severity:** critical. This is an authentication bypass for any caller of `verify`.
+
+**2. High (same fix): comparison is not constant-time**
+- **Function:** `verify()`, line 27.
+- **What goes wrong:** even with a full-length comparison, `String.prototype.startsWith` leaks timing, which gives an attacker a byte-by-byte oracle on the MAC.
+- **Fix direction:** compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers.
+
+**3. Medium: malformed payloads throw instead of returning `null`**
+- **Function:** `verify()`, line 28: `JSON.parse(fromBase64Url(body))`, then line 29: `payload.exp`.
+- **What goes wrong:** the parse is not guarded, so a body that is not JSON throws `SyntaxError`. A body that decodes to `null` throws `TypeError` at `payload.exp`. Both escape `verify`, which should return `null` as its contract says.
+- **Concrete input:** `base64url('null') + '.'` (reachable because of finding 1). Today it crashes the caller; after the fix it is reachable only by someone holding the secret.
+- **Fix direction:** wrap the parse, and check that the payload is a non-null object before reading `exp`. Guarding the parse is a boundary check, not a hidden failure.
+
+**4. Medium: `verify` does not enforce the secret rules that `sign` enforces**
+- **Function:** `verify()`, line 26: `mac(body, secret)`.
+- **What goes wrong:** `sign` rejects secrets shorter than 32 characters, but `verify` accepts anything. If a verifying service is configured with `''` (for example, an unset environment variable), `createHmac` uses an empty key, and anyone can compute a valid MAC for it.
+- **Severity:** medium, and it depends on deployment config.
+- **Fix direction:** apply the same secret check in `verify`, or in a shared helper.
+
+**5. Low: trailing segments are ignored**
+- **Function:** `verify()`, line 24: `token.split('.')`.
+- **What goes wrong:** `body.sig.junk` is accepted, so tokens are malleable. This is not a forgery, but a token should have exactly two segments.
+
+**6. Low: `sign` accepts invalid TTLs and fails silently**
+- **Function:** `sign()`, lines 14–16.
+- **What goes wrong:** `ttlSeconds = NaN` makes `exp` NaN; `JSON.stringify` turns it into `null`, so the token is issued and then always rejected. A negative TTL issues an already-expired token. Neither is reported.
+- **Fix direction:** validate `ttlSeconds` as a positive finite number.
+
+**7. Info: secret check is only a length check**
+- **Function:** `sign()`, line 15.
+- **What goes wrong:** `'k'.repeat(32)` passes. The check says nothing about entropy, so it is only a guard against obviously short secrets.
+
+## Test gaps
+
+`test/tokens.test.js` would not catch finding 1. The tampered-payload test reuses the full valid signature, so it never exercises a truncated, empty or extra-segment signature. Nothing covers non-JSON or `null` payloads, or a verifier given an empty secret. I did not run the suite, so this is from reading the test file.
+
+## Suggested fix scope
+
+For findings 1–4, the change is small: require exactly two segments, check the secret length in `verify`, compare with `timingSafeEqual` on full-length buffers, and guard the payload parse so it returns `null`. Add tests for an empty signature, a truncated signature, a non-JSON payload, a `null` payload, and an empty secret. I can write that as an item when you want it.

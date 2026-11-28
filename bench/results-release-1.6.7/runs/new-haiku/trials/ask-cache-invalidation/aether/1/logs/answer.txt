@@ -1,0 +1,27 @@
+Root cause: updatePrice (src/pricing.js:6-13) deletes only the product:<sku> cache entry. Category listing pages are cached separately under listing:<category>:<page> (src/catalog.js:22-33, src/keys.js:4) with a 600s TTL (src/config.js:7), and each row stores its own copy of priceCents (catalog.js:29). Nothing deletes those entries when a price changes, so category pages serve the old price until the entry expires, up to 600s after it was built. Product pages read through product() (catalog.js:12-20), so the product key deletion makes them update immediately. A fake-clock repro confirmed this: listing shows 5000 after the update, and only at t=600s shows 4500. The existing test suite (3/3 passing) only checks product pages after an update, so it misses the gap. Fix options: (A) on price write, also delete the listing pages for the product's category (updated.category is already returned by store.update). This needs a prefix delete or a per-category key index in TtlCache. (B, recommended) stop caching priceCents inside listings: cache only the ordered SKU list per page and hydrate name and price from product() at read time, so the price has a single cache path. Add a regression test that a listing reflects an update. Caveat: TtlCache is in-process, so with multiple instances a delete only clears the instance that handled the write; other instances would stay stale (product up to 3600s, listings up to 600s). The repo does not show the deployment topology, so this is unverified. No code was changed.
+
+The stale category prices come from `updatePrice` invalidating only the product cache entry, while category listings are cached separately and never invalidated. I made no code changes.
+
+**Code path**
+- `updatePrice` in `src/pricing.js:6-13` updates the store and then calls `catalog.cache.delete(productKey(sku))`. That removes only `product:<sku>`.
+- Category pages are read by `Catalog.listing` in `src/catalog.js:22-33`. They are cached under `listing:<category>:<page>` (`src/keys.js:4`) with `LISTING_TTL_SECONDS = 600` (`src/config.js:7`).
+- Each listing row copies `priceCents` (`catalog.js:29`), so the old price lives inside the listing entry. Nothing deletes that entry when a price changes.
+
+**Why it's about ten minutes**
+- A listing entry leaves the cache only when its TTL expires, 600 seconds after it was built. Until then every category page serves the old price.
+- Product pages go through `product()` (`catalog.js:12-20`), which reads through the cache. The key deletion forces a fresh store read, and the 3600s product TTL never comes into play. That is why product pages update immediately.
+- Each page of a category has its own independent entry, so a category with several pages can show the old price for up to 600s after each page was last built.
+
+**Reproduction**
+I ran a read-only check with an injected clock:
+- At t=0 the listing shows 5000 and the product shows 5000.
+- After `updatePrice(…, 4500)`, the product shows 4500 and the listing still shows 5000.
+- The listing still shows 5000 at t=599s and changes to 4500 only at t=600s.
+- The existing tests pass 3/3. The product test checks the product page after an update, but nothing checks a listing after an update, which is why the gap went unnoticed.
+
+**Fix options**
+- **A. Invalidate listings on write.** In `updatePrice`, use the `category` already returned by `store.update` and delete that category's listing pages. `TtlCache` would need a prefix delete or a per-category key index. This is the smaller change, but it keeps the duplicated price state.
+- **B. Recommended: remove the price from listings.** Cache only the ordered SKU list per category and page, then fill in `name` and `priceCents` from `product()` at read time. Price then has a single cache path, which is already invalidated correctly. The cost is up to 24 product lookups per page, which are cheap from cache. Add a regression test that a listing reflects an update either way.
+
+**Caveat, unverified**
+`TtlCache` is in-process memory, and `createCatalog` creates a new one for each catalog. If `catalog-service` runs as several instances, a delete clears only the instance that handled the write. The others would stay stale for up to 3600s on products and 600s on listings. The repo does not show the deployment setup, so this needs checking. If it applies, the fix needs a shared cache or an invalidation event.

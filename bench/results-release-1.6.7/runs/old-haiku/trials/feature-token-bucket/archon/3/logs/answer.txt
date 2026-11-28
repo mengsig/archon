@@ -1,0 +1,45 @@
+I've queued the rate limiter as item `qi_01M8GQTM97DCW1Q2N3D3BHT145` on the `feature-token-bucket` repository. It is not built yet; I don't write or test code myself, so the work runs through the queue.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. The repository ships locally, so "commit" means a local commit on the working branch, not a push or PR.
+- **Review:** `standard`. The spec has no concurrency or security surface, but eviction and clock edge cases are subtle enough to want one reviewer.
+- **Brief:** your request verbatim, plus the spec's rules as the source of truth. It covers every error case, the start-full rule, the capacity cap, `wait_time` not consuming tokens, the clock-going-backwards rule, and LRU eviction counting both `try_acquire` and `wait_time` as a use. It also requires standard library only, no edits to `SPEC.md`, and `test_ratelimit.py` still passing, with edge-case tests added.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement token-bucket rate limiter per SPEC.md in ratelimit.py. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only), with 13 new tests for the spec's error cases and edge cases added to test_ratelimit.py. Commit 502a89a on archon/d3bht145-implement-token-bucket-rate-limiter-per, tree e6220bb. Before: both classes were NotImplementedError stubs. Checks: `python3 -m unittest -v test_ratelimit` ran 16 tests, all OK; ruff check passed on both files; both files compile. One reviewer (agt_01M8GQW1FGJTJXCA1107ZBDMV9, haiku, low effort) passed the head with no blocking findings. Open follow-ups, non-blocking: (1) float rounding can leave tokens just below n right after the wait_time delay, so the first retry may still fail; a small epsilon or documented tolerance would settle it. (2) No type checks, so non-numeric inputs raise TypeError rather than ValueError, and a non-integer max_keys such as 2.5 is accepted. Nothing is running; no processes were started. Review: pass by agt_01M8GQW1FGJTJXCA1107ZBDMV9.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQW1FGJTJXCA1107ZBDMV9)
+
+SHIPPED: commit 502a89a72eba08a5e69ee0a974dfbd731bc6282c on the run branch
+Branch `archon/d3bht145-implement-token-bucket-rate-limiter-per` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/892db84c9b1a401651953362/feature-token-bucket holds it (2 files changed, 182 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GQTM97DCW1Q2N3D3BHT145`; land it in `main`: `archon merge qi_01M8GQTM97DCW1Q2N3D3BHT145`.
+
+Done: Make wait_time agree exactly with try_acquire after the wait. wait_time(n) now agrees exactly with try_acquire(n). Head ccc7043 (tree fb106d37a2b05069ead9814f2f5490c024083672) on archon/13y717d7-make-wait-time-agree-exactly-with-try-ac; not pushed.
+
+Changes: the branch only had stubs, so I cherry-picked the implementation commit 502a89a (from archon/d3bht145) as ceb82d2. Then, in 573df3c and ccc7043, wait_time now nudges its estimate until advancing the clock by it makes try_acquire succeed, using the same refill arithmetic as try_acquire. It also counts the clock-backwards gap. Regression tests were added first and fail on the implementation before the fix.
+
+Checks: unittest on ceb82d2 with new tests gave 3 failures (before). On ccc7043: 19/19 OK, py_compile OK, random sweep of 150k cases with 0 failures. Review: a fresh reviewer's re-review of 573df3c..ccc7043 passed (agt_01M8GR63S92YWJQXJEJ7AN6Q6X); the first reviewer (agt_01M8GR1357XZ4HXRHMGQEJ6CSF) found a negative-clock RuntimeError, now fixed with Review-Fix trailers.
+
+Open: style follow-up (non-blocking): helpers have fewer than 2 assertions each. Assumption: exact only when the caller advances the clock by adding the returned value to its current reading. No processes left running; the reviewer processes have exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR63S92YWJQXJEJ7AN6Q6X), claude-code/claude-haiku-5-5 (agent agt_01M8GR1357XZ4HXRHMGQEJ6CSF)
+
+SHIPPED: commit ccc7043fed76bc41fe88eb62d97a4cb269ffe1f4 on the run branch
+Branch `archon/13y717d7-make-wait-time-agree-exactly-with-try-ac` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/892db84c9b1a401651953362/feature-token-bucket holds it (2 files changed, 241 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GQXC7SCT8FF30R13Y717D7`; land it in `main`: `archon merge qi_01M8GQXC7SCT8FF30R13Y717D7`.
+
+wait_time(n) now agrees exactly with try_acquire(n). Head ccc7043 (tree fb106d37a2b05069ead9814f2f5490c024083672) on archon/13y717d7-make-wait-time-agree-exactly-with-try-ac; not pushed.
+
+Changes: the branch only had stubs, so I cherry-picked the implementation commit 502a89a (from archon/d3bht145) as ceb82d2. Then, in 573df3c and ccc7043, wait_time now nudges its estimate until advancing the clock by it makes try_acquire succeed, using the same refill arithmetic as try_acquire. It also counts the clock-backwards gap. Regression tests were added first and fail on the implementation before the fix.
+
+Checks: unittest on ceb82d2 with new tests gave 3 failures (before). On ccc7043: 19/19 OK, py_compile OK, random sweep of 150k cases with 0 failures. Review: a fresh reviewer's re-review of 573df3c..ccc7043 passed (agt_01M8GR63S92YWJQXJEJ7AN6Q6X); the first reviewer (agt_01M8GR1357XZ4HXRHMGQEJ6CSF) found a negative-clock RuntimeError, now fixed with Review-Fix trailers.
+
+Open: style follow-up (non-blocking): helpers have fewer than 2 assertions each. Assumption: exact only when the caller advances the clock by adding the returned value to its current reading. No processes left running; the reviewer processes have exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR63S92YWJQXJEJ7AN6Q6X), claude-code/claude-haiku-5-5 (agent agt_01M8GR1357XZ4HXRHMGQEJ6CSF)
+
+SHIPPED: commit ccc7043fed76bc41fe88eb62d97a4cb269ffe1f4 on the run branch
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md (standard library only), with 13 new tests for the spec's error cases and edge cases added to test_ratelimit.py. Commit 502a89a on archon/d3bht145-implement-token-bucket-rate-limiter-per, tree e6220bb. Before: both classes were NotImplementedError stubs. Checks: `python3 -m unittest -v test_ratelimit` ran 16 tests, all OK; ruff check passed on both files; both files compile. One reviewer (agt_01M8GQW1FGJTJXCA1107ZBDMV9, haiku, low effort) passed the head with no blocking findings. Open follow-ups, non-blocking: (1) float rounding can leave tokens just below n right after the wait_time delay, so the first retry may still fail; a small epsilon or documented tolerance would settle it. (2) No type checks, so non-numeric inputs raise TypeError rather than ValueError, and a non-integer max_keys such as 2.5 is accepted. Nothing is running; no processes were started. Review: pass by agt_01M8GQW1FGJTJXCA1107ZBDMV9.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQW1FGJTJXCA1107ZBDMV9)
+
+SHIPPED: commit 502a89a72eba08a5e69ee0a974dfbd731bc6282c on the run branch

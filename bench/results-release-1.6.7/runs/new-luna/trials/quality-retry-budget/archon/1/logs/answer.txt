@@ -1,0 +1,14 @@
+The item is queued as `qi_01M8GJ7K2S1RXSYG8SRKP037AE` on the repository’s local branch. It covers the spec’s validation and boundary cases, focused tests, and a commit.
+
+Done: Implement specified retry delay behavior and focused tests. Implemented and committed the specified retry delay behavior with strict input validation, capped exponential backoff that saturates efficiently, uncapped Retry-After minimums, attempt exhaustion, and strict budget exhaustion. Added focused standard-library boundary tests. Focused tests (8) and git diff --check pass. Delegated review was unavailable because this runtime exposes no reviewer/delegation tool; no review findings are available.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 358c8cfee8422137696c6ce49012c786c063587f on the run branch
+Branch `archon/rkp037ae-implement-specified-retry-delay-behavior` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/babc7c6f8e25e0c2c9dfee9d/quality-retry-budget holds it (2 files changed, 80 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GJ7K2S1RXSYG8SRKP037AE`; land it in `main`: `archon merge qi_01M8GJ7K2S1RXSYG8SRKP037AE`.
+
+Implemented and committed the specified retry delay behavior with strict input validation, capped exponential backoff that saturates efficiently, uncapped Retry-After minimums, attempt exhaustion, and strict budget exhaustion. Added focused standard-library boundary tests. Focused tests (8) and git diff --check pass. Delegated review was unavailable because this runtime exposes no reviewer/delegation tool; no review findings are available.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 358c8cfee8422137696c6ce49012c786c063587f on the run branch

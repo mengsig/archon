@@ -1,0 +1,34 @@
+I've queued the change as one initiative, `ini_01M8GQYSE6QVWPMRF3M29N49AS`, with one item per repository:
+
+- **inventory-api** (`qi_01M8GQYSE9BVMKP9VRSBRHBZBT`): adds `limit` (1..100, default 20) and `cursor` to `GET /items`. It returns `{"items", "next_cursor"}` ordered by `id`, and gives 400 with `{"error"}` for an invalid `limit` or `cursor`. It also adds tests and updates the README.
+- **inventory-client** (`qi_01M8GQYTJ4J5YK358GHRPWQKX6`): `listItems(transport)` keeps its signature and follows `next_cursor` until it is null or absent, sending no cursor on the first request. It also adds tests and updates the README.
+
+Both items use the `direct` pipeline with standard review. Each commits locally and runs its own test command (`python3 -m unittest` or `npm test`). Nothing is pushed, since both repositories ship locally. I'll report the outcome when the initiative finishes.
+
+Done: Cursor pagination in GET /items. Added cursor pagination to GET /items in inventory-api, committed on archon/sbrhbzbt-cursor-pagination-in-get-items at 00465627e6e88a11c695400a277c60b630977c4e (tree 7bf7d7468c4958cedbdc11214c171e0ca771a8c9, base 347d1c2). Optional limit (integer 1..100, default 20) and opaque cursor (base64url of last id); 200 body {"items","next_cursor"}; 400 {"error"} for invalid limit or cursor. README documents the parameters, response and 400s. python3 -m unittest: 9 tests OK. Review: one reviewer, agt_01M8GR081WTWV56DEAXNXDF0BG, pass, no blocking findings. Open, non-blocking: cursor decoding is non-validating base64; cursor decoding to 0 is accepted; tests missing for cursor with non-default limit on final page and cursor past last id. inventory-client listItems is not changed here. Not pushed. Reviewer's leftover claude -p process (PID 4145145) was not started by me and is left to stop when the stage ends. No servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR081WTWV56DEAXNXDF0BG)
+
+SHIPPED: commit 00465627e6e88a11c695400a277c60b630977c4e on the run branch
+Branch `archon/sbrhbzbt-cursor-pagination-in-get-items` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/0945c5220d5300cf178e123e/inventory-api holds it (3 files changed, 116 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GQYSE9BVMKP9VRSBRHBZBT`; land it in `main`: `archon merge qi_01M8GQYSE9BVMKP9VRSBRHBZBT`.
+
+Done: listItems follows next_cursor. listItems in inventory-client now resolves to every item, in order, by requesting the first page with no cursor and following next_cursor (passed back unchanged) until it is null or absent. Keeps the listItems(transport) signature. Commits on archon/hrpwqkx6-listitems-follows-next-cursor, not pushed: 0a089e6 (implementation, tests, README) and 4f3627e (tests for malformed pages, the blocking review fix). Head 4f3627e, tree acc23bdff65046878930d3df8fa1a035b9e76119. npm test: 11/11 pass (was 3/3 before). Review: the first whole-change review failed on the missing malformed-page tests; 4f3627e fixed them, and a delta review of that commit passed. Open, non-blocking: listItems has no upper bound on page count. The inventory-api half of the shared contract is not in this worktree and was not touched. No processes left running; the reviewer processes have exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR042Y840KD5C0AGDDDE13), claude-code/claude-haiku-5-5 (agent agt_01M8GR11WQB5CE1MTQ7B9EPJJP)
+
+SHIPPED: commit 4f3627e36c0b7d9fe3a423cba14c08437c87237a on the run branch
+Branch `archon/hrpwqkx6-listitems-follows-next-cursor` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/0945c5220d5300cf178e123e/inventory-client holds it (3 files changed, 107 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GQYTJ4J5YK358GHRPWQKX6`; land it in `main`: `archon merge qi_01M8GQYTJ4J5YK358GHRPWQKX6`.
+
+Initiative finished; coordinated result queued.
+
+listItems in inventory-client now resolves to every item, in order, by requesting the first page with no cursor and following next_cursor (passed back unchanged) until it is null or absent. Keeps the listItems(transport) signature. Commits on archon/hrpwqkx6-listitems-follows-next-cursor, not pushed: 0a089e6 (implementation, tests, README) and 4f3627e (tests for malformed pages, the blocking review fix). Head 4f3627e, tree acc23bdff65046878930d3df8fa1a035b9e76119. npm test: 11/11 pass (was 3/3 before). Review: the first whole-change review failed on the missing malformed-page tests; 4f3627e fixed them, and a delta review of that commit passed. Open, non-blocking: listItems has no upper bound on page count. The inventory-api half of the shared contract is not in this worktree and was not touched. No processes left running; the reviewer processes have exited.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR042Y840KD5C0AGDDDE13), claude-code/claude-haiku-5-5 (agent agt_01M8GR11WQB5CE1MTQ7B9EPJJP)
+
+SHIPPED: commit 4f3627e36c0b7d9fe3a423cba14c08437c87237a on the run branch
+
+Added cursor pagination to GET /items in inventory-api, committed on archon/sbrhbzbt-cursor-pagination-in-get-items at 00465627e6e88a11c695400a277c60b630977c4e (tree 7bf7d7468c4958cedbdc11214c171e0ca771a8c9, base 347d1c2). Optional limit (integer 1..100, default 20) and opaque cursor (base64url of last id); 200 body {"items","next_cursor"}; 400 {"error"} for invalid limit or cursor. README documents the parameters, response and 400s. python3 -m unittest: 9 tests OK. Review: one reviewer, agt_01M8GR081WTWV56DEAXNXDF0BG, pass, no blocking findings. Open, non-blocking: cursor decoding is non-validating base64; cursor decoding to 0 is accepted; tests missing for cursor with non-default limit on final page and cursor past last id. inventory-client listItems is not changed here. Not pushed. Reviewer's leftover claude -p process (PID 4145145) was not started by me and is left to stop when the stage ends. No servers started.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GR081WTWV56DEAXNXDF0BG)
+
+SHIPPED: commit 00465627e6e88a11c695400a277c60b630977c4e on the run branch

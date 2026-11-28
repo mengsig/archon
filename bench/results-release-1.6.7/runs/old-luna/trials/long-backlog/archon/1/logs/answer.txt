@@ -1,0 +1,60 @@
+Queued all four tickets as separate `direct` items in `long-backlog`. Each item requires added tests, the requested unittest command, standard-library-only code, and a separate commit.
+
+- TT-101: `qi_01M8GH33MT51HA4080HX6681E5`
+- TT-102: `qi_01M8GH338M5A6XHE1FRCZT59H7`
+- TT-103: `qi_01M8GH33DCJF8CX1M84B798H04`
+- TT-104: `qi_01M8GH33HDXEB3YTCZ38CFT7ND`
+
+They’re queued, so implementation and test results aren’t available yet.
+
+Done: TT-101 Reject impossible due dates. Implemented TT-101: added tasktracker.dates.InvalidDate, rejected impossible calendar dates and unsupported forms, and covered valid +0d/today/tomorrow behavior. Baseline reproduced silent date clamping; the requested unittest command passes all 7 tests. Committed as c5e3ffbb699316de062f26482cc6837ae764f783; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c5e3ffbb699316de062f26482cc6837ae764f783 on the run branch
+Branch `archon/hx6681e5-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/036780b1b4ef03edb022c950/long-backlog holds it (2 files changed, 29 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M8GH33MT51HA4080HX6681E5`; land it in `main`: `archon merge qi_01M8GH33MT51HA4080HX6681E5`.
+
+Done: TT-102 RFC 4180 CSV export. Implemented RFC 4180 CSV export with CRLF records, minimal quoting, and escaped quotes; added focused coverage for commas, quotes, CR, LF, ordinary fields, tags, order, and due dates. `python3 -m unittest discover -s tests -t .` passed (5 tests). Commit: 5b8fef58cd5b442108f5c1d8f7f1ae0494479558. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 5b8fef58cd5b442108f5c1d8f7f1ae0494479558 on the run branch
+Branch `archon/rczt59h7-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/036780b1b4ef03edb022c950/long-backlog holds it (2 files changed, 29 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GH338M5A6XHE1FRCZT59H7`; land it in `main`: `archon merge qi_01M8GH338M5A6XHE1FRCZT59H7`.
+
+Done: TT-104 Undo task store operations. Implemented and committed TaskStore.undo() for add, complete, and delete with LIFO history, exact deletion restoration, and monotonic IDs. Added undo tests; `python3 -m unittest discover -s tests -t .` passes all 9 tests. Commit a4cc81fa491010699198448727fe251e913c14bf (tree de3a47f4cd9ac77d7c09accefdeed3e5649f52ed); working tree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a4cc81fa491010699198448727fe251e913c14bf on the run branch
+Branch `archon/38cft7nd-tt-104-undo-task-store-operations` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/036780b1b4ef03edb022c950/long-backlog holds it (2 files changed, 82 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GH33HDXEB3YTCZ38CFT7ND`; land it in `main`: `archon merge qi_01M8GH33HDXEB3YTCZ38CFT7ND`.
+
+Done: TT-103 Search query syntax. Implemented TT-103 query parsing with quoted phrases, case-insensitive title/tag/status matching, AND semantics, QueryError validation, and input-order preservation. Added focused search tests. `python3 -m unittest discover -s tests -t .` passes (7 tests); committed as 6a7a516fcec1b7c173344101e4a8e47a636de057. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 6a7a516fcec1b7c173344101e4a8e47a636de057 on the run branch
+Branch `archon/4b798h04-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/036780b1b4ef03edb022c950/long-backlog holds it (2 files changed, 86 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GH33DCJF8CX1M84B798H04`; land it in `main`: `archon merge qi_01M8GH33DCJF8CX1M84B798H04`.
+
+Implemented TT-101: added tasktracker.dates.InvalidDate, rejected impossible calendar dates and unsupported forms, and covered valid +0d/today/tomorrow behavior. Baseline reproduced silent date clamping; the requested unittest command passes all 7 tests. Committed as c5e3ffbb699316de062f26482cc6837ae764f783; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c5e3ffbb699316de062f26482cc6837ae764f783 on the run branch
+
+Implemented and committed TaskStore.undo() for add, complete, and delete with LIFO history, exact deletion restoration, and monotonic IDs. Added undo tests; `python3 -m unittest discover -s tests -t .` passes all 9 tests. Commit a4cc81fa491010699198448727fe251e913c14bf (tree de3a47f4cd9ac77d7c09accefdeed3e5649f52ed); working tree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit a4cc81fa491010699198448727fe251e913c14bf on the run branch
+
+Implemented TT-103 query parsing with quoted phrases, case-insensitive title/tag/status matching, AND semantics, QueryError validation, and input-order preservation. Added focused search tests. `python3 -m unittest discover -s tests -t .` passes (7 tests); committed as 6a7a516fcec1b7c173344101e4a8e47a636de057. No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 6a7a516fcec1b7c173344101e4a8e47a636de057 on the run branch
+
+Implemented RFC 4180 CSV export with CRLF records, minimal quoting, and escaped quotes; added focused coverage for commas, quotes, CR, LF, ordinary fields, tags, order, and due dates. `python3 -m unittest discover -s tests -t .` passed (5 tests). Commit: 5b8fef58cd5b442108f5c1d8f7f1ae0494479558. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 5b8fef58cd5b442108f5c1d8f7f1ae0494479558 on the run branch

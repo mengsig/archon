@@ -1,0 +1,5 @@
+Implemented and committed as `ed3ffc9` (`Refactor order status to enum`).
+
+`OrderStatus` now represents status throughout the crate, with parsing, display, and lifecycle transitions defined in `src/status.rs`. Report ordering and existing error text are preserved.
+
+`cargo test` passed: all 3 integration tests. The status name literals in `src` are confined to `src/status.rs`.

@@ -1,0 +1,8 @@
+Implemented TT-101 through TT-104, with tests added for each. The requested suite passes: **10 tests, OK**. The working tree is clean.
+
+Commits:
+
+- `f1909f1` TT-101 reject impossible due dates
+- `cd55a08` TT-102 emit RFC 4180 CSV
+- `eca931e` TT-103 add structured search query syntax
+- `543b60c` TT-104 add LIFO task undo

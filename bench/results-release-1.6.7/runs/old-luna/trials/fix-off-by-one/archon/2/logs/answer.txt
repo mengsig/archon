@@ -1,0 +1,14 @@
+Queued as [qi_01M8GKZ2E1CVZRCDZKA0ZWF0XC](item:qi_01M8GKZ2E1CVZRCDZKA0ZWF0XC) on `fix-off-by-one`. The task requires fixing `window.py` for the full input domain, leaving tests unchanged, passing `python3 -m unittest`, and committing the fix locally.
+
+Done: Fix window.py bug and commit. Updated window.py to include the last valid contiguous window, including when the requested size equals the input length. `python3 -m unittest`, edge-case probes, and `git diff --check` pass; independent review passed with no findings. Committed as fd970268994c26e2b2bc27c7e57c5de01837cb8c. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM194CHFCAW8JCJZMHYZ5P)
+
+SHIPPED: commit fd970268994c26e2b2bc27c7e57c5de01837cb8c on the run branch
+Branch `archon/a0zwf0xc-fix-window-py-bug-and-commit` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/1107f0603b2cd24d65252f1b/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GKZ2E1CVZRCDZKA0ZWF0XC`; land it in `main`: `archon merge qi_01M8GKZ2E1CVZRCDZKA0ZWF0XC`.
+
+Updated window.py to include the last valid contiguous window, including when the requested size equals the input length. `python3 -m unittest`, edge-case probes, and `git diff --check` pass; independent review passed with no findings. Committed as fd970268994c26e2b2bc27c7e57c5de01837cb8c. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM194CHFCAW8JCJZMHYZ5P)
+
+SHIPPED: commit fd970268994c26e2b2bc27c7e57c5de01837cb8c on the run branch

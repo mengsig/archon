@@ -1,0 +1,37 @@
+Implemented ledger.py per SPEC.md and added focused tests; committed as 3adfb5a on main (author mengsig, no attribution trailer, per the project CLAUDE.md taking precedence over the reminder's Co-Authored-By line).
+
+Implementation (ledger.py):
+- Ledger(balances): dict-only (isinstance), copies input, validates nonempty str names and type-strict ints in [0, MAX_BALANCE] (bools and floats rejected). Empty ledgers allowed. Violations raise ValueError.
+- transfer(source, destination, amount): validates amount first (type-strict int in [1, MAX_BALANCE]), then looks up accounts (unknown or non-str name -> KeyError; transfers cannot create accounts). Insufficient funds or destination overflow returns False with no changes. Success debits and credits exactly the amount.
+- Same-account transfer returns balance >= amount and never writes.
+- snapshot() returns a copy under the lock.
+- One threading.Lock guards all balances, so checks and both writes are atomic, snapshots never see a half-transfer, and opposite transfers cannot deadlock.
+
+Choices I made (state visibly): a single global lock rather than per-account locks (simpler, correct, less concurrency); non-string account names in transfer raise KeyError rather than TypeError; dict subclasses are accepted and copied.
+
+Tests (test_ledger.py): 26 unittest cases covering construction validation, copy isolation, amount validation and ordering, KeyError paths, exact-balance and overflow boundaries, same-account semantics at MAX_BALANCE, and three threaded tests (no deadlock with opposite transfers, snapshot totals never torn, concurrent fill capped at MAX_BALANCE). No randomness or timing calculations; the join timeout is only a deadlock guard. Ran `python3 -m unittest` four times: all 26 pass each time.
+
+One test bug found and fixed during the run (my own expected value, not the ledger): the boundary test used MAX-2 where MAX-3 was intended. pyflakes is not installed, so no lint pass was run.
+
+I implemented `ledger.py` per `SPEC.md`, added 26 tests, and committed as `3adfb5a` on `main`. All tests pass, and I ran the suite four times with the same result.
+
+**Implementation**
+- `Ledger(balances)` accepts only a dict with nonempty string names and integers in `[0, MAX_BALANCE]`. It copies the input, and empty ledgers are allowed. Booleans and floats are rejected.
+- `transfer` validates the amount before looking up accounts. Unknown accounts raise `KeyError`, and transfers cannot create accounts. Insufficient funds and destination overflow return `False` with no changes.
+- A same-account transfer returns whether the account has enough funds and never writes, even at `MAX_BALANCE`.
+- `snapshot()` returns a copy taken under the lock.
+- All balances share one `threading.Lock`, so each transfer is atomic, snapshots never see a half-transfer, and opposite transfers cannot deadlock.
+
+**Choices I made, which you may want to redirect**
+- A single global lock rather than per-account locks. It is simpler and correct, but serializes all transfers.
+- Non-string account names in `transfer` raise `KeyError`, not `TypeError`.
+- Dict subclasses are accepted as input and copied.
+
+**Tests**
+- They cover construction validation, copy isolation, amount validation and ordering, `KeyError` paths, exact-balance and overflow boundaries, and same-account semantics.
+- Three threaded tests check for deadlock, torn snapshots, and the `MAX_BALANCE` cap under concurrent fills. The join timeout is only a deadlock guard.
+- One test failed on the first run because I had set up the boundary wrong (`MAX - 2` instead of `MAX - 3`). I fixed the test, not the ledger.
+- pyflakes is not installed, so I did not run a lint pass.
+
+**Commit attribution**
+- The commit has no Co-Authored-By trailer. The project CLAUDE.md says to avoid Claude attribution, and I treated it as taking precedence over the reminder's trailer.

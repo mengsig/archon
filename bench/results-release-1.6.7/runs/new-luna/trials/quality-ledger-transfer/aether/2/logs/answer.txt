@@ -1,0 +1,3 @@
+Implemented the bounded, thread-safe ledger and added tests for validation, error order, overflow, same-account transfers, copy isolation, and concurrent transfers.
+
+All 9 tests pass. Committed as `8261b36` (`Implement atomic bounded ledger`); working tree is clean.

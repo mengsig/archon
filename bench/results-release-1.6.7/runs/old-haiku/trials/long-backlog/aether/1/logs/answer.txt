@@ -1,0 +1,26 @@
+Implemented TT-101 to TT-104 in tasktracker, one commit each on main (the working tree is clean, and the suite passes: 36 tests, `python3 -m unittest discover -s tests -t .`):
+
+- 191c839 TT-101: dates.parse_due raises InvalidDate (ValueError subclass, message includes the original text) for impossible calendar dates, unsupported forms and out-of-range offsets. +Nd / +0d work; -3d and 3d are rejected. Tests in tests/test_dates.py.
+- 280cc69 TT-102: export.to_csv emits RFC 4180 CSV with CRLF on every line, quoting only fields containing , " CR or LF (quotes doubled). Round-trip checked with csv.reader. Tests in tests/test_export.py.
+- c50da30 TT-103: search.search supports AND-ed terms, quoted phrases, case-insensitive substring, tag:NAME (exact, case-insensitive), status:open|done, and raises QueryError for unknown fields/statuses, empty tag, and unterminated quotes. Tests in tests/test_search.py.
+- ba964b1 TT-104: TaskStore.undo() reverts add/complete/delete LIFO, ids are never reused, failed ops are not recorded, and an empty history raises NothingToUndo. Tests in tests/test_store.py.
+
+Assumptions and choices to review:
+1. TT-104: undoing a complete restores the status that was there before the complete. This equals "open" in the normal case. It differs only when a done task is completed again: undo then leaves it done, rather than forcing it open. undo() returns the affected Task.
+2. TT-103: a term that starts with a quote is always a phrase. An unquoted term with a `word:` prefix is a field term, so `10:30` or `http://x` raise QueryError unless quoted. Field names and status values are case-insensitive. `""` matches every task.
+3. TT-101: only ASCII digits are accepted, offsets are capped at 9 digits, and date overflow is reported as InvalidDate.
+4. Commits carry no Co-Authored-By line, because the repo CLAUDE.md forbids Claude attribution in commits and takes precedence over the attribution reminder.
+5. __pycache__ directories were created by test runs and left untracked; they were removed, and the repo has no .gitignore.
+
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite passes with 36 tests (up from 4), and the working tree is clean.
+
+- **TT-101 `191c839`:** `parse_due` raises `InvalidDate` (a `ValueError` subclass whose message includes the original text) for impossible dates, unsupported forms, and out-of-range offsets. `+Nd` and `+0d` work; `-3d` and `3d` are rejected.
+- **TT-102 `280cc69`:** `to_csv` emits RFC 4180 CSV with CRLF on every line. It quotes only fields containing a comma, double quote, CR or LF, and doubles embedded quotes. A round-trip test reads the output back with `csv.reader`.
+- **TT-103 `c50da30`:** `search` supports AND-ed terms, quoted phrases, case-insensitive title matching, exact `tag:NAME`, and `status:open|done`. Unknown fields or statuses, an empty tag name, and unterminated quotes raise `QueryError`.
+- **TT-104 `ba964b1`:** `TaskStore.undo()` reverts add, complete, and delete in LIFO order. Ids are never reused, failed operations are not recorded, and an empty history raises `NothingToUndo`.
+
+Choices to review:
+1. **Undo of a complete** restores the previous status. This is "open" in the normal case. It differs only when an already-done task is completed again: undo then leaves it done instead of forcing it open. `undo()` returns the affected task.
+2. **Search syntax:** a term starting with a quote is always a phrase, so `"status:open"` is text. An unquoted `word:` term is treated as a field, so `10:30` or `http://x` raises `QueryError` unless quoted. Field names and status values are case-insensitive, and `""` matches every task.
+3. **Dates:** only ASCII digits are accepted, offsets are capped at 9 digits, and date overflow is reported as `InvalidDate`.
+4. **Commit messages** have no `Co-Authored-By` line. The repo's CLAUDE.md forbids Claude attribution in commits, and I followed it over the attribution reminder.

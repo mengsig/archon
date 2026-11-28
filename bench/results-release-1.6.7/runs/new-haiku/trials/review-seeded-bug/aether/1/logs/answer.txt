@@ -1,0 +1,88 @@
+Review of src/tokens.js (sign/verify, HMAC-SHA256) is complete. No code was changed and no files were written. The file is NOT safe to ship: verify() accepts forged tokens. The existing test suite passes (4/4), so CI will not catch it.
+
+FINDINGS
+
+1. [CRITICAL] src/tokens.js, verify(): signature check is a prefix match against attacker-supplied text, so an empty or truncated signature is accepted. Line 27 `if (!expected.startsWith(signature)) return null;` passes for any signature that is a prefix of the real MAC, and '' is a prefix of everything.
+   Concrete input (confirmed by running it): payload {"user":"root","exp":9e15} base64url-encoded, with a trailing dot and no signature, i.e. `<base64url(payload)>.`. verify() returns `{ user: 'root', exp: 9000000000000000 }` with no secret. Any identity can be forged with zero work.
+   Related oracle (inferred from the same behaviour, one-char prefix confirmed accepted): an attacker can submit one character of a guessed MAC at a time and learn the real MAC for any body they choose. That is roughly 43 × 64 requests at most. The comparison is also not constant-time.
+   Fix direction: require the full expected length and compare with crypto.timingSafeEqual on equal-length Buffers. Reject signatures of any other length.
+
+2. [MEDIUM] src/tokens.js, verify(): throws instead of returning null on unauthenticated input. Line 28 `JSON.parse(fromBase64Url(body))` runs and is not guarded, and line 29 reads `payload.exp` with no null check.
+   Confirmed: `base64url("null") + "."` throws TypeError (reading 'exp' of null). `base64url("not json") + "."` throws SyntaxError. Any attacker-controlled input can make verify() throw, which breaks the documented "payload or null" contract and can surface as an unhandled 500. Severity drops to LOW once finding 1 is fixed, because only server-minted tokens could then reach the parse.
+   Fix direction: wrap the parse, return null on failure, and check that the payload is a non-null object.
+
+3. [LOW] src/tokens.js, verify(): token is not canonical. `token.split('.')` ignores everything after the second segment, so `<valid token>.junk` is accepted (confirmed). This does not allow forging claims, but it allows multiple strings to represent one token, which breaks any revocation list or dedup keyed on the raw string.
+   Fix direction: require exactly two segments (`split('.')` length 2).
+
+4. [LOW] src/tokens.js, verify(): the secret is not validated the way sign() validates it. sign() rejects secrets shorter than 32 characters, but verify() accepts '' and any short key. Confirmed: a token minted with HMAC key '' is accepted by verify(token, ''). This only matters if a deployment ends up with an empty or short verification secret, but the check should be symmetric.
+   Fix direction: move the secret check into a shared helper and call it from both sign() and verify().
+
+5. [LOW] src/tokens.js, sign(): ttlSeconds is not validated. Confirmed: ttlSeconds = NaN produces a token with `"exp":null`, and verify() rejects it. The caller gets a token that silently never works. Zero or negative TTLs silently produce already-expired tokens.
+   Fix direction: require a finite, positive ttlSeconds, and throw otherwise.
+
+6. [LOW] src/tokens.js, sign(): the secret strength check is length only. `'a'.repeat(32)` is accepted (confirmed). The 32-character minimum is not an entropy guarantee. This is advisory, not a defect in the code as written.
+
+7. [MEDIUM, process] test/tokens.test.js: the tests do not cover the cases above. "tampered payloads are rejected" only swaps the body and keeps a real signature, so it never exercises empty, truncated, or extra-segment signatures, nor non-JSON or null bodies. The suite is green on the vulnerable code. Add tests for: empty signature, one-character signature, extra segment, non-JSON body, and a token signed with an empty key.
+
+8. [NOTE, not a bug] Items checked and found acceptable: the algorithm is fixed to HMAC-SHA256 with no `alg` header, so there is no algorithm-confusion path. iat and exp are set after the spread of claims, so callers cannot override them. Expiry uses `exp <= now` with ms on both sides, which is consistent. Design gaps, if they matter for production: there is no iat/nbf check, no audience or purpose binding, and no revocation mechanism. Also, `exp` and `iat` are in milliseconds, unlike the JWT convention of seconds. That is only a problem if another service parses these tokens.
+
+SEVERITY SUMMARY
+Ship blocker: finding 1 (critical auth bypass). Fix before release: 2 and 7. Should fix: 3, 4, 5. Optional: 6 and the design notes.
+
+REPRODUCTION
+`npm test` passes 4/4. The PoC was run inline with `node -e` against ./src; no files were written.
+
+**Verdict: `src/tokens.js` is not safe to ship.** `verify()` accepts forged tokens, and the existing test suite passes anyway (4/4), so CI will not catch it. I changed no code and wrote no files.
+
+## Findings
+
+**1. [CRITICAL] `verify()`: the signature check is a prefix match, so an empty signature is accepted.**
+- Line 27, `if (!expected.startsWith(signature)) return null;`, accepts any signature that is a prefix of the real MAC. `''` is a prefix of everything.
+- **Input (confirmed):** `base64url('{"user":"root","exp":9e15}') + "."`, with no signature and no secret. `verify()` returns `{ user: 'root', exp: 9000000000000000 }`.
+- **Related oracle (one-character prefix confirmed accepted):** an attacker can submit one guessed character of the MAC at a time and recover the real MAC for any body they choose, in roughly 43 × 64 requests. The comparison is also not constant-time.
+- **Fix direction:** require the full expected length and compare with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. [MEDIUM] `verify()`: throws instead of returning `null` on attacker-controlled input.**
+- Lines 28–29 parse the body and read `payload.exp` with no guard.
+- **Confirmed:** `base64url('null') + "."` throws `TypeError`, and `base64url('not json') + "."` throws `SyntaxError`. This breaks the "payload or null" contract and can surface as an unhandled 500.
+- Drops to LOW once finding 1 is fixed, because only server-minted tokens could then reach the parse.
+- **Fix direction:** wrap the parse, return `null` on failure, and check for a non-null object.
+
+**3. [LOW] `verify()`: non-canonical tokens are accepted.**
+- `token.split('.')` ignores anything after the second segment. **Confirmed:** `<valid token>.junk` verifies.
+- This does not allow claim forgery, but it lets one token have many string forms, which breaks any revocation list or dedup keyed on the raw string.
+- **Fix direction:** require exactly two segments.
+
+**4. [LOW] `verify()`: the secret is not validated the way `sign()` validates it.**
+- `sign()` rejects secrets under 32 characters. `verify()` accepts `''`. **Confirmed:** a token signed with an empty HMAC key verifies with secret `''`.
+- This only matters if a deployment ends up with an empty or short verification secret, but the check should be symmetric.
+
+**5. [LOW] `sign()`: `ttlSeconds` is not validated.**
+- **Confirmed:** `ttlSeconds: NaN` produces `"exp":null`, and the token silently never verifies. Zero or negative TTLs silently produce expired tokens.
+- **Fix direction:** require a finite, positive TTL.
+
+**6. [LOW, advisory] `sign()`: the strength check is length only.**
+- `'a'.repeat(32)` is accepted. The 32-character minimum is not an entropy guarantee.
+
+**7. [MEDIUM, process] `test/tokens.test.js`: the tests miss every case above.**
+- "tampered payloads are rejected" swaps the body but keeps a real signature, so it never exercises empty or truncated signatures, extra segments, non-JSON or null bodies, or an empty-key token.
+- **Add tests for:** empty signature, one-character signature, extra segment, non-JSON body, and an empty-key token.
+
+**Checked and acceptable:**
+- The algorithm is fixed to HMAC-SHA256 with no `alg` header, so there is no algorithm-confusion path.
+- `iat` and `exp` are set after the claims spread, so callers cannot override them.
+- Expiry comparison is consistent (`exp <= now`, both in ms).
+
+**Design notes, not bugs:**
+- No `iat`/`nbf` check, no audience or purpose binding, and no revocation.
+- `exp` and `iat` are in milliseconds, unlike the JWT convention of seconds. This only matters if another service parses these tokens.
+
+## Severity summary
+- **Ship blocker:** finding 1.
+- **Fix before release:** findings 2 and 7.
+- **Should fix:** findings 3, 4, and 5.
+- **Optional:** finding 6 and the design notes.
+
+## Verification
+- `npm test` passes 4/4 on the current code.
+- The PoC was run inline with `node -e` against `./src`. Nothing was written to the repository.

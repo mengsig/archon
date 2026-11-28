@@ -1,0 +1,34 @@
+Queued as initiative **`ini_01M8GR45FH1AGRWRMY0K1STAZN`** with two coordinated items:
+
+- API: `qi_01M8GR45FJPHYAENBXDTGPT0RX`
+- Client: `qi_01M8GR45P4VE4SHEG9JXNHNPTB`
+
+Both include the README update, required test command, and commit in their acceptance criteria. They’re queued; I’ll report their outcomes when the runs finish.
+
+Done: Follow item cursors in inventory client. Implemented sequential cursor pagination in listItems, added cursor pass-through and stopping tests, and documented the contract. `npm test` passes (5/5) and `git diff --check` passes on committed head 3e820c42c110d9958a7f8d78323b42843442e326 (tree 70ea5e224e879519b2bc87351404af00a0ac44e6). No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3e820c42c110d9958a7f8d78323b42843442e326 on the run branch
+Branch `archon/jxnhnptb-follow-item-cursors-in-inventory-client` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f777553cd08bcb97bc96d849/inventory-client holds it (3 files changed, 41 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GR45P4VE4SHEG9JXNHNPTB`; land it in `main`: `archon merge qi_01M8GR45P4VE4SHEG9JXNHNPTB`.
+
+Done: Implement cursor pagination for GET /items. Implemented and committed cursor pagination for GET /items, including limit and cursor validation, ordered next_cursor pages, README documentation, and coverage for complete traversal and invalid inputs. python3 -m unittest passed (6 tests); git diff --check passed. Commit: c8f44bad58e82d7b6dd83df872d1fee2492b7c9a. No known open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c8f44bad58e82d7b6dd83df872d1fee2492b7c9a on the run branch
+Branch `archon/dtgpt0rx-implement-cursor-pagination-for-get-item` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f777553cd08bcb97bc96d849/inventory-api holds it (3 files changed, 83 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GR45FJPHYAENBXDTGPT0RX`; land it in `main`: `archon merge qi_01M8GR45FJPHYAENBXDTGPT0RX`.
+
+Initiative finished; coordinated result queued.
+
+Implemented sequential cursor pagination in listItems, added cursor pass-through and stopping tests, and documented the contract. `npm test` passes (5/5) and `git diff --check` passes on committed head 3e820c42c110d9958a7f8d78323b42843442e326 (tree 70ea5e224e879519b2bc87351404af00a0ac44e6). No known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 3e820c42c110d9958a7f8d78323b42843442e326 on the run branch
+
+Implemented and committed cursor pagination for GET /items, including limit and cursor validation, ordered next_cursor pages, README documentation, and coverage for complete traversal and invalid inputs. python3 -m unittest passed (6 tests); git diff --check passed. Commit: c8f44bad58e82d7b6dd83df872d1fee2492b7c9a. No known open issues.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c8f44bad58e82d7b6dd83df872d1fee2492b7c9a on the run branch

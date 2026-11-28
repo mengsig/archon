@@ -1,0 +1,22 @@
+**Root cause:** `updatePrice` invalidates only the product cache entry. The category listing cache keeps its own copy of each price and is never invalidated, so category pages serve the old price until the listing's 600-second TTL expires.
+
+I read the code in the mirror at `repos/ask-cache-invalidation` (base commit `36786ff`, `package.json` name `catalog-service`). I did not run the tests or change anything.
+
+**The two paths:**
+
+- **Product page** (`src/catalog.js:12-20`): reads `product:<sku>` from the cache and falls back to the store on a miss. `updatePrice` deletes that key (`src/pricing.js:11`), so the next product read goes to the store and is fresh. This is why it updates immediately.
+- **Category page** (`src/catalog.js:22-33`): reads `listing:<category>:<page>`. On a miss it builds `{sku, name, priceCents}` rows from the store and caches them with `LISTING_TTL_SECONDS`. Those rows are copies, so `priceCents` is frozen in the cache. `updatePrice` never touches `listing:*` keys.
+
+**Why the delay is about ten minutes:** `LISTING_TTL_SECONDS = 600` (`src/config.js:7`). `TtlCache.set` stamps `expiresAt` at write time (`src/cache.js:21`), and reads do not extend it. So a stale listing lives until 600 s after the moment it was last built. The delay is anywhere from 0 to 10 minutes, depending on when that page was last built. The config comment says listings are cached separately because they are expensive to build, which is why the TTL is long.
+
+**Why the test suite missed it:** `test/catalog.test.js:13-18` checks that the product page sees the new price, but no test reads a listing after `updatePrice`.
+
+**Fix options:**
+
+1. **Recommended:** cache only the ordered SKUs per category page, and join live prices from `product(sku)` when building the response. A price change then needs no listing invalidation, and the bug cannot recur for any field read this way. The cost is up to 24 cache lookups per page, which the product cache serves cheaply.
+2. **Narrower:** in `updatePrice`, look up the product's category and delete every `listing:<category>:<page>` key. This needs a way to enumerate the pages, for example by tracking listing keys per category. It is more fragile than option 1.
+3. **Mitigation only:** lower `LISTING_TTL_SECONDS`. This reduces the window but does not remove it.
+
+Add a regression test that updates a price and then reads the listing.
+
+**Caveat:** the cache is an in-process `Map` (`src/cache.js:7`). If the service runs more than one instance, `updatePrice` clears only the cache in the instance that handled the change. Other instances can serve the old price for up to an hour from the product cache, or ten minutes from the listing cache. Support should check whether the reports come from one instance or several.

@@ -1,0 +1,20 @@
+Implemented TT-101 to TT-104 in the tasktracker repo, one commit each on main: 46dfa5b (TT-101 InvalidDate for impossible/malformed due dates and out-of-range offsets), 01f57b5 (TT-102 RFC 4180 CSV export via csv module with CRLF), 826d591 (TT-103 search query language with AND terms, quoted phrases, tag:/status: fields and QueryError), d8499ac (TT-104 LIFO undo for add/complete/delete with NothingToUndo). Added tests/test_dates.py, tests/test_export.py, tests/test_search.py, tests/test_store_undo.py. `python3 -m unittest discover -s tests -t .` runs 40 tests, all OK. Standard library only. Working tree clean. Assumptions: completing an already-done task is recorded and its undo restores done; field names and status values are case-insensitive; no Co-Authored-By trailer per project CLAUDE.md.
+
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit on `main`. The suite runs 40 tests, all passing, with only the standard library.
+
+| Ticket | Commit | What changed |
+|---|---|---|
+| TT-101 | `46dfa5b` | `parse_due` raises `InvalidDate` (a `ValueError` subclass) for impossible dates, unsupported forms and out-of-range offsets. The message contains the original text. |
+| TT-102 | `01f57b5` | `to_csv` uses the `csv` module with CRLF line endings, so only fields containing comma, quote, CR or LF are quoted. |
+| TT-103 | `826d591` | `search` parses the query into AND-ed terms. Quotes group phrases, `tag:` and `status:` filter on fields, and malformed queries raise `QueryError`. |
+| TT-104 | `d8499ac` | `TaskStore.undo()` reverts the most recent successful add, complete or delete. Restored tasks keep their id, tags, due date and status. Ids are never reused. |
+
+New tests are in `tests/test_dates.py`, `tests/test_export.py`, `tests/test_search.py` and `tests/test_store_undo.py`.
+
+Choices I made where the tickets left room:
+- **TT-101:** Digits are matched as `[0-9]`, so Unicode digits are rejected.
+- **TT-103:** Field names and status values are case-insensitive. An empty value such as `tag:` raises `QueryError`. A quoted `"3:1"` is a phrase, not a field.
+- **TT-104:** Completing a task that is already done is recorded, and undoing it leaves the task done. Literally, the ticket says undo "makes the task open again", which would wrongly reopen a task that was done before. `undo()` returns the affected task.
+- **Commit trailers:** I added no `Co-Authored-By` line, because the project CLAUDE.md asks for no attribution and takes precedence over the attribution reminder. Commits use the repo's configured `mengsig` identity.
+
+The working tree is clean and the `__pycache__` directories are removed.

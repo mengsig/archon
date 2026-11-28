@@ -1,0 +1,18 @@
+Queued as **`qi_01M8GHTSJ8SGSXV49MV9YS0HWS`** in `quality-ledger-transfer`. The work brief covers full `SPEC.md` behavior, focused edge-case tests, standard-library-only implementation, verification, and a commit.
+
+From implement (agt_01M8GHTT0WZAZ33X5NGW4A6G6N; escalation): Concurrency scope discovered in SPEC.md: implementing Ledger requires linearizable threaded transfers and snapshots, and assignment step 1 explicitly says if risky (including concurrency), commit nothing and escalate; append “re-queue on adaptive” to the error. Baseline captured: `python -m unittest -v` fails both existing tests at Ledger.__init__ with NotImplementedError. No files changed, no commit. Please route/re-queue under adaptive as directed.
+
+Failed: Implement ledger.py to SPEC.md — implement: ESCALATE: SPEC.md requires linearizable transfers and snapshots across threads, which falls under the assignment’s explicit concurrency-risk stop rule. Full detail: archon queue show qi_01M8GHTSJ8SGSXV49MV9YS0HWS --full
+
+Done: Implement ledger.py to SPEC.md. Implemented validated, copy-isolated ledger balances with atomic threaded transfers and snapshots in ledger.py; added focused edge and concurrency coverage in test_ledger.py. Previously Ledger construction raised NotImplementedError; now all 10 tests pass. Review passed with no findings. Worktree clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJ3HMD50517QSMTX00GPVZ)
+
+SHIPPED: commit d22598bfd86c59957816415ad7321db87ebafa75 on the run branch
+Branch `archon/v9ys0hws-implement-ledger-py-to-spec-md` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/3f58c56dde84f932a0871531/quality-ledger-transfer holds it (2 files changed, 131 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GHTSJ8SGSXV49MV9YS0HWS`; land it in `main`: `archon merge qi_01M8GHTSJ8SGSXV49MV9YS0HWS`.
+
+Implemented validated, copy-isolated ledger balances with atomic threaded transfers and snapshots in ledger.py; added focused edge and concurrency coverage in test_ledger.py. Previously Ledger construction raised NotImplementedError; now all 10 tests pass. Review passed with no findings. Worktree clean.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJ3HMD50517QSMTX00GPVZ)
+
+SHIPPED: commit d22598bfd86c59957816415ad7321db87ebafa75 on the run branch

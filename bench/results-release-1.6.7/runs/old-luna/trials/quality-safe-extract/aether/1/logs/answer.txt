@@ -1,0 +1,3 @@
+Implemented `extract` with full batch and filesystem preflight, symlink and collision checks, and exclusive file creation. Added focused validation tests.
+
+All 12 tests pass. Commit: `4b5a9a7` (`Implement safe file extraction validation`).

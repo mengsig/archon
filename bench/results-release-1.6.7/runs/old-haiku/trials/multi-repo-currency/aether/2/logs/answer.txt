@@ -1,0 +1,22 @@
+Both repos now handle currency, and each has one new commit: `ledger` at `309237a` and `reports` at `16d94f5`. Both test suites pass on the committed state: `cargo test` runs 9 integration tests, and `python3 -m unittest` runs 4.
+
+**ledger** (Rust)
+- Input lines take an optional fourth column. A missing column means `USD`.
+- Output header is `date,account,amount_cents,currency`, and every row carries its currency.
+- A malformed code exits 2 with `line N: bad currency "..."` on stderr. Other input errors still exit 1.
+- `parse_line` now returns a typed `ParseError` (`Malformed` or `BadCurrency`) so `main` can pick the exit status.
+
+**reports** (Python)
+- Output is `account,currency,total_cents`, sorted by account then currency.
+- A CSV with no `currency` column counts as `USD`.
+- A malformed code prints `error: line N: ...` to stderr and exits 2.
+
+I also ran `ledger | reports` end to end on a mixed USD/EUR input and got the expected totals.
+
+Both READMEs are updated to match.
+
+Choices I made that you may want to change:
+- **Currency is trimmed** like the other TSV fields, so `" EUR"` is accepted. Strict matching would reject it.
+- **An empty fourth column is an error (exit 2)**, not a default to `USD`. Only a fully absent column defaults.
+- **The reports error includes the CSV line number**, which the spec did not ask for.
+- **Commits have no attribution line.** CLAUDE.md says not to add one, and it takes precedence over the reminder that asked for a Co-Authored-By trailer.

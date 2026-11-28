@@ -1,0 +1,18 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `5591fcc` on `main`.
+
+**The bug:** in `window.py`, the list comprehension used `range(len(items) - size)`, which stops one window short and dropped the final window. The fix is `range(len(items) - size + 1)`.
+
+**Checked beyond the tests:**
+- `[]` with size 1 returns `[]`.
+- A single item with size 1 returns `[[1]]`.
+- A list shorter than `size` returns `[]`, the same as before.
+- A size equal to the list length returns one window.
+- Size 1 returns each item as its own window.
+
+The size-≤0 `ValueError` check is unchanged.
+
+**Choices I made:**
+- **No Co-Authored-By line on the commit.** The attribution reminder asked for one, but your CLAUDE.md says not to attribute commits to Claude Code, and it takes precedence. Tell me if you want the line added.
+- **No extra assertions added.** The function is a one-line fix, and I kept it minimal. Happy to add input checks if you want them.
+
+I removed the `__pycache__/` directory the test run created, so the working tree is clean.

@@ -1,0 +1,76 @@
+diff --git a/README.md b/README.md
+index bfda2ff..bf57052 100644
+--- a/README.md
++++ b/README.md
+@@ -8,3 +8,7 @@ Client for `inventory-api`. Every function takes a `transport`,
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+ Run the tests with `npm test`.
++
++`listItems` requests the first `/items` page without a cursor, then follows
++each `next_cursor` unchanged until it is `null` or absent. It returns the
++items from all pages in response order.
+diff --git a/client.js b/client.js
+index 6825096..8c8f1dc 100644
+--- a/client.js
++++ b/client.js
+@@ -12,8 +12,16 @@ async function request(transport, path, query = {}) {
+ }
+ 
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  let cursor;
++
++  while (true) {
++    const query = cursor === undefined ? {} : { cursor };
++    const body = await request(transport, '/items', query);
++    items.push(...body.items);
++    if (body.next_cursor == null) return items;
++    cursor = body.next_cursor;
++  }
+ }
+ 
+ async function getItem(transport, id) {
+diff --git a/test/client.test.js b/test/client.test.js
+index db0605e..d4a2512 100644
+--- a/test/client.test.js
++++ b/test/client.test.js
+@@ -20,6 +20,36 @@ test('lists items', async () => {
+   assert.deepEqual(await listItems(singlePage), ITEMS);
+ });
+ 
++test('follows cursors and returns items in page order', async () => {
++  const cursor = 'opaque cursor / unchanged';
++  const requests = [];
++  const transport = async (request) => {
++    requests.push(request);
++    if (requests.length === 1) {
++      return { status: 200, body: { items: [ITEMS[0]], next_cursor: cursor } };
++    }
++    return { status: 200, body: { items: [ITEMS[1]], next_cursor: null } };
++  };
++
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.deepEqual(requests, [
++    { method: 'GET', path: '/items', query: {} },
++    { method: 'GET', path: '/items', query: { cursor } },
++  ]);
++});
++
++test('stops when next_cursor is absent', async () => {
++  const requests = [];
++  const transport = async (request) => {
++    requests.push(request);
++    return { status: 200, body: { items: ITEMS } };
++  };
++
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.equal(requests.length, 1);
++  assert.deepEqual(requests[0].query, {});
++});
++
+ test('gets one item and reports failures', async () => {
+   assert.equal((await getItem(singlePage, 2)).sku, 'SKU-0002');
+   await assert.rejects(getItem(singlePage, 9), /404/);

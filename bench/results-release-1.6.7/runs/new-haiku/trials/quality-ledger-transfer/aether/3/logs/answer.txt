@@ -1,0 +1,25 @@
+Implemented ledger.py per SPEC.md and extended test_ledger.py; committed as cbf1509 on main (author mengsig). All 26 tests pass, repeated runs clean. A mutation check (overflow guard removed in a temp copy) makes the suite fail as expected.
+
+Implementation:
+- Construction validates a dict of nonempty str names to built-in int balances in [0, MAX_BALANCE]; it copies the input, so later mutation of the caller's dict doesn't reach the ledger. Booleans are rejected via `type(x) is int`.
+- transfer validates the amount first (ValueError), then both accounts (KeyError), then applies the rules: insufficient funds and destination overflow return False with no change; same-account returns True iff funds suffice and never mutates.
+- snapshot returns a copy.
+- A single threading.Lock guards every transfer and snapshot. That makes each transfer atomic, keeps snapshots from seeing partial transfers, and rules out deadlock since only one lock is held.
+
+Tests: kept the two original tests, and added coverage for construction validation and boundaries, copy semantics, amount and account error ordering, overflow boundaries, same-account behavior, and concurrency (total preserved under contention, opposite transfers finishing, snapshot totals never torn). The concurrency tests use thread joins with a timeout and no random inputs or wall-clock assertions.
+
+Choices to review:
+- A single global lock rather than per-account locks. It's simpler and clearly correct; it serializes all transfers on one ledger, which is a throughput cost if that matters.
+- Non-string account names passed to transfer raise KeyError (treated as unknown accounts), not TypeError.
+- Commit has no Co-Authored-By trailer, because the repo's CLAUDE.md says not to add Claude attribution to commits.
+
+I implemented `ledger.py` to the spec, extended the tests, and committed the work as `cbf1509` on `main`. All 26 tests pass, and repeated runs were clean.
+
+- **`ledger.py`**: Construction validates names and balances, copies the input, and rejects booleans. `transfer` checks the amount first, then the accounts, then applies the funds and overflow rules. `snapshot` returns a copy. One `threading.Lock` guards every transfer and snapshot, which keeps transfers atomic and rules out deadlock.
+- **`test_ledger.py`**: I kept the two original tests and added coverage for each validation error, the boundary values, same-account transfers, copy semantics, and concurrent invariants. The concurrency tests check totals and completion, not timing.
+- **Mutation check**: I removed the overflow guard in a temporary copy outside the repo, and the suite failed as expected.
+
+Choices to review:
+- **Single lock**: I used one global lock rather than per-account locks. It is simpler and clearly correct, but it serializes all transfers on a ledger. Per-account locks would be the next step if throughput matters.
+- **Non-string account names**: `transfer` raises `KeyError` for them, treating them as unknown accounts rather than raising `TypeError`.
+- **No `Co-Authored-By` trailer**: The repo's CLAUDE.md says not to add Claude attribution to commits, and the later reminder defers to user instructions on that. The commit is authored as `mengsig`.

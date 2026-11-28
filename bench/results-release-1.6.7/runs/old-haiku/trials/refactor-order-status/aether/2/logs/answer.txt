@@ -1,0 +1,30 @@
+Refactored the orders crate's order status from String to an OrderStatus enum and committed it as d7b7de4 on main. `cargo test` passes (3 integration + 3 new unit tests) and clippy is clean.
+
+What changed:
+- src/status.rs (new): OrderStatus { Pending, Paid, Shipped, Cancelled } deriving Debug, Clone, Copy, PartialEq, Eq, Hash; as_str; can_transition_to (exactly the four lifecycle edges); Display via f.pad (keeps width/alignment behaviour of the old String); FromStr with Err = ParseStatusError; ParseStatusError (Debug, Clone, PartialEq, Eq, Display "unknown status {:?}", std::error::Error, input() accessor).
+- src/lib.rs: pub mod status; re-exports OrderStatus and ParseStatusError at the crate root.
+- src/order.rs, billing.rs, shipping.rs, report.rs: use the enum; pay/ship/cancel check can_transition_to and keep their exact error messages.
+- Status literals now appear only in src/status.rs within src/. Tests in tests/orders.rs are unchanged and still compile.
+
+Choices I made:
+- OrderStatus does not derive Ord. A derived order would follow declaration order, but the report sorts alphabetically, so status_counts sorts by as_str() to keep the output identical.
+- status_counts now returns Vec<(OrderStatus, usize)> instead of Vec<(String, usize)>. This is the public signature change the enum implies; callers using .to_string() still work.
+- from_line maps a parse failure with e.to_string(), so its error text is unchanged, and the status check still runs after the id and total checks, as before.
+- Test literals ("pending", "order 2 cannot be shipped: it is pending") were left in tests/, because they assert the observable output that must not change.
+- Commit has no Co-Authored-By or generated-by line, following the CLAUDE.md rule.
+
+Verification: I ran a probe program against HEAD and against the refactor. It covered 13 from_line inputs (including bad id/total, bad field counts, case and whitespace variants), every pay/ship/cancel from each starting state, status_counts ordering, outstanding/ready/is_open, and width padding. Output was byte-identical across 33 lines. The probe was a temporary test file and worktree that I removed afterwards, along with the /tmp scratch directory.
+
+The refactor is committed as `d7b7de4` on `main`. `cargo test` passes (3 integration tests and 3 new unit tests), and clippy is clean.
+
+- **New `src/status.rs`:** holds `OrderStatus` with `as_str`, `Display`, `FromStr`, and `can_transition_to`, plus the public `ParseStatusError`. The status literals now appear only in this file under `src/`.
+- **Other modules:** `Order::status` is the enum. `pay`, `ship`, and `cancel` check the lifecycle through `can_transition_to` and keep their exact error messages. The crate root re-exports `OrderStatus` and `ParseStatusError`.
+
+Choices you may want to review:
+
+- **`OrderStatus` does not derive `Ord`.** A derived order would follow declaration order, but the report sorts alphabetically. `status_counts` sorts by `as_str()` instead, so its output is unchanged.
+- **`status_counts` returns `Vec<(OrderStatus, usize)>`** instead of `Vec<(String, usize)>`. This is the one public signature change beyond `Order::status` itself. Existing callers that use `.to_string()` still compile.
+- **Tests left alone.** `tests/orders.rs` still contains literals like `"pending"` because it asserts the observable output, which must not change.
+- **No attribution line** in the commit, following your CLAUDE.md rule against it.
+
+To check "exactly the same", I ran a probe program against HEAD and against the refactor. It covered parse errors, every pay/ship/cancel from each starting state, report ordering, and padding. The output was byte-identical. I removed the temporary probe files afterwards.

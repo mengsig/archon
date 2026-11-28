@@ -1,0 +1,16 @@
+The repository is registered as `feature-token-bucket` with local shipping. I’m checking the mirror’s spec and the direct pipeline’s gates before I queue it.
+
+The implementation is queued as `qi_01M8GGMHC6JMB31BY5P6PA1P4M`. I’m checking the queue for its outcome so I can confirm the commit once the run finishes.
+
+Done: Implement specified token bucket rate limiter. Implemented TokenBucket and KeyedLimiter to match SPEC.md, including continuous capped refill, backwards-clock handling, validation, wait semantics, independent keyed buckets, and LRU eviction. Expanded coverage from 3 failing tests to 9 passing tests; py_compile and diff checks pass. Committed as 30409b3716a8ee7305c6a1f6fbf24be9e922ccda; independent whole-change review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGQZ7AFPRE489MT5RX6K33)
+
+SHIPPED: commit 30409b3716a8ee7305c6a1f6fbf24be9e922ccda on the run branch
+Branch `archon/p6pa1p4m-implement-specified-token-bucket-rate-li` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/b1429d4b96b269d22273526d/feature-token-bucket holds it (2 files changed, 132 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GGMHC6JMB31BY5P6PA1P4M`; land it in `main`: `archon merge qi_01M8GGMHC6JMB31BY5P6PA1P4M`.
+
+Implemented TokenBucket and KeyedLimiter to match SPEC.md, including continuous capped refill, backwards-clock handling, validation, wait semantics, independent keyed buckets, and LRU eviction. Expanded coverage from 3 failing tests to 9 passing tests; py_compile and diff checks pass. Committed as 30409b3716a8ee7305c6a1f6fbf24be9e922ccda; independent whole-change review passed with no findings. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GGQZ7AFPRE489MT5RX6K33)
+
+SHIPPED: commit 30409b3716a8ee7305c6a1f6fbf24be9e922ccda on the run branch

@@ -1,0 +1,3 @@
+Queued **Implement `ledger.py` to SPEC.md** as item `qi_01M8GNZYY2Y0TRCR6EWYDRGVSS` in the `quality-ledger-transfer` repository. It includes focused tests, standard-library-only implementation, and a commit; the direct pipeline will report the outcome.
+
+Cancelled: Implement ledger.py to SPEC.md. archon-bench: trial timeout

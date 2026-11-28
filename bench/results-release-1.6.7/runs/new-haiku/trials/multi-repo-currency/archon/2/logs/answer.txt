@@ -1,0 +1,40 @@
+Queued one initiative, `ini_01M8GN2T2TH33W5KQQWKCTFA62`, with an item in each repository. Both are in the queue; nothing has run yet.
+
+- **`ledger`** (`qi_01M8GN2T2VS1P9N7Y1EBB3796Y`): optional 4th currency column, default `USD`. Strict validation, with a line-numbered error and exit 2 for a bad code. Output header is `date,account,amount_cents,currency`. Tests and README to be updated.
+- **`reports`** (`qi_01M8GN2TVKCZ9XY1HFN17CXCA3`): totals per account and currency, sorted by account then currency. Old CSV without a currency column counts as `USD`. A bad code prints to stderr and exits 2. Tests and README to be updated.
+
+Both use the `direct` pipeline with standard review. The repos ship local, so each change is a local commit on its branch and nothing is pushed.
+
+I did not add `after` between the two members. Each can build and test against the shared CSV contract without the other's code.
+
+I'll report back when both items finish, or if either fails.
+
+Done: reports: per-currency totals. reports now prints per-account, per-currency totals as account,currency,total_cents, sorted by account then currency. A missing currency column counts as USD. A malformed currency (including a truncated row) prints an error to stderr with the physical line number and exits 2 with no stdout. Commit d7b0294 (tree 5b01537701f2a7de06f9f487417c406cac2611b7) on archon/n17cxca3-reports-per-currency-totals, under the repo's configured identity; not pushed. Checks: python3 -m unittest -v gives 5/5 OK; py_compile OK; manual runs confirmed output and exit codes. Review: first reviewer (agt_01M8GN3W9JX605HKD7TFKVNE2B) failed with one blocking finding, a truncated row defaulting to USD; fixed in d7b0294 with a regression test; delta reviewer (agt_01M8GN54N8VKWCXVQPSRYEB5B5) passed it. Open follow-up (non-blocking): the short-row message reads "malformed currency None" and could be clearer. Still running: the reviewer process pids 3407489 and 3412463 (claude -p, handed to me); they stop when this task ends. Stop them with kill <pid> if they remain. Nothing was started by me that needs stopping. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GN3W9JX605HKD7TFKVNE2B), claude-code/claude-haiku-5-5 (agent agt_01M8GN54N8VKWCXVQPSRYEB5B5)
+
+SHIPPED: commit d7b02944bf5e9b9372dfea0a866b8dcd60235b47 on the run branch
+Branch `archon/n17cxca3-reports-per-currency-totals` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/b4a699b40e8a398c2823a468/reports holds it (3 files changed, 112 insertions(+), 16 deletions(-)). Review: `archon diff qi_01M8GN2TVKCZ9XY1HFN17CXCA3`; land it in `main`: `archon merge qi_01M8GN2TVKCZ9XY1HFN17CXCA3`.
+
+Done: ledger: currency column. ledger: multi-currency TSV→CSV conversion is committed on archon/ebb3796y-ledger-currency-column as 5becf19935ab81bbf83fe6fc4f3939f6763c035d (tree c324e3d54d2a97976f6468579a8f0a3bb140ddee), not pushed. ledger accepts an optional 4th TSV column (exactly three uppercase ASCII letters, default USD) and writes header date,account,amount_cents,currency with the currency on every row. A malformed currency prints "line N: ..." to stderr and exits 2; other input errors still exit 1. Checks on the final tree: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), cargo clippy --all-targets -D warnings clean, cargo fmt --check clean. Review: agt_01M8GN4SJXHZ2QBC3H3SDPK9BJ passed the head with no blocking findings. Open, non-blocking: README does not yet document an empty-but-present 4th column (it is rejected with exit 2); the line-number test has no blank/comment lines before the bad line; non-UTF-8 stdin panics (pre-existing). Reports repo untouched. Process note: the reviewer briefly ran git archive and cargo fmt in a /tmp directory, outside the workspace, and removed it; no repo files changed. Nothing left running from me; the reviewer's claude -p process (pid 3410705) is Aether's and stops when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GN4SJXHZ2QBC3H3SDPK9BJ)
+
+SHIPPED: commit 5becf19935ab81bbf83fe6fc4f3939f6763c035d on the run branch
+Branch `archon/ebb3796y-ledger-currency-column` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/b4a699b40e8a398c2823a468/ledger holds it (5 files changed, 194 insertions(+), 21 deletions(-)). Review: `archon diff qi_01M8GN2T2VS1P9N7Y1EBB3796Y`; land it in `main`: `archon merge qi_01M8GN2T2VS1P9N7Y1EBB3796Y`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GN2T2VS1P9N7Y1EBB3796Y ended and its cargo target directory went.
+
+reports now prints per-account, per-currency totals as account,currency,total_cents, sorted by account then currency. A missing currency column counts as USD. A malformed currency (including a truncated row) prints an error to stderr with the physical line number and exits 2 with no stdout. Commit d7b0294 (tree 5b01537701f2a7de06f9f487417c406cac2611b7) on archon/n17cxca3-reports-per-currency-totals, under the repo's configured identity; not pushed. Checks: python3 -m unittest -v gives 5/5 OK; py_compile OK; manual runs confirmed output and exit codes. Review: first reviewer (agt_01M8GN3W9JX605HKD7TFKVNE2B) failed with one blocking finding, a truncated row defaulting to USD; fixed in d7b0294 with a regression test; delta reviewer (agt_01M8GN54N8VKWCXVQPSRYEB5B5) passed it. Open follow-up (non-blocking): the short-row message reads "malformed currency None" and could be clearer. Still running: the reviewer process pids 3407489 and 3412463 (claude -p, handed to me); they stop when this task ends. Stop them with kill <pid> if they remain. Nothing was started by me that needs stopping. REVIEW: pass
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GN3W9JX605HKD7TFKVNE2B), claude-code/claude-haiku-5-5 (agent agt_01M8GN54N8VKWCXVQPSRYEB5B5)
+
+SHIPPED: commit d7b02944bf5e9b9372dfea0a866b8dcd60235b47 on the run branch
+
+ledger: multi-currency TSV→CSV conversion is committed on archon/ebb3796y-ledger-currency-column as 5becf19935ab81bbf83fe6fc4f3939f6763c035d (tree c324e3d54d2a97976f6468579a8f0a3bb140ddee), not pushed. ledger accepts an optional 4th TSV column (exactly three uppercase ASCII letters, default USD) and writes header date,account,amount_cents,currency with the currency on every row. A malformed currency prints "line N: ..." to stderr and exits 2; other input errors still exit 1. Checks on the final tree: cargo test passes (4 CLI tests in tests/cli.rs, 6 library tests), cargo clippy --all-targets -D warnings clean, cargo fmt --check clean. Review: agt_01M8GN4SJXHZ2QBC3H3SDPK9BJ passed the head with no blocking findings. Open, non-blocking: README does not yet document an empty-but-present 4th column (it is rejected with exit 2); the line-number test has no blank/comment lines before the bad line; non-UTF-8 stdin panics (pre-existing). Reports repo untouched. Process note: the reviewer briefly ran git archive and cargo fmt in a /tmp directory, outside the workspace, and removed it; no repo files changed. Nothing left running from me; the reviewer's claude -p process (pid 3410705) is Aether's and stops when this stage ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GN4SJXHZ2QBC3H3SDPK9BJ)
+
+SHIPPED: commit 5becf19935ab81bbf83fe6fc4f3939f6763c035d on the run branch

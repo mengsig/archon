@@ -1,0 +1,20 @@
+Queued as **qi_01M8GV0ENMRQ4FQDC60SXJMGPD** in the `direct` pipeline for `refactor-order-status`. The run will implement the enum, preserve behavior, run `cargo test`, and commit the change.
+
+Failed: Refactor order status to OrderStatus enum — implement: ESCALATE: The requested Order::status: String → OrderStatus change is an intentional public API break, which the stage contract explicitly requires escalating without committing. Full detail: archon queue show qi_01M8GV0ENMRQ4FQDC60SXJMGPD --full
+
+Freed 0.0 GiB of build output: item qi_01M8GV0ENMRQ4FQDC60SXJMGPD ended and its cargo target directory went.
+
+Done: Refactor order status to OrderStatus enum. Refactored order lifecycle state to public OrderStatus across src/status.rs, src/order.rs, src/billing.rs, src/shipping.rs, and src/report.rs; exported the enum and ParseStatusError from src/lib.rs and added enum/transition coverage in tests/orders.rs. Previously status was stored and compared as String; now it is typed while retaining parsing, errors, report output and ordering. cargo fmt --check, cargo test (2 unit and 3 integration tests), and git diff --check passed on e2cc5e99da06385abb7d441362c2025e8d282cc8; tree 1f563a050fa620e84dad09a894a7f80165cd47dd. No workers; one independent reviewer passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GV68XAKDS886Z0V5F534CR)
+
+SHIPPED: commit e2cc5e99da06385abb7d441362c2025e8d282cc8 on the run branch
+Branch `archon/0sxjmgpd-refactor-order-status-to-orderstatus-enu` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d5eb147882434bc87ab6577b/refactor-order-status holds it (7 files changed, 161 insertions(+), 25 deletions(-)). Review: `archon diff qi_01M8GV0ENMRQ4FQDC60SXJMGPD`; land it in `main`: `archon merge qi_01M8GV0ENMRQ4FQDC60SXJMGPD`.
+
+Freed 0.0 GiB of build output: item qi_01M8GV0ENMRQ4FQDC60SXJMGPD ended and its cargo target directory went.
+
+Refactored order lifecycle state to public OrderStatus across src/status.rs, src/order.rs, src/billing.rs, src/shipping.rs, and src/report.rs; exported the enum and ParseStatusError from src/lib.rs and added enum/transition coverage in tests/orders.rs. Previously status was stored and compared as String; now it is typed while retaining parsing, errors, report output and ordering. cargo fmt --check, cargo test (2 unit and 3 integration tests), and git diff --check passed on e2cc5e99da06385abb7d441362c2025e8d282cc8; tree 1f563a050fa620e84dad09a894a7f80165cd47dd. No workers; one independent reviewer passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GV68XAKDS886Z0V5F534CR)
+
+SHIPPED: commit e2cc5e99da06385abb7d441362c2025e8d282cc8 on the run branch

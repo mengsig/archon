@@ -1,0 +1,456 @@
+======================================================================
+ERROR: test_empty_batch (test_safe_extract.ExtractBasics.test_empty_batch)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract.py", line 19, in test_empty_batch
+    self.assertEqual(extract([], Path(directory)), [])
+                     ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_nested_files (test_safe_extract.ExtractBasics.test_nested_files)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract.py", line 13, in test_nested_files
+    self.assertEqual(extract(entries, root), ["docs/readme.txt", "empty"])
+                     ~~~~~~~^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_dangling_symlink_and_target_symlink (test_safe_extract_hidden.ExtractEdges.test_dangling_symlink_and_target_symlink) (name='dangling')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 83, in test_dangling_symlink_and_target_symlink
+    extract([(name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_dangling_symlink_and_target_symlink (test_safe_extract_hidden.ExtractEdges.test_dangling_symlink_and_target_symlink) (name='dangling/child')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 83, in test_dangling_symlink_and_target_symlink
+    extract([(name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_dangling_symlink_and_target_symlink (test_safe_extract_hidden.ExtractEdges.test_dangling_symlink_and_target_symlink) (name='link')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 83, in test_dangling_symlink_and_target_symlink
+    extract([(name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions) (names=('a', 'a'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 38, in test_duplicate_and_prefix_collisions
+    extract([(name, b"data") for name in names], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions) (names=('a', 'a/b'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 38, in test_duplicate_and_prefix_collisions
+    extract([(name, b"data") for name in names], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions) (names=('a/b', 'a'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 38, in test_duplicate_and_prefix_collisions
+    extract([(name, b"data") for name in names], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions) (names=('a/b/c', 'a'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 38, in test_duplicate_and_prefix_collisions
+    extract([(name, b"data") for name in names], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_duplicate_and_prefix_collisions (test_safe_extract_hidden.ExtractEdges.test_duplicate_and_prefix_collisions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 40, in test_duplicate_and_prefix_collisions
+    self.assertEqual(extract([("a/b", b"1"), ("a/c", b"2")], self.root), ["a/b", "a/c"])
+                     ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_existing_file_as_parent_and_directory_as_target (test_safe_extract_hidden.ExtractEdges.test_existing_file_as_parent_and_directory_as_target) (name='file/child')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 55, in test_existing_file_as_parent_and_directory_as_target
+    extract([("new", b"ok"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_existing_file_as_parent_and_directory_as_target (test_safe_extract_hidden.ExtractEdges.test_existing_file_as_parent_and_directory_as_target) (name='directory')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 55, in test_existing_file_as_parent_and_directory_as_target
+    extract([("new", b"ok"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_existing_target_is_not_overwritten (test_safe_extract_hidden.ExtractEdges.test_existing_target_is_not_overwritten)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 46, in test_existing_target_is_not_overwritten
+    extract([("new/first", b"ok"), ("kept", b"changed")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_external_symlink_preserves_outside (test_safe_extract_hidden.ExtractEdges.test_external_symlink_preserves_outside)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 73, in test_external_symlink_preserves_outside
+    extract([("new", b"ok"), ("link/kept", b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_literal_percent_unicode_binary_and_existing_directory (test_safe_extract_hidden.ExtractEdges.test_literal_percent_unicode_binary_and_existing_directory)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 109, in test_literal_percent_unicode_binary_and_existing_directory
+    self.assertEqual(extract(entries, str(self.root)), [name for name, _ in entries])
+                     ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight) (entry=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 101, in test_malformed_batch_preflight
+    extract([("first", b"ok"), entry], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight) (entry=('x',))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 101, in test_malformed_batch_preflight
+    extract([("first", b"ok"), entry], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight) (entry=('x', b'a', b'b'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 101, in test_malformed_batch_preflight
+    extract([("first", b"ok"), entry], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight) (entry=(3, b'a'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 101, in test_malformed_batch_preflight
+    extract([("first", b"ok"), entry], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight) (entry=('x', 'text'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 101, in test_malformed_batch_preflight
+    extract([("first", b"ok"), entry], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_malformed_batch_preflight (test_safe_extract_hidden.ExtractEdges.test_malformed_batch_preflight)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 104, in test_malformed_batch_preflight
+    extract(iter([]), self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_root_validation_even_for_empty_batch (test_safe_extract_hidden.ExtractEdges.test_root_validation_even_for_empty_batch) (root=PosixPath('/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/tmp_tte6b5v/alias'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 94, in test_root_validation_even_for_empty_batch
+    extract([], root)
+    ~~~~~~~^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_root_validation_even_for_empty_batch (test_safe_extract_hidden.ExtractEdges.test_root_validation_even_for_empty_batch) (root=PosixPath('/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/tmp_tte6b5v/file'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 94, in test_root_validation_even_for_empty_batch
+    extract([], root)
+    ~~~~~~~^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_root_validation_even_for_empty_batch (test_safe_extract_hidden.ExtractEdges.test_root_validation_even_for_empty_batch) (root=PosixPath('/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/tmp_tte6b5v/missing'))
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 94, in test_root_validation_even_for_empty_batch
+    extract([], root)
+    ~~~~~~~^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_root_validation_even_for_empty_batch (test_safe_extract_hidden.ExtractEdges.test_root_validation_even_for_empty_batch) (root=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 94, in test_root_validation_even_for_empty_batch
+    extract([], root)
+    ~~~~~~~^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_sibling_prefix_escape (test_safe_extract_hidden.ExtractEdges.test_sibling_prefix_escape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 31, in test_sibling_prefix_escape
+    extract([("../out-sibling/leak", b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_symlink_parent_even_inside_root (test_safe_extract_hidden.ExtractEdges.test_symlink_parent_even_inside_root)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 63, in test_symlink_parent_even_inside_root
+    extract([("link/child", b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='../escape')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='/absolute')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a/../../escape')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a/../b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a/./b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a//b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a/')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='..')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='C:/x')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a\\b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='a\x00b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_traversal_and_noncanonical_names (test_safe_extract_hidden.ExtractEdges.test_traversal_and_noncanonical_names) (name='//host/x')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/test_safe_extract_hidden.py", line 23, in test_traversal_and_noncanonical_names
+    extract([("valid/file", b"first"), (name, b"bad")], self.root)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/185c4a12386b036d98208568/quality-safe-extract/safe_extract.py", line 5, in extract
+    raise NotImplementedError
+NotImplementedError
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.021s
+
+FAILED (errors=41)
+expect_tests: python3 exited 1

@@ -1,0 +1,16 @@
+Queued as **qi_01M8GPM2D6J6WYMQ1H0GDPE82S** in `refactor-order-status`. The work includes the typed status refactor, `cargo test`, and a commit.
+
+Done: Replace order status strings with OrderStatus. Replaced order status strings with public OrderStatus and ParseStatusError, preserving lifecycle errors, CSV parsing/output, and lexical report ordering. `cargo fmt -- --check`, `cargo test` (4 integration tests), `git diff --check`, and the source literal scan passed on the committed tree; independent review passed with no findings. No open work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GPQM7HHRA8C030DEKZ55X8)
+
+SHIPPED: commit 57e2a393e7f438769788efbf3d9aea9173982064 on the run branch
+Branch `archon/0gdpe82s-replace-order-status-strings-with-orders` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f75564e8198ebe1a4b44474b/refactor-order-status holds it (7 files changed, 152 insertions(+), 30 deletions(-)). Review: `archon diff qi_01M8GPM2D6J6WYMQ1H0GDPE82S`; land it in `main`: `archon merge qi_01M8GPM2D6J6WYMQ1H0GDPE82S`.
+
+Freed 0.0 GiB of build output: item qi_01M8GPM2D6J6WYMQ1H0GDPE82S ended and its cargo target directory went.
+
+Replaced order status strings with public OrderStatus and ParseStatusError, preserving lifecycle errors, CSV parsing/output, and lexical report ordering. `cargo fmt -- --check`, `cargo test` (4 integration tests), `git diff --check`, and the source literal scan passed on the committed tree; independent review passed with no findings. No open work.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GPQM7HHRA8C030DEKZ55X8)
+
+SHIPPED: commit 57e2a393e7f438769788efbf3d9aea9173982064 on the run branch

@@ -1,0 +1,23 @@
+Cursor pagination is in place on `GET /items` in `inventory-api`, and `listItems` in `inventory-client` now follows `next_cursor` to the end. Both repos are committed and their tests pass (11 Python, 8 Node).
+
+**Commits** (author is the repo's configured `mengsig` identity):
+- `inventory-api` `79f53c0`: Paginate GET /items with limit and cursor
+- `inventory-client` `165a4fe`: Follow next_cursor in listItems
+
+**API** (`api.py`)
+- `limit` is an integer from 1 to 100, default 20. `cursor` is optional.
+- Each response is `{"items": [...], "next_cursor": ...}`. Items are ordered by `id`, and `next_cursor` is `null` on the last page.
+- Invalid `limit` or `cursor` returns 400 with `{"error": "..."}`. A cursor past the end returns an empty page with `next_cursor: null`.
+
+**Client** (`client.js`)
+- The first request sends no query. Each later request passes `next_cursor` back unchanged.
+- The loop stops when `next_cursor` is null or absent.
+- It throws on a failed page, on a page without an `items` array, or when the server repeats a cursor, so a buggy server can't loop forever.
+
+**Verification**
+- I ran the real client against the real API through `api_cli.py`. It returned all 57 items in order across three pages.
+- Both READMEs document the new behaviour.
+
+**Choices I made that you may want to change**
+- **Cursor format:** the cursor is the decimal `id` of the last item on the page, and the next page holds items with a larger `id`. This is keyset pagination, so items added between requests don't shift or repeat pages. It isn't encrypted or signed, so a client could craft one. Callers are told to treat it as opaque.
+- **Attribution:** I left out the `Co-Authored-By` trailer from the attribution reminder. Your CLAUDE.md says not to mention Claude in commits, and that rule takes precedence over the reminder.

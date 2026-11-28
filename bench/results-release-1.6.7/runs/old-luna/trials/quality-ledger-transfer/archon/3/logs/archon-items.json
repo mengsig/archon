@@ -1,0 +1,348 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GRBKC3M74QC2K3WVG3X237",
+      "repo": "repo_01M8GRAB03H7R3KTGKVQE8MGTM",
+      "pipeline": "adaptive",
+      "title": "Implement specified atomic ledger and focused tests",
+      "brief": "Implement `ledger.py` according to the repository's `SPEC.md`, preserve its documented API, cover every specified error and boundary case, add focused tests beyond the existing basics, use only the Python standard library, and commit the work. Acceptance criteria:\n- Constructor accepts only a dict with nonempty string names and built-in integer balances in [0, MAX_BALANCE], permits empty dict, rejects bool and invalid values with ValueError, and copies input.\n- `transfer` validates amount first (built-in int only, 1..MAX_BALANCE; bool rejected), then raises KeyError for either unknown account. Never create accounts.\n- Return False without mutation for insufficient funds or destination overflow; successful transfer updates exact amounts and preserves total. Same-account transfer validates amount and account, returns whether funds suffice, and never changes balance, including at MAX_BALANCE.\n- All operations on one ledger are linearizable across threads: account checks and both writes are atomic, snapshots cannot observe half a transfer, and opposite-direction transfers cannot deadlock. Use standard-library synchronization.\n- `snapshot()` returns an independent dict. Add deterministic, focused tests for validation, error ordering, boundaries, copy isolation, and concurrency behavior without random inputs, wall-clock calculations, or external services.\n- Run the relevant tests and commit the completed work.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "build": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "tier": {
+              "requested": "strong",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GRBKC3M74QC2K3WVG3X237",
+        "entries": {
+          "build": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T09:39:06.761047135Z"
+              },
+              "effort": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:39:06.761047135Z"
+              },
+              "tier": {
+                "source": "explicit",
+                "by": "orchestrator",
+                "at": "2026-11-28T09:39:06.761047135Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "critical",
+        "risk_signals": [
+          "domain:concurrency",
+          "review:strict"
+        ],
+        "keys": {
+          "build": {
+            "risk_class": "critical",
+            "risk_signals": [
+              "domain:concurrency",
+              "review:strict"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: critical -> x_high; capped at medium; consider a stronger tier"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "build": "The spec requires linearizable transfers and snapshots across threads, so the implementation needs careful concurrency reasoning."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "strict",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GRBKCZQZ6MHQSKGCG9ERE1",
+        "summary": "Implemented bounded, thread-safe ledger transfers and focused validation, boundary, copy-isolation, and concurrency tests in ledger.py and test_ledger.py. All 12 tests and diff checks pass on commit 2cc81e5; three independent whole-change reviews passed with no findings. Worktree is clean.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRFBZXYQ05V5EDDD6Q9XB9), codex/gpt-6-luna (agent agt_01M8GRFBYHCBVZNBKA1B5JD85R), codex/gpt-6-luna (agent agt_01M8GRFC12C93Z426XMEMMYZJK)\n\nSHIPPED: commit 2cc81e5c886c634617c7e6a081e842b8d2c7d38a on the run branch"
+      },
+      "created_at": "2026-11-28T09:39:06.755897914Z",
+      "updated_at": "2026-11-28T09:42:37.270929975Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GRBKCZQZ6MHQSKGCG9ERE1",
+        "item": "qi_01M8GRBKC3M74QC2K3WVG3X237",
+        "pipeline": "adaptive",
+        "shipped": true,
+        "aether_run": "run_01M8GRBKKE8HF36441B88ZW7R5",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f55ce1377b1cfc51d4f9c4c6/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GRBKC3M74QC2K3WVG3X237",
+        "branch": "archon/wvg3x237-implement-specified-atomic-ledger-and-fo",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented bounded, thread-safe ledger transfers and focused validation, boundary, copy-isolation, and concurrency tests in ledger.py and test_ledger.py. All 12 tests and diff checks pass on commit 2cc81e5; three independent whole-change reviews passed with no findings. Worktree is clean.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GRFBZXYQ05V5EDDD6Q9XB9), codex/gpt-6-luna (agent agt_01M8GRFBYHCBVZNBKA1B5JD85R), codex/gpt-6-luna (agent agt_01M8GRFC12C93Z426XMEMMYZJK)\n\nSHIPPED: commit 2cc81e5c886c634617c7e6a081e842b8d2c7d38a on the run branch"
+        },
+        "cost_usd": 0.017879700000000002,
+        "started_at": "2026-11-28T09:39:06.959964150Z",
+        "finished_at": "2026-11-28T09:42:37.270929975Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GRBKK58T6H8KM180D7238D",
+        "run": "prun_01M8GRBKCZQZ6MHQSKGCG9ERE1",
+        "stage_id": "build",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "high",
+          "tier": {
+            "requested": "strong",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GRBKM6TWD7ZCK27XRKXPQM",
+        "aether_task": "tsk_01M8GRBKM6TWD7ZCK27XRKXPQN",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "critical",
+        "effort_source": "explicit",
+        "effort_reasons": "sizer: critical -> x_high; capped at medium; consider a stronger tier; the plan pins high",
+        "summary": "Implemented bounded, thread-safe ledger transfers and focused validation, boundary, copy-isolation, and concurrency tests in ledger.py and test_ledger.py. All 12 tests and diff checks pass on commit 2cc81e5; three independent whole-change reviews passed with no findings. Worktree is clean.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v — initial run failed on an incorrect same-account test expectation; corrected the test.",
+            "python -B -m unittest -v — passed, 12 tests.",
+            "python -B -m unittest discover -v — passed, 12 tests.",
+            "git diff --check HEAD^ HEAD — passed."
+          ],
+          "commit": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+          "evidence": [
+            {
+              "after": "Ran 12 tests in 0.004s — OK.",
+              "before": "ledger.py: __init__, transfer, and snapshot each raised NotImplementedError.",
+              "caption": "Before the change, ledger operations were stubs; after, the focused suite passes.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+          "pr": {
+            "body": "Added a per-ledger RLock protecting transfer account checks, overflow/funds checks, both writes, and snapshot copying. Constructor and transfer validation follow SPEC.md, including built-in integer checks, error ordering, same-account behavior, and defensive copies. Added focused validation, boundary, immutability, copy-isolation, and concurrent opposite-transfer/snapshot tests using only the standard library. Verification: python -B -m unittest discover -v (12 passed); git diff --check HEAD^ HEAD (passed). No build or lint configuration exists in this repository. Three independent whole-change reviews read base f05ff0604e44818ba092e67dd3bd1b7a3c750cc6 through head 2cc81e5c886c634617c7e6a081e842b8d2c7d38a; all passed with no findings. No advisory findings remain. Assumption: names may be string subclasses; balances and amounts must be exact built-in ints per the specification.",
+            "summary": "Implemented bounded, atomic ledger transfers and independent snapshots. Before: ledger methods were unimplemented; now: validation, failure handling, and concurrent use are covered by 12 focused tests.",
+            "title": "implement atomic ledger transfers"
+          },
+          "review": {
+            "reviewed_head": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+            "reviewer_agents": [
+              "agt_01M8GRFBZXYQ05V5EDDD6Q9XB9",
+              "agt_01M8GRFBYHCBVZNBKA1B5JD85R",
+              "agt_01M8GRFC12C93Z426XMEMMYZJK"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GRFBZXYQ05V5EDDD6Q9XB9",
+                "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                "findings": 0,
+                "head": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GRFBYHCBVZNBKA1B5JD85R",
+                "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                "findings": 0,
+                "head": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GRFC12C93Z426XMEMMYZJK",
+                "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                "findings": 0,
+                "head": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GRFBZXYQ05V5EDDD6Q9XB9",
+              "agt_01M8GRFBYHCBVZNBKA1B5JD85R",
+              "agt_01M8GRFC12C93Z426XMEMMYZJK"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "2cc81e5c886c634617c7e6a081e842b8d2c7d38a",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GRFBYHCBVZNBKA1B5JD85R",
+                    "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GRFBZXYQ05V5EDDD6Q9XB9",
+                    "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GRFC12C93Z426XMEMMYZJK",
+                    "base": "f05ff0604e44818ba092e67dd3bd1b7a3c750cc6",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "reviewer": {
+              "agent": "agt_01M8GRFC12C93Z426XMEMMYZJK",
+              "level": "high",
+              "why": "The change coordinates concurrent state mutation and snapshots. The implementation uses one lock around account checks, overflow checks, both writes, and snapshot copying, so the reviewed paths are serialized; opposite transfers acquire no additional locks and cannot form a lock-order cycle."
+            },
+            "why": "ledger.py introduces synchronized shared-state mutation and snapshot behavior; tests cover concurrent opposite transfers and snapshot totals. All three reviewers confirmed high risk because linearizability depends on the shared lock being retained by every transfer and snapshot operation."
+          },
+          "tree": "cfe486d66ff12f7abc6c687a57958f8e5f63fab6"
+        },
+        "cost_usd": 0.017879700000000002,
+        "started_at": "2026-11-28T09:39:06.981169738Z",
+        "finished_at": "2026-11-28T09:42:34.899932024Z"
+      }
+    ],
+    "spent_usd": 0.017879700000000002,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GRBKK58T6H8KM180D7238D": {
+        "direct_usd": 0.01156948,
+        "delegated_usd": 0.006310220000000002,
+        "agents": [
+          {
+            "agent": "agt_01M8GRFBYHCBVZNBKA1B5JD85R",
+            "parent": "agt_01M8GRBKM6TWD7ZCK27XRKXPQM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0020940000000000004
+          },
+          {
+            "agent": "agt_01M8GRFBZXYQ05V5EDDD6Q9XB9",
+            "parent": "agt_01M8GRBKM6TWD7ZCK27XRKXPQM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0026968400000000007
+          },
+          {
+            "agent": "agt_01M8GRFC12C93Z426XMEMMYZJK",
+            "parent": "agt_01M8GRBKM6TWD7ZCK27XRKXPQM",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.0015193800000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "build": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T09:39:06.761047135Z"
+          },
+          "effort": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:39:06.761047135Z"
+          },
+          "tier": {
+            "source": "explicit",
+            "by": "orchestrator",
+            "at": "2026-11-28T09:39:06.761047135Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "build": "medium"
+    },
+    "worker_policies": {
+      "build": {
+        "workers": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium"
+          }
+        ],
+        "default_tier": "balanced",
+        "max_effort": "medium",
+        "max_parallel": 2
+      }
+    }
+  }
+]

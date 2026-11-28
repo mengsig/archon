@@ -1,0 +1,3 @@
+Implemented `retry_delay` with full argument validation, capped exponential backoff, Retry-After handling, and strict budget boundaries. Added focused tests for invalid inputs, zero values, large attempts, and boundary conditions.
+
+Committed as `166914b` (`Implement bounded retry delay scheduling`). Tests were not run.

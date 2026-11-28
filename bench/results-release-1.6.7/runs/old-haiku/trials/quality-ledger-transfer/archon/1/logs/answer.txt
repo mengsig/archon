@@ -1,0 +1,12 @@
+Queued the work as one item, `qi_01M8GHQMJ9FVRZJ586W1NBAQZS`, on the `quality-ledger-transfer` repository.
+
+- **Pipeline:** `adaptive`. The change involves concurrency (linearizable transfers, snapshots that never see a half transfer, no deadlock on opposite transfers), so it goes to the pipeline that uses one lead rather than `direct`.
+- **Review:** `strict`, three independent reviewers, because of the concurrency.
+- **Model:** strong tier at `high` effort. `x_high` was refused because the configured maximum effort is `high`.
+- **Shipping:** the repository ships `local`, so the work will be committed on the item's branch and not pushed. I did not change any repository files myself.
+
+The brief carries your request and the spec's rules (validation order, same-account transfers, the failure guarantees, and thread safety). It also requires tests for every rule, `python -m unittest` passing, and changes limited to `ledger.py` and `test_ledger.py`.
+
+I'll report when the item finishes or is blocked.
+
+Cancelled: Implement ledger.py per SPEC.md (atomic, thread-safe Ledger). archon-bench: trial timeout

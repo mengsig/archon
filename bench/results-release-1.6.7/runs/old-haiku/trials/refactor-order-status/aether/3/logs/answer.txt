@@ -1,0 +1,27 @@
+Refactored the `orders` crate from string statuses to `OrderStatus`, committed as b2b6cd4 on main. `cargo test` passes (2 unit + 3 integration tests) and clippy reports no warnings.
+
+What changed:
+- `src/status.rs` (new): `OrderStatus` enum (Debug, Clone, Copy, PartialEq, Eq, Hash) with `as_str`, `can_transition_to` (pending→paid, pending→cancelled, paid→shipped, paid→cancelled), `Display` (via `f.pad`, so width handling matches `String`), and `FromStr`. `ParseStatusError` implements `Error`; its message is `unknown status "<input>"`. This is the only place the status literals appear.
+- `pay`, `ship`, `cancel` check `can_transition_to`. The error messages are unchanged.
+- `Order::status` is now `OrderStatus`. `is_open`, `outstanding_cents` and `ready_to_ship` compare enum values.
+- `from_line` parses through `FromStr` and maps the error to the same `unknown status {:?}` string as before.
+- `lib.rs` declares `pub mod status` and re-exports `OrderStatus` and `ParseStatusError`.
+- `tests/orders.rs` uses enum variants. Expected error text is built with `format!` and `Display`, so the literals stay out of tests too.
+
+Choices I made:
+- `report::status_counts` now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. The order is still by status name (cancelled, paid, pending, shipped), enforced by an explicit `sort_by_key(as_str)`. I did not derive `Ord` on the enum, because declaration order would silently change the report order. This is a public signature change for callers of `status_counts`.
+- Error-message wording is identical to before, so output is unchanged.
+
+Not done: I did not add the Co-Authored-By trailer to the commit. The repo CLAUDE.md says not to add Claude attribution, and I followed it.
+
+The refactor is done and committed as `b2b6cd4` on `main`. `cargo test` passes (2 unit tests and 3 integration tests), and clippy reports no warnings.
+
+- **New `src/status.rs`:** holds the `OrderStatus` enum with `as_str`, `Display`, `FromStr`, and `can_transition_to`. It also holds `ParseStatusError`, whose message is `unknown status "<input>"`. The status string literals appear only in this file.
+- **Transitions:** `pay`, `ship`, and `cancel` now check `can_transition_to`. Their error messages are unchanged.
+- **`Order::status`:** is now `OrderStatus`. `from_line` parses through `FromStr` and keeps its existing error text.
+- **Crate root:** re-exports `OrderStatus` and `ParseStatusError`.
+- **Tests:** `tests/orders.rs` uses enum variants. Expected error strings are built with `Display`, so the literals stay out of tests too.
+
+Decisions to check:
+- **`status_counts` signature changed.** It now returns `Vec<(OrderStatus, usize)>` instead of `Vec<(String, usize)>`. This is visible to any caller outside the crate. Ordering is still by status name, via an explicit sort on `as_str()`. I did not derive `Ord` on the enum, because declaration order would silently change the report order.
+- **No Co-Authored-By trailer.** The repo's CLAUDE.md forbids Claude attribution in commits, so I left the trailer out even though the attribution reminder asked for it.

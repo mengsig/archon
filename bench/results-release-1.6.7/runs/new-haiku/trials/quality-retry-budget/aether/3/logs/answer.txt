@@ -1,0 +1,23 @@
+Implemented `retry_delay` in retry_budget.py per SPEC.md and added focused tests; committed as 7d24f49 on main (working tree clean). 28 unittest cases pass (`python3 -m unittest test_retry_budget`), and a 200k-case randomized cross-check against a naive reference matched exactly.
+
+Implementation:
+- Validation runs first for every argument: `type(x) is int` (rejects bool, float, and int subclasses), with minimums attempt/max_attempts >= 1 and the rest >= 0; retry_after_ms may be None. Invalid input raises ValueError, as the spec says (not TypeError).
+- Then attempt >= max_attempts returns None.
+- Backoff saturates without huge powers: if base or cap is 0 it returns 0; if attempt-1 >= cap.bit_length() it returns cap, otherwise min(cap, base << (attempt-1)).
+- Retry-After is an uncapped floor via max(backoff, retry_after_ms).
+- Returns None when elapsed + delay >= budget, otherwise the delay (zero included).
+- Helpers `_require_int` and `_backoff_ms` keep functions short; asserts check the delay and backoff postconditions.
+
+Assumption/choice to note: I did not add a `Co-Authored-By` trailer to the commit, because CLAUDE.md says not to mention Claude in commits and that instruction takes precedence over the attribution reminder. Commit author is mengsig as configured in the repo's git config.
+
+`retry_delay` is implemented per SPEC.md and committed as `7d24f49` on `main`. The working tree is clean. All 28 unit tests pass, and a randomized check of 200k cases against a naive reference matched exactly.
+
+- **Validation first:** every argument is checked as a built-in int before any early return. Bools, floats, and out-of-range values raise `ValueError`, as the spec says. Wrong types also raise `ValueError` rather than `TypeError`, to follow the spec literally.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`, so `max_attempts` counts the initial attempt.
+- **Backoff:** a zero base or zero cap gives 0. For huge attempts it returns the cap directly, so no large power of two is built.
+- **Retry-After:** it is a floor via `max(backoff, retry_after_ms)` and is not limited by the cap.
+- **Budget:** returns `None` when `elapsed_ms + delay >= budget_ms`, otherwise the delay, including 0.
+
+The tests keep the existing basics and add cases for each validation rule, the attempt limit, backoff saturation, the Retry-After floor, and the exact budget boundary.
+
+I left the `Co-Authored-By` trailer off the commit. CLAUDE.md says not to mention Claude in commits, and I followed it over the attribution reminder. Tell me if you want the trailer added.

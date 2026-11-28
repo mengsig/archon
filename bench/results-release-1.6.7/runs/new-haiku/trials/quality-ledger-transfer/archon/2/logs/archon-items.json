@@ -1,0 +1,367 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GNMCZFAHD93WJF02AEAX68",
+      "repo": "repo_01M8GNM10GB38RXBVQB9E1M82V",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator request (authenticated, verbatim): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make ledger.py match SPEC.md in the repository root. Context: the existing tests cover only basics, so add focused tests for each specified error and boundary case. Constraints: Python standard library only; keep the documented API exactly as specified; keep functions under 60 lines and validate inputs at the boundary, failing visibly with the error types the spec names. Acceptance criteria: every behaviour, error and boundary case in SPEC.md has a test; the full test suite passes; the work is committed on the local branch and not pushed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "operator-request"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GNMCZFAHD93WJF02AEAX68",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:51:30.154360175Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:51:30.895584126Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:51:30.154360175Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GNMEF5QCCDC3BBPYA3Q5S7",
+        "summary": "Implemented ledger.py per SPEC.md and added focused tests, committed on archon/02aeax68-implement-ledger-py-per-spec-md-with-foc, not pushed. Head 4b0d00e, tree 7289cdb. Before: ledger.py raised NotImplementedError and both existing tests errored. After: `python3 -X dev -m unittest` runs 28 tests, all OK, three runs. The change uses one threading.Lock per ledger, so each operation is linearizable and opposite transfers cannot deadlock. Review: first reviewer failed two blocking test gaps (worker exceptions not failing the concurrency tests; no same-account validation test). Both were fixed in 4b0d00e with Review-Fix trailers. A delta reviewer confirmed both fixes by mutant testing and passed head 4b0d00e. Left open (non-blocking): _run_all catches Exception only, so a worker raising a BaseException subclass would not fail the test. Concurrency tests are timing-dependent; a 10 s join timeout guards against deadlock. No servers or processes were started by me. Judgment call: the stage rule about escalating concurrency work was not triggered, because the ledger is a new, isolated module with no callers in the repo.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNPHWFEGWSHKCTR88WGTFC), claude-code/claude-haiku-5-5 (agent agt_01M8GNS99KCFGZQWWK1CWMC6JW)\n\nSHIPPED: commit 4b0d00ea6b21aca8484eee318d130a8f45d298cf on the run branch"
+      },
+      "created_at": "2026-11-28T08:51:29.391673507Z",
+      "updated_at": "2026-11-28T08:55:21.260651125Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GNMEF5QCCDC3BBPYA3Q5S7",
+        "item": "qi_01M8GNMCZFAHD93WJF02AEAX68",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GNMENAJP6HAE7E00NQKR71",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/b9b0a454897d06a3e9895542/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GNMCZFAHD93WJF02AEAX68",
+        "branch": "archon/02aeax68-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md and added focused tests, committed on archon/02aeax68-implement-ledger-py-per-spec-md-with-foc, not pushed. Head 4b0d00e, tree 7289cdb. Before: ledger.py raised NotImplementedError and both existing tests errored. After: `python3 -X dev -m unittest` runs 28 tests, all OK, three runs. The change uses one threading.Lock per ledger, so each operation is linearizable and opposite transfers cannot deadlock. Review: first reviewer failed two blocking test gaps (worker exceptions not failing the concurrency tests; no same-account validation test). Both were fixed in 4b0d00e with Review-Fix trailers. A delta reviewer confirmed both fixes by mutant testing and passed head 4b0d00e. Left open (non-blocking): _run_all catches Exception only, so a worker raising a BaseException subclass would not fail the test. Concurrency tests are timing-dependent; a 10 s join timeout guards against deadlock. No servers or processes were started by me. Judgment call: the stage rule about escalating concurrency work was not triggered, because the ledger is a new, isolated module with no callers in the repo.\nREVIEW: pass\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNPHWFEGWSHKCTR88WGTFC), claude-code/claude-haiku-5-5 (agent agt_01M8GNS99KCFGZQWWK1CWMC6JW)\n\nSHIPPED: commit 4b0d00ea6b21aca8484eee318d130a8f45d298cf on the run branch"
+        },
+        "cost_usd": 0.062134810000000006,
+        "started_at": "2026-11-28T08:51:31.072554309Z",
+        "finished_at": "2026-11-28T08:55:21.260651125Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77",
+        "run": "prun_01M8GNMEF5QCCDC3BBPYA3Q5S7",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GNMENM2HFGR2GV3HRXGJ30",
+        "aether_task": "tsk_01M8GNMENMY9XEBN4MFVHPW8QC",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented ledger.py per SPEC.md and added focused tests, committed on archon/02aeax68-implement-ledger-py-per-spec-md-with-foc, not pushed. Head 4b0d00e, tree 7289cdb. Before: ledger.py raised NotImplementedError and both existing tests errored. After: `python3 -X dev -m unittest` runs 28 tests, all OK, three runs. The change uses one threading.Lock per ledger, so each operation is linearizable and opposite transfers cannot deadlock. Review: first reviewer failed two blocking test gaps (worker exceptions not failing the concurrency tests; no same-account validation test). Both were fixed in 4b0d00e with Review-Fix trailers. A delta reviewer confirmed both fixes by mutant testing and passed head 4b0d00e. Left open (non-blocking): _run_all catches Exception only, so a worker raising a BaseException subclass would not fail the test. Concurrency tests are timing-dependent; a 10 s join timeout guards against deadlock. No servers or processes were started by me. Judgment call: the stage rule about escalating concurrency work was not triggered, because the ledger is a new, isolated module with no callers in the repo.\nREVIEW: pass",
+        "structured": {
+          "checks": [
+            "python3 -X dev -m unittest -v (PYTHONDONTWRITEBYTECODE=1) in worktree at 586f470 and 4b0d00e: 27 then 28 tests, OK; repeated 3x at 4b0d00e",
+            "baseline at 8b1e056: python3 -m unittest -v, 2 tests ERROR with NotImplementedError",
+            "reviewer mutant experiments: _move raising RuntimeError fails the concurrency tests; early same-account return before validation fails the new validation test"
+          ],
+          "commit": "4b0d00ea6b21aca8484eee318d130a8f45d298cf",
+          "local_commit": "4b0d00ea6b21aca8484eee318d130a8f45d298cf",
+          "pr": {
+            "body": "Approach: single threading.Lock per Ledger guards transfer and snapshot, so each operation is atomic and opposite transfers cannot deadlock. Amount is validated before account lookup; same-account transfers return True iff funds suffice and never change balances. Construction copies the input dict, then validates the copy; snapshot returns a copy. Key files: ledger.py, test_ledger.py. Checks: unittest suite 28/28 OK (dev mode, 3 runs). Review: first reviewer failed two test gaps, both fixed (Review-Fix trailers); delta reviewer passed head 4b0d00e. Assumptions: non-string account names are treated as unknown accounts (KeyError). Limits: concurrency tests are timing-dependent; a BaseException raised in a worker is not recorded (non-blocking follow-up).",
+            "evidence": [
+              {
+                "after": "Ran 28 tests in 0.012s\n\nOK",
+                "before": "ERROR: test_transfer ... NotImplementedError\nERROR: test_insufficient_funds ... NotImplementedError\nRan 2 tests\nFAILED (errors=2)",
+                "caption": "Before: existing suite on 8b1e056",
+                "kind": "output"
+              }
+            ],
+            "summary": "made Ledger(balances), transfer and snapshot work per SPEC.md, with validation and KeyError/ValueError at the boundary. now thread-safe via one lock per ledger. before: stub raising NotImplementedError; now: 28 tests pass covering every spec clause.",
+            "title": "Implement Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "4b0d00ea6b21aca8484eee318d130a8f45d298cf",
+            "reviewer_agents": [
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC",
+              "agt_01M8GNS99KCFGZQWWK1CWMC6JW"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GNPHWFEGWSHKCTR88WGTFC",
+                "base": "8b1e056828e17d85beb745b0e7e4ea264548ed81",
+                "findings": 4,
+                "head": "586f470e377025a49347771f3c6b161e0a61392d",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GNS99KCFGZQWWK1CWMC6JW",
+                "base": "586f470e377025a49347771f3c6b161e0a61392d",
+                "findings": 1,
+                "head": "4b0d00ea6b21aca8484eee318d130a8f45d298cf",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC",
+              "agt_01M8GNS99KCFGZQWWK1CWMC6JW"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC:1": {
+                "blocking": true,
+                "description": "Concurrency tests cannot fail on worker-thread exceptions. _run_all only checks is_alive, so when every transfer raises RuntimeError inside a worker, test_opposite_transfers_do_not_deadlock and test_snapshots_never_see_half_a_transfer still report ok. The linearizability and no-deadlock evidence is therefore unreliable. Fix: have workers record exceptions and assert none occurred. at test_ledger.p",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                },
+                "id": "agt_01M8GNPHWFEGWSHKCTR88WGTFC:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                }
+              },
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC:2": {
+                "blocking": true,
+                "description": "No test for same-account validation. SPEC says a same-account transfer must still validate the amount and account first, but SameAccountTransfer only covers funds and max balance. A mutant that returns before _check_accounts when source == destination (transfer('x','x',1) returns instead of raising KeyError) passes all 27 tests. Add a test that transfer('missing','missing',1) raises KeyError and t",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                },
+                "id": "agt_01M8GNPHWFEGWSHKCTR88WGTFC:2",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                }
+              },
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC:3": {
+                "blocking": false,
+                "description": "BAD_BALANCES omits False, so the spec's 'booleans are not integers' rule is only tested for True when used as a balance. The code path is the same, so this is minor. at test_ledger.py:7",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                },
+                "id": "agt_01M8GNPHWFEGWSHKCTR88WGTFC:3",
+                "resolved_in": null
+              },
+              "agt_01M8GNPHWFEGWSHKCTR88WGTFC:4": {
+                "blocking": false,
+                "description": "Constructor validates balances.items() and then copies with dict(balances). A caller that mutates its dict from another thread during construction could slip an unvalidated value into the copy. Copying first and then validating the copy removes the window. at ledger.py:30",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                },
+                "id": "agt_01M8GNPHWFEGWSHKCTR88WGTFC:4",
+                "resolved_in": null
+              },
+              "agt_01M8GNS99KCFGZQWWK1CWMC6JW:1": {
+                "blocking": false,
+                "description": "Nit (non-blocking): _run_all's guarded wrapper catches Exception only, so a worker that raises a BaseException subclass (e.g. SystemExit) is not recorded and the test would not fail for that case. Not reachable from the ledger code under test. at test_ledger.py:176",
+                "found_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77"
+                },
+                "id": "agt_01M8GNS99KCFGZQWWK1CWMC6JW:1",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "586f470e377025a49347771f3c6b161e0a61392d",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GNPHWFEGWSHKCTR88WGTFC",
+                    "base": "8b1e056828e17d85beb745b0e7e4ea264548ed81",
+                    "finding_count": 4,
+                    "finding_ids": [
+                      "agt_01M8GNPHWFEGWSHKCTR88WGTFC:1",
+                      "agt_01M8GNPHWFEGWSHKCTR88WGTFC:2",
+                      "agt_01M8GNPHWFEGWSHKCTR88WGTFC:3",
+                      "agt_01M8GNPHWFEGWSHKCTR88WGTFC:4"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "4b0d00ea6b21aca8484eee318d130a8f45d298cf",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GNS99KCFGZQWWK1CWMC6JW",
+                    "base": "586f470e377025a49347771f3c6b161e0a61392d",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GNS99KCFGZQWWK1CWMC6JW:1"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Concurrency/locking in ledger.py (new module, no callers in repo). Tests added: 28 unittest cases, timing-dependent concurrency tests with a 10 s join guard. Review: first reviewer blocking findings (test gaps) fixed; delta reviewer proposed low for the test-only delta, but high is kept per the rubric for concurrency/locking."
+          },
+          "tree": "7289cdb6e4a248f2ecbdb50e72deadbfb4e72d44"
+        },
+        "cost_usd": 0.062134810000000006,
+        "started_at": "2026-11-28T08:51:31.087994697Z",
+        "finished_at": "2026-11-28T08:55:18.072597964Z"
+      }
+    ],
+    "spent_usd": 0.062134810000000006,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GNMEMG5ZVDRBXQPKHT9Q77": {
+        "direct_usd": 0.03159726,
+        "delegated_usd": 0.030537550000000004,
+        "agents": [
+          {
+            "agent": "agt_01M8GNPHWFEGWSHKCTR88WGTFC",
+            "parent": "agt_01M8GNMENM2HFGR2GV3HRXGJ30",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.016720480000000003
+          },
+          {
+            "agent": "agt_01M8GNS99KCFGZQWWK1CWMC6JW",
+            "parent": "agt_01M8GNMENM2HFGR2GV3HRXGJ30",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.01381707
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:51:30.154360175Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:51:30.895584126Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:51:30.154360175Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

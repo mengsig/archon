@@ -1,0 +1,5 @@
+Implemented the retry scheduler and added validation, saturation, Retry-After, and budget-boundary tests.
+
+All 11 tests pass; `git diff --check` is clean. Commit: `dbecbc7` (`Implement bounded retry delay scheduling`).
+
+The test run left an untracked `__pycache__/` directory.

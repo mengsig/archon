@@ -1,0 +1,17 @@
+The refactor is committed on `main` as `553265c`. `cargo test` passes (3 existing integration tests plus 3 new unit tests in `src/status.rs`), and `cargo clippy --all-targets` reports no warnings.
+
+**What changed**
+- **`src/status.rs` (new):** `OrderStatus` with `as_str`, `Display`, `FromStr` and `can_transition_to`, plus `ParseStatusError`, which implements `std::error::Error`. The lifecycle lives only in `can_transition_to`.
+- **`src/order.rs`, `billing.rs`, `shipping.rs`:** `Order::status` is now `OrderStatus`. `pay`, `ship` and `cancel` check `can_transition_to` instead of comparing strings. Their error messages are unchanged.
+- **`src/report.rs`:** `from_line` parses through `FromStr`. The error text stays `unknown status "lost"` because `ParseStatusError` produces it.
+- **`src/lib.rs`:** re-exports `OrderStatus` and `ParseStatusError`.
+
+**Verification beyond the tests**
+The existing tests only check `from_line(...).is_err()`, so I ran a throwaway probe against both the original commit and the new code. It covered error messages, cancel/pay/ship refusals, `status_counts` ordering, `to_line`, padded `Display`, `is_open` and the outstanding/ready totals. The output was byte-identical. The probe file has been deleted.
+
+**Choices to review**
+- **`status_counts` return type changed** from `Vec<(String, usize)>` to `Vec<(OrderStatus, usize)>`. This is a public API change. Ordering is still by status name (`cancelled`, `paid`, `pending`, `shipped`), as before. If downstream callers need the old signature, this is the one change to revert.
+- **Literals in tests:** `tests/orders.rs` is untouched and still contains literal status strings, including the CSV line `1,ada,100,paid`. I read "literals only in `src/status.rs`" as applying to library code. The test literals act as the wire-format check, so I kept them. Say if you want them removed too.
+- **No attribution trailer:** the commit has no `Co-Authored-By` line. Your CLAUDE.md says not to put any Claude attribution in commits, and I treated that as overriding the reminder.
+- **Formatting:** the original code wasn't rustfmt-clean, so I didn't reformat the existing files. `src/status.rs` is rustfmt-clean.
+- **Assertions:** CLAUDE.md asks for assertions in non-trivial functions. I didn't add any to the refactored functions, because the task requires unchanged behaviour and the original functions had none.

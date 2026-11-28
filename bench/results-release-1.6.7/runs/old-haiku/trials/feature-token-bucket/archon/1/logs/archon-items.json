@@ -1,0 +1,290 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GGE0ZJRF95DMFXPDC97NR2",
+      "repo": "repo_01M8GGDEM0TAVFQ95CSFDQD57W",
+      "pipeline": "direct",
+      "title": "Implement TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md",
+      "brief": "Operator request (verbatim): \"Implement the rate limiter described in `SPEC.md` in `ratelimit.py` (the module currently only has stubs). Follow the spec exactly, including its error cases and edge cases; the tests in `test_ratelimit.py` only cover the basics. Keep it dependency-free (standard library only) and commit your work.\"\n\nGoal: implement `TokenBucket` and `KeyedLimiter` in `ratelimit.py` exactly as `SPEC.md` describes. The spec is the acceptance criteria.\n\nRequirements to honour (all from SPEC.md):\n- Time is read only through the injected `clock` callable (float seconds, monotonic). Default `time.monotonic`.\n- TokenBucket: capacity > 0 and refill_per_sec > 0, else ValueError. Starts full. Fractional tokens allowed, tokens accrue continuously and never exceed capacity.\n- try_acquire(n=1): all-or-nothing; n <= 0 or n > capacity raises ValueError; returns False without removing anything when short.\n- available(): tokens after refill.\n- wait_time(n=1): seconds until try_acquire(n) would succeed, 0.0 if now; does not consume; same ValueError rules.\n- Clock going backwards: nothing changes (no tokens added or removed) until the clock passes the latest time already seen.\n- KeyedLimiter(capacity, refill_per_sec, max_keys=1024, clock=time.monotonic): one independent TokenBucket per hashable key, created on first use. try_acquire(key, n=1) and wait_time(key, n=1) behave like bucket methods. At most max_keys buckets; on overflow evict the least recently used key first; try_acquire and wait_time both count as use; an evicted key returning starts full. max_keys < 1 raises ValueError, as do invalid capacity/refill_per_sec. len(limiter) = number of keys currently tracked.\n\nConstraints: standard library only, no new dependencies. Keep functions under 60 lines, explicit data flow, assertions/validation at boundaries per the repo's coding rules. Add tests in `test_ratelimit.py` covering the edge cases above (clock going backwards, fractional refill, cap at capacity, n > capacity, LRU eviction order including wait_time counting as use, evicted key returns full, max_keys validation). Existing tests must still pass. Commit the work on the branch with a clear message; do not push.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "notify"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GGE0ZJRF95DMFXPDC97NR2",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T07:20:37.621788410Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T07:20:37.623688296Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T07:20:37.621788410Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "model_reasons": {
+        "implement": "Single small module fully specified by SPEC.md; one author suffices. Standard review because edge-case errors could hide in a rate limiter."
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GGE102S54WRW1SRYNXSEY3",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 13 edge-case tests in test_ratelimit.py. Committed c716a04 on archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i (tree 0aae8d7); not pushed. Checks: python3 -m unittest -v gives 16/16 OK; py_compile passes (pyflakes not installed, so no lint run). Before: stubs gave 3 errors (NotImplementedError); after: 16 pass. Independent review agt_01M8GGFS7203GTPKNSD287M7SX passed head c716a04 with no blocking findings. Open non-blocking follow-ups: capacity=inf is accepted; no direct test for KeyedLimiter.wait_time with invalid n or a backwards clock at the keyed level. Risk low. Review: pass by agt_01M8GGFS7203GTPKNSD287M7SX.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGFS7203GTPKNSD287M7SX)\n\nSHIPPED: commit c716a04ed41d364dd529cbd95ac84a9204cb6e11 on the run branch"
+      },
+      "created_at": "2026-11-28T07:20:37.618565163Z",
+      "updated_at": "2026-11-28T07:23:26.979458210Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GGE102S54WRW1SRYNXSEY3",
+        "item": "qi_01M8GGE0ZJRF95DMFXPDC97NR2",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GGE1793FXD6FNWYBGF3R66",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/c4830605f51ef189424c3c69/.archon/data/worktrees/feature-token-bucket/qi_01M8GGE0ZJRF95DMFXPDC97NR2",
+        "branch": "archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 13 edge-case tests in test_ratelimit.py. Committed c716a04 on archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i (tree 0aae8d7); not pushed. Checks: python3 -m unittest -v gives 16/16 OK; py_compile passes (pyflakes not installed, so no lint run). Before: stubs gave 3 errors (NotImplementedError); after: 16 pass. Independent review agt_01M8GGFS7203GTPKNSD287M7SX passed head c716a04 with no blocking findings. Open non-blocking follow-ups: capacity=inf is accepted; no direct test for KeyedLimiter.wait_time with invalid n or a backwards clock at the keyed level. Risk low. Review: pass by agt_01M8GGFS7203GTPKNSD287M7SX.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GGFS7203GTPKNSD287M7SX)\n\nSHIPPED: commit c716a04ed41d364dd529cbd95ac84a9204cb6e11 on the run branch"
+        },
+        "cost_usd": 0.03176951,
+        "started_at": "2026-11-28T07:20:37.826806052Z",
+        "finished_at": "2026-11-28T07:23:26.979458210Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GGE16YA6V637MAFY7SJCEE",
+        "run": "prun_01M8GGE102S54WRW1SRYNXSEY3",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GGE184Y4V9CAN34GPRNB9F",
+        "aether_task": "tsk_01M8GGE184Y4V9CAN34GPRNB9G",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md and added 13 edge-case tests in test_ratelimit.py. Committed c716a04 on archon/pdc97nr2-implement-tokenbucket-and-keyedlimiter-i (tree 0aae8d7); not pushed. Checks: python3 -m unittest -v gives 16/16 OK; py_compile passes (pyflakes not installed, so no lint run). Before: stubs gave 3 errors (NotImplementedError); after: 16 pass. Independent review agt_01M8GGFS7203GTPKNSD287M7SX passed head c716a04 with no blocking findings. Open non-blocking follow-ups: capacity=inf is accepted; no direct test for KeyedLimiter.wait_time with invalid n or a backwards clock at the keyed level. Risk low. Review: pass by agt_01M8GGFS7203GTPKNSD287M7SX.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest -v"
+          ],
+          "commit": "c716a04ed41d364dd529cbd95ac84a9204cb6e11",
+          "evidence": [
+            {
+              "caption": "Before: original stubs, all 3 tests error",
+              "kind": "output",
+              "text": "Ran 3 tests\n\nFAILED (errors=3)  (NotImplementedError from stubs)"
+            },
+            {
+              "caption": "After: full suite passes",
+              "kind": "output",
+              "text": "Ran 16 tests in 0.001s\n\nOK"
+            }
+          ],
+          "local_commit": "c716a04ed41d364dd529cbd95ac84a9204cb6e11",
+          "pr": {
+            "body": "Approach: TokenBucket refills lazily from the injected clock, capped at capacity; clock steps backwards are ignored until the latest seen time is passed. KeyedLimiter keeps an OrderedDict of key to TokenBucket, bounded by max_keys with LRU eviction; try_acquire and wait_time both count as use. n is validated before any key is created. Files: ratelimit.py, test_ratelimit.py. Checks: python3 -m unittest -v, 16/16 OK; py_compile ok (pyflakes not installed). Review: agt_01M8GGFS7203GTPKNSD287M7SX pass, no blocking findings. Follow-up nits: capacity=inf accepted; no direct test for KeyedLimiter.wait_time invalid n or backwards clock at keyed level.",
+            "summary": "Made rate limiting available: TokenBucket and KeyedLimiter in ratelimit.py. Now can limit per key with LRU eviction. Before: stubs raising NotImplementedError; now: 16 tests pass.",
+            "title": "Implement TokenBucket and KeyedLimiter per SPEC.md"
+          },
+          "review": {
+            "reviewed_head": "c716a04ed41d364dd529cbd95ac84a9204cb6e11",
+            "reviewer_agents": [
+              "agt_01M8GGFS7203GTPKNSD287M7SX"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GGFS7203GTPKNSD287M7SX",
+                "base": "6fc4f959b9555ac8d428cc54b9277faa51d5f2da",
+                "findings": 2,
+                "head": "c716a04ed41d364dd529cbd95ac84a9204cb6e11",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GGFS7203GTPKNSD287M7SX"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GGFS7203GTPKNSD287M7SX:1": {
+                "blocking": false,
+                "description": "_check_bucket_params accepts capacity=inf (and refill_per_sec=inf); SPEC only requires > 0, so this is a nit, not a SPEC violation. at ratelimit.py:8",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GGE16YA6V637MAFY7SJCEE"
+                },
+                "id": "agt_01M8GGFS7203GTPKNSD287M7SX:1",
+                "resolved_in": null
+              },
+              "agt_01M8GGFS7203GTPKNSD287M7SX:2": {
+                "blocking": false,
+                "description": "No direct test for KeyedLimiter.wait_time with invalid n (same _check_n path as try_acquire) and no clock-goes-backwards test at the KeyedLimiter level; both behaviours are implemented correctly. at test_ratelimit.py:1",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GGE16YA6V637MAFY7SJCEE"
+                },
+                "id": "agt_01M8GGFS7203GTPKNSD287M7SX:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "c716a04ed41d364dd529cbd95ac84a9204cb6e11",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GGFS7203GTPKNSD287M7SX",
+                    "base": "6fc4f959b9555ac8d428cc54b9277faa51d5f2da",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GGFS7203GTPKNSD287M7SX:1",
+                      "agt_01M8GGFS7203GTPKNSD287M7SX:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "low",
+            "why": "New standalone module with no callers; reviewer rated low; all new behaviour covered by tests."
+          },
+          "tree": "0aae8d7656d204dacc121f9acfb1269f3c8d91b2"
+        },
+        "cost_usd": 0.03176951,
+        "started_at": "2026-11-28T07:20:37.853958502Z",
+        "finished_at": "2026-11-28T07:23:12.440900591Z"
+      }
+    ],
+    "spent_usd": 0.03176951,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GGE16YA6V637MAFY7SJCEE": {
+        "direct_usd": 0.02146904,
+        "delegated_usd": 0.01030047,
+        "agents": [
+          {
+            "agent": "agt_01M8GGFS7203GTPKNSD287M7SX",
+            "parent": "agt_01M8GGE184Y4V9CAN34GPRNB9F",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.01030047
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T07:20:37.621788410Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T07:20:37.623688296Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T07:20:37.621788410Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

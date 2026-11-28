@@ -232,7 +232,8 @@ fn a_partly_tracked_cache_loses_its_ignored_contents() {
 }
 
 /// Only the removal of a worktree, or of one set aside, is logged as a loss
-/// for a failed item's retry: not a snapshot, a git directory or caches.
+/// for a failed item's retry: not a snapshot, a git directory or caches,
+/// nor a worktree kept, skipped or failed.
 #[test]
 fn only_a_removed_worktree_is_a_retry_s_loss() {
     use super::plan::{Action, Candidate, Kind};
@@ -269,6 +270,19 @@ fn only_a_removed_worktree_is_a_retry_s_loss() {
     let reclaimed = Verdict::Reclaimed { bytes: 1 };
     let candidate = of(Kind::Worktree, Action::Reclaim);
     assert!(!loses_a_retry_worktree(&candidate, &reclaimed));
+    let not_removed = [
+        Verdict::Kept {
+            reclaimed: None,
+            why: "uncommitted changes".into(),
+        },
+        Verdict::Skipped("in use".into()),
+        Verdict::Failed("git failed".into()),
+        Verdict::Untouched,
+    ];
+    let candidate = of(Kind::Worktree, Action::Remove);
+    for verdict in &not_removed {
+        assert!(!loses_a_retry_worktree(&candidate, verdict), "{verdict:?}");
+    }
 }
 
 /// A cancelled owner and a refresh of it onto `sha` that failed at dispatch.

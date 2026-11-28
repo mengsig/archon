@@ -1,0 +1,41 @@
+{
+  "head": "acaad050ea30db9449bfb3821173d76d5a87bf57",
+  "arm": "new",
+  "model": "luna",
+  "only": "",
+  "load5": 10.19091796875,
+  "hashes": {
+    "archon": "924b4a0f5e47260faeef3d3c4b92a0cd23eff62228ca2bcf2b1ece70ec9e0b29",
+    "aether": "9a874c054c49c931a6fc3cfd9e0ae92a76c37afeefcad3ea5f60470c1e391d1f",
+    "archon-bench": "96dd736441e638e2ae2d0816ec598e78fc40a16d2c7683ef67b74773547e21e6"
+  },
+  "versions": {
+    "archon": "archon 1.6.7",
+    "aether": "aether 1.4.4"
+  },
+  "start": "2026-11-28T07:20:18.908263+00:00",
+  "command": [
+    "archon-bench",
+    "run",
+    "--archon-bin",
+    "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/bin/archon",
+    "--aether-socket",
+    "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/run/a.sock",
+    "--results-dir",
+    "/home/mengsig/.local/share/archon/worktrees/archon/qi_01M8DXX5C44F2BT641XCBPAWYB/bench/results-release-1.6.7/.work/new-luna/results",
+    "--arms",
+    "archon,aether",
+    "--trials",
+    "3",
+    "--parallel",
+    "3",
+    "--effort",
+    "high",
+    "--max-usd",
+    "37",
+    "--model",
+    "codex/gpt-6-luna"
+  ],
+  "exit": 0,
+  "end": "2026-11-28T10:33:45.724838+00:00"
+}

@@ -1,0 +1,14 @@
+Queued as [qi_01M8GGXBTNJFZ7QZPYGDFJN9MH](#). It will fix `window.py`, leave tests unchanged, run `python3 -m unittest`, and commit locally.
+
+Done: Fix window.py so unittest passes for all inputs. Fixed sliding_windows to include every valid start position by adding one to the range endpoint. The existing unittest suite passes (3 tests); committed as 4e49069878e1fe605ee45fe75a8afdd275a32710. No tests or other files changed.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4e49069878e1fe605ee45fe75a8afdd275a32710 on the run branch
+Branch `archon/gdfjn9mh-fix-window-py-so-unittest-passes-for-all` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/6ac21dcfc96d1a49b9c8f76e/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GGXBTNJFZ7QZPYGDFJN9MH`; land it in `main`: `archon merge qi_01M8GGXBTNJFZ7QZPYGDFJN9MH`.
+
+Fixed sliding_windows to include every valid start position by adding one to the range endpoint. The existing unittest suite passes (3 tests); committed as 4e49069878e1fe605ee45fe75a8afdd275a32710. No tests or other files changed.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 4e49069878e1fe605ee45fe75a8afdd275a32710 on the run branch

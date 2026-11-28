@@ -1,0 +1,15 @@
+Fixed the off-by-one in sliding_windows (window.py). The comprehension used range(len(items) - size), which skipped the final valid start index, so the last window was never returned. Changed it to range(len(items) - size + 1). `python3 -m unittest` now passes all 3 tests with no test changes. Edge cases checked by hand: empty list returns [], size greater than len returns [], size equal to len returns one window, and size 1 returns every element as a single-item window. Committed as fba009a on main ("Fix off-by-one in sliding_windows that dropped the last window"), authored as mengsig. I left the trailer off the commit message because the repo's CLAUDE.md says not to add Claude attribution. An untracked __pycache__/ directory from the test runs was not committed.
+
+The bug is fixed and committed as `fba009a` on `main`. `python3 -m unittest` now passes all 3 tests, and the tests are unchanged.
+
+**The bug:** in `window.py`, the comprehension iterated `range(len(items) - size)`. That stops one start index early, so the last full window was never produced. For `[1, 2, 3]` with size 2 it returned `[[1, 2]]` instead of `[[1, 2], [2, 3]]`.
+
+**The fix:** `range(len(items) - size + 1)`.
+
+**Edge cases I checked by hand:**
+- Empty list returns `[]`.
+- Size larger than the list returns `[]`.
+- Size equal to the list length returns one window.
+- Size 1 returns each element as its own window.
+
+**Commit:** authored as `mengsig`, with the message "Fix off-by-one in sliding_windows that dropped the last window". I left out the `Co-Authored-By` trailer from the system reminder because this repo's CLAUDE.md says not to add Claude attribution to commits. An untracked `__pycache__/` from the test runs is not committed.

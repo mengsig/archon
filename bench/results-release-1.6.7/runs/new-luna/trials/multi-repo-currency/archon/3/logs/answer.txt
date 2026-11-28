@@ -1,0 +1,36 @@
+Queued initiative **“Add currency-aware ledger output and reports”** as two coordinated items:
+
+- `ledger`: validate and emit currency, defaulting to USD.
+- `reports`: aggregate by account and currency, while accepting legacy CSV as USD.
+
+Both items include README updates, the requested test commands, and local commits; neither will push. Initiative: `ini_01M8GSMTWYJTWADCATFNV93QKN`.
+
+Done: Report totals by account and currency. Updated reports to aggregate by account and currency, default legacy CSV rows to USD, and reject malformed currency codes with exit 2. README and tests updated. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as ffedd36f5522748d329700d8b534bf4fda864980; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ffedd36f5522748d329700d8b534bf4fda864980 on the run branch
+Branch `archon/67y0r460-report-totals-by-account-and-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/ce2fb9ca4cd479ecc17ab86f/reports holds it (3 files changed, 67 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M8GSMVGRP0TVC0HJ67Y0R460`; land it in `main`: `archon merge qi_01M8GSMVGRP0TVC0HJ67Y0R460`.
+
+Done: Emit and validate transaction currencies in ledger. Added optional validated currency support to ledger TSV input, defaulted missing currency to USD, emitted currency in every CSV row, and documented the format. Preserved parse_line's existing String error API while the CLI distinguishes invalid currency for exit 2. cargo fmt --check, cargo test (4 passed), and git diff --check passed; committed locally as 552214b.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 552214b16d78fe1f354493962ac8c78be87fe96a on the run branch
+Branch `archon/fnv93qkp-emit-and-validate-transaction-currencies` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/ce2fb9ca4cd479ecc17ab86f/ledger holds it (4 files changed, 112 insertions(+), 19 deletions(-)). Review: `archon diff qi_01M8GSMTWYJTWADCATFNV93QKP`; land it in `main`: `archon merge qi_01M8GSMTWYJTWADCATFNV93QKP`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GSMTWYJTWADCATFNV93QKP ended and its cargo target directory went.
+
+Updated reports to aggregate by account and currency, default legacy CSV rows to USD, and reject malformed currency codes with exit 2. README and tests updated. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as ffedd36f5522748d329700d8b534bf4fda864980; worktree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit ffedd36f5522748d329700d8b534bf4fda864980 on the run branch
+
+Added optional validated currency support to ledger TSV input, defaulted missing currency to USD, emitted currency in every CSV row, and documented the format. Preserved parse_line's existing String error API while the CLI distinguishes invalid currency for exit 2. cargo fmt --check, cargo test (4 passed), and git diff --check passed; committed locally as 552214b.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 552214b16d78fe1f354493962ac8c78be87fe96a on the run branch

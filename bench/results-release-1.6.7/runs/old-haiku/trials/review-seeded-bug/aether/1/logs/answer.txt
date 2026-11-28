@@ -1,0 +1,79 @@
+Review of src/tokens.js (verify/sign, HMAC-SHA256). No code changed. Verdict: do not ship. Two critical auth bypasses in verify(), both confirmed by running the code against the real module. Existing tests (4/4 pass) do not cover them.
+
+FINDINGS (file: src/tokens.js)
+
+1. CRITICAL, verify() line 24-27: empty signature bypasses the MAC check. Input: `base64url('{"user":"root","exp":9e15}') + "."` with any secret returns {user:"root", exp:9e15}. The split yields signature === '', the `=== undefined` guard does not catch it, and `expected.startsWith('')` is always true. No key or guessing needed.
+
+2. CRITICAL, verify() line 27: the signature is checked by prefix, not equality. Any prefix of the real MAC verifies, so the attacker only needs to guess a short prefix. Confirmed: for a chosen payload, trying the 64 base64url characters as a 1-char signature forged {user:"root"} after 33 tries. The 1-char prefix of a genuine token also verifies. The comparison is also not constant-time. Fix: compare the full digest with crypto.timingSafeEqual on equal-length buffers.
+
+3. HIGH, verify() line 22-26: verify never validates the secret, unlike sign() (line 15). verify(token, '') accepts a token whose MAC was keyed with the empty string, which anyone can compute. If a config value is missing and falls back to '', every token is forgeable. verify(token, undefined) throws a TypeError instead of returning null, which breaks its documented contract. Fix: apply the same secret guard in verify.
+
+4. LOW-MEDIUM, verify() line 28-29: JSON.parse and payload.exp are unguarded. verify of base64url('null') + '.' throws TypeError, and malformed JSON throws SyntaxError, instead of returning null. The documented contract is "payload or null". After fix 1 and 2, this is reachable only with tokens the secret holder signed, but callers doing `if (!verify(...))` will get exceptions. Fix: check the parsed value is a plain object.
+
+5. LOW, verify() line 24: token.split('.') ignores extra segments. `validToken + ".junk"` verifies and returns the same payload, so one session has many valid string forms. This matters if tokens are used as session IDs, revocation keys or dedupe keys. Fix: require exactly two non-empty parts.
+
+6. LOW, sign() line 14-18: ttlSeconds is not validated. ttlSeconds: Infinity yields exp: Infinity, which JSON serializes as null, so the token is silently never verifiable (fails closed, but the failure is hidden). Negative or NaN TTLs are also accepted silently. Fix: require a finite, positive ttlSeconds.
+
+7. NIT: the secret length check uses .length (code units), and a non-string secret such as a number skips the length check and fails later inside createHmac with a confusing TypeError. Acceptable, but a type check would give a clearer error.
+
+8. NIT/design: no audience or purpose claim and no iat sanity check, so a token signed for one use is valid for any verifier that shares the secret.
+
+TEST GAPS: the "tampered payloads" test passes against the current code and does not exercise an empty signature, a truncated signature, an empty secret in verify, a malformed payload, or extra segments. Add a failing test for each of findings 1-5 before the fix.
+
+CHECKED AND FINE: the algorithm is fixed to HMAC-SHA256 with no alg header, so there is no alg-confusion or "none" attack. The MAC covers the exact body string, so there is no JSON-canonicalization malleability. iat and exp override caller-supplied claims. Expiry uses `<=`.
+
+RECOMMENDATION: block the release until findings 1-3 are fixed. Minimal fix sketch for verify: validate secret as in sign; require parts.length === 2 with both non-empty; compare Buffer.from(signature) to Buffer.from(mac(body, secret)) with a length check and crypto.timingSafeEqual; then check the parsed payload is a plain object before reading exp. No code was changed.
+
+**Verdict: do not ship `src/tokens.js` as it is.** Two critical authentication bypasses in `verify()` are confirmed by running the code. I changed no code. The existing 4 tests pass, but none of them exercise these cases.
+
+## Findings
+
+**1. CRITICAL: `verify()` (line 24–27): an empty signature bypasses the MAC check.**
+- Input: `base64url('{"user":"root","exp":9e15}') + "."` with any secret returns `{user:"root", exp:9e15}`.
+- `split('.')` yields `signature === ''`. The `=== undefined` guard does not catch that, and `expected.startsWith('')` is always true.
+- No key or guessing is needed.
+
+**2. CRITICAL: `verify()` (line 27): the signature is checked by prefix, not equality.**
+- Any prefix of the real MAC verifies. Confirmed: a 1-character prefix of a genuine token verifies, and for a chosen payload, trying the 64 base64url characters as a 1-character signature forged `{user:"root"}` after 33 tries.
+- The comparison is also not constant-time.
+- Fix: compare the full digest with `crypto.timingSafeEqual` on equal-length buffers.
+
+**3. HIGH: `verify()` (line 22–26): the secret is never validated.**
+- `sign()` rejects short secrets, but `verify()` has no such guard.
+- `verify(token, '')` accepts a MAC keyed with the empty string, which anyone can compute. If a config value is missing and falls back to `''`, every token is forgeable.
+- `verify(token, undefined)` throws a `TypeError` instead of returning `null`, which breaks the documented contract.
+
+**4. LOW–MEDIUM: `verify()` (line 28–29): `JSON.parse` and `payload.exp` are unguarded.**
+- `base64url('null') + '.'` throws `TypeError`, and malformed JSON throws `SyntaxError`, where the contract says "payload or null".
+- Once findings 1 and 2 are fixed, this is reachable only with tokens the secret holder signed. Callers doing `if (!verify(...))` will still get exceptions.
+- Fix: check that the parsed value is a plain object.
+
+**5. LOW: `verify()` (line 24): `split('.')` ignores extra segments.**
+- `validToken + ".junk"` verifies and returns the same payload, so one session has many valid string forms.
+- This matters if tokens are used as session IDs, revocation keys, or dedupe keys.
+- Fix: require exactly two non-empty parts.
+
+**6. LOW: `sign()` (line 14–18): `ttlSeconds` is not validated.**
+- `ttlSeconds: Infinity` gives `exp: Infinity`, which JSON serializes as `null`. The token is then silently never verifiable. It fails closed, but the failure is hidden.
+- Negative or NaN TTLs are also accepted silently.
+- Fix: require a finite, positive `ttlSeconds`.
+
+**7. NIT:** the secret length check uses `.length`, so a non-string secret such as a number skips the check and fails later inside `createHmac` with a confusing error. A type check would make the error clearer.
+
+**8. NIT / design:** there is no audience or purpose claim, so a token signed for one use is valid for any verifier sharing the secret.
+
+## Test gaps
+The "tampered payloads" test passes against the current code. Nothing covers an empty signature, a truncated signature, an empty secret in `verify`, a malformed payload, or extra segments. Add a failing test for each of findings 1–5 before the fix.
+
+## Checked and fine
+- The algorithm is fixed to HMAC-SHA256 with no `alg` header, so there is no algorithm-confusion or `none` attack.
+- The MAC covers the exact body string, so there is no JSON-canonicalization malleability.
+- `iat` and `exp` override caller-supplied claims.
+- Expiry uses `<=`.
+
+## Recommendation
+Block the release until findings 1–3 are fixed. A minimal fix for `verify`:
+- Validate the secret the same way `sign` does.
+- Require exactly two non-empty parts.
+- Compare `Buffer.from(signature)` against `Buffer.from(mac(body, secret))` with a length check and `crypto.timingSafeEqual`.
+- Check that the parsed payload is a plain object before reading `exp`.

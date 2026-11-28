@@ -1,0 +1,38 @@
+The multi-currency change is queued as one initiative, `ini_01M8GNDQ57YJB8ZV034QE5T084`, with one item per repository. Nothing has been built yet.
+
+- **`ledger`** (`qi_01M8GNDQ5VGFWKZA9GCS47JDNN`): the optional fourth currency column, the new `currency` output column and header, and exit 2 with the line number for a malformed code. Other input errors keep exit 1.
+- **`reports`** (`qi_01M8GNDQ8K47WTT20JNXTVY1TV`): totals per account and currency, sorted by account then currency, with `USD` assumed for CSV that has no currency column and exit 2 for a malformed code.
+
+Both items use the `direct` pipeline with standard review and a balanced-tier, medium-effort implementation. A shared contract in the initiative fixes the CSV format and error behaviour, so the two repositories agree on the format without depending on each other's code.
+
+Both repositories are registered with local shipping, so the commits will land on local branches and won't be pushed. Each item reports back when it finishes. I'll tell you if either fails or needs a decision.
+
+Done: reports: totals per account and currency. reports now totals per (account, currency). Header is account,currency,total_cents, sorted by account then currency. A CSV without a currency column counts as USD. A malformed currency code (not exactly three uppercase ASCII letters) prints an error to stderr and exits 2 with no stdout. Commit 41aeb559bed9a51d90de518b936c31e8092f4438 (tree 6c1af275a42c6c51867dfac6bb9bddc590fb70f0) on archon/nxtvy1tv-reports-totals-per-account-and-currency, based on 0454d4d. Checks: python3 -m unittest, 6 tests OK. Review: pass by two reviewers (agt_01M8GNF16HYNARNXTZFGZ3GX4J on 8687e2e, agt_01M8GNGSP0VW7HW2DETWF46AMY on the delta to 41aeb55); both findings from the first review were fixed in 41aeb55 and no blocking findings remain. Risk high: the CLI header and row shape change breaks callers parsing the old account,total_cents output, which the contract requires. Open: none blocking. Nothing is left running (the reviewer's process had already exited).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNF16HYNARNXTZFGZ3GX4J), claude-code/claude-haiku-5-5 (agent agt_01M8GNGSP0VW7HW2DETWF46AMY)
+
+SHIPPED: commit 41aeb559bed9a51d90de518b936c31e8092f4438 on the run branch
+Branch `archon/nxtvy1tv-reports-totals-per-account-and-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/f22a7b7794b7d61420fa0707/reports holds it (3 files changed, 111 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M8GNDQ8K47WTT20JNXTVY1TV`; land it in `main`: `archon merge qi_01M8GNDQ8K47WTT20JNXTVY1TV`.
+
+Done: ledger: currency column and currency validation. ledger: currency support is committed as 131fa47 on archon/cs47jdnn-ledger-currency-column-and-currency-vali (base f86fbdf). Changes: an optional 4th TSV column sets the currency (default USD); the output header is date,account,amount_cents,currency and every row carries its currency; a malformed currency (not exactly three uppercase ASCII letters) prints `line N: ...` to stderr and exits 2; other input errors still exit 1. Files: src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs, README.md. Checks run on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (9 tests: 6 unit, 3 CLI) all pass. Tree d58307c0e14cae29267a15b6809962097aaa8e2a. Review: one reviewer (agt_01M8GNG1886AQWZ1G5JHQ4P1PK), verdict pass, no blocking findings. Non-blocking follow-ups: whitespace around the currency is trimmed; an empty 4th column is exit 2, not USD; a line with both a bad amount and a bad currency exits 1; README says "ISO 4217" but only the shape is checked; Entry gained a public field with no version bump. Nothing is left running from this stage. The reviewer's leftover claude process (pid 3485767) is Aether's child and stops when this task ends. The operator checkout and the reports repository were not touched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNG1886AQWZ1G5JHQ4P1PK)
+
+SHIPPED: commit 131fa47dac2c27adcd8413572b0fa627cbe16a99 on the run branch
+Branch `archon/cs47jdnn-ledger-currency-column-and-currency-vali` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/f22a7b7794b7d61420fa0707/ledger holds it (5 files changed, 160 insertions(+), 18 deletions(-)). Review: `archon diff qi_01M8GNDQ5VGFWKZA9GCS47JDNN`; land it in `main`: `archon merge qi_01M8GNDQ5VGFWKZA9GCS47JDNN`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GNDQ5VGFWKZA9GCS47JDNN ended and its cargo target directory went.
+
+reports now totals per (account, currency). Header is account,currency,total_cents, sorted by account then currency. A CSV without a currency column counts as USD. A malformed currency code (not exactly three uppercase ASCII letters) prints an error to stderr and exits 2 with no stdout. Commit 41aeb559bed9a51d90de518b936c31e8092f4438 (tree 6c1af275a42c6c51867dfac6bb9bddc590fb70f0) on archon/nxtvy1tv-reports-totals-per-account-and-currency, based on 0454d4d. Checks: python3 -m unittest, 6 tests OK. Review: pass by two reviewers (agt_01M8GNF16HYNARNXTZFGZ3GX4J on 8687e2e, agt_01M8GNGSP0VW7HW2DETWF46AMY on the delta to 41aeb55); both findings from the first review were fixed in 41aeb55 and no blocking findings remain. Risk high: the CLI header and row shape change breaks callers parsing the old account,total_cents output, which the contract requires. Open: none blocking. Nothing is left running (the reviewer's process had already exited).
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNF16HYNARNXTZFGZ3GX4J), claude-code/claude-haiku-5-5 (agent agt_01M8GNGSP0VW7HW2DETWF46AMY)
+
+SHIPPED: commit 41aeb559bed9a51d90de518b936c31e8092f4438 on the run branch
+
+ledger: currency support is committed as 131fa47 on archon/cs47jdnn-ledger-currency-column-and-currency-vali (base f86fbdf). Changes: an optional 4th TSV column sets the currency (default USD); the output header is date,account,amount_cents,currency and every row carries its currency; a malformed currency (not exactly three uppercase ASCII letters) prints `line N: ...` to stderr and exits 2; other input errors still exit 1. Files: src/lib.rs, src/main.rs, tests/ledger.rs, tests/cli.rs, README.md. Checks run on the final head: cargo fmt --check, cargo clippy --all-targets -- -D warnings, and cargo test (9 tests: 6 unit, 3 CLI) all pass. Tree d58307c0e14cae29267a15b6809962097aaa8e2a. Review: one reviewer (agt_01M8GNG1886AQWZ1G5JHQ4P1PK), verdict pass, no blocking findings. Non-blocking follow-ups: whitespace around the currency is trimmed; an empty 4th column is exit 2, not USD; a line with both a bad amount and a bad currency exits 1; README says "ISO 4217" but only the shape is checked; Entry gained a public field with no version bump. Nothing is left running from this stage. The reviewer's leftover claude process (pid 3485767) is Aether's child and stops when this task ends. The operator checkout and the reports repository were not touched.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GNG1886AQWZ1G5JHQ4P1PK)
+
+SHIPPED: commit 131fa47dac2c27adcd8413572b0fa627cbe16a99 on the run branch

@@ -1,0 +1,32 @@
+**Do not ship `src/tokens.js` as it is.** It has a critical forgery bypass in `verify`. I did not change any code.
+
+**Scope note:** The operator named `session-lib`, but the registered repository is `review-seeded-bug`, whose `package.json` names the package `session-lib`. I reviewed its mirror at `b56c1af` (`repos/review-seeded-bug/src/tokens.js`). I did not run the test suite. I confirmed the bypass below with a read-only Node call against the mirror.
+
+**Findings, most severe first**
+
+1. **Critical — `verify` (`src/tokens.js:26-27`): signature check is a prefix match, so any signature is accepted, including an empty one.**
+   - `expected.startsWith(signature)` never checks the full length. An empty signature is a prefix of every string.
+   - Concrete input: `base64url('{"user":"root","exp":9e15}') + "."`, with any secret. `verify` returns `{"user":"root","exp":9000000000000000}`. I ran this and got that result.
+   - Even a one-character signature passes with about 1/64 chance per guess.
+   - Impact: anyone can mint a session for any user, with any expiry, without the key.
+
+2. **Medium — `verify` (`src/tokens.js:26-27`): comparison is not constant-time.**
+   - `startsWith` is not a constant-time compare, so response timing can leak how much of the MAC matched. Use `crypto.timingSafeEqual` on equal-length buffers, after a full-length check.
+
+3. **Medium — `verify` (`src/tokens.js:28-29`): throws instead of returning `null` for malformed payloads.**
+   - Concrete input: `base64url("null") + "."` throws `TypeError: Cannot read properties of null (reading 'exp')`. `base64url("{oops") + "."` throws `SyntaxError`.
+   - Without the key, these are reachable only through finding 1. Once that is fixed, they still crash if a caller holding a valid-looking token passes a non-object payload. The function's contract is "payload or null", so this breaks it.
+   - Fix: validate the parsed payload is a non-null object, and catch parse errors and return `null`, or let them propagate with context.
+
+4. **Low — `verify` (`src/tokens.js:22`): does not validate `secret`, while `sign` does.**
+   - `verify(token, undefined)` throws from `createHmac`. `verify(token, '')` accepts any token signed with an empty key. `sign` forbids that key, so this only matters if a misconfigured verifier is given an empty secret.
+   - Fix: apply the same length check in `verify`.
+
+5. **Low — `verify` (`src/tokens.js:24`): extra dot-separated segments are ignored.**
+   - `token.split('.')` takes the first two parts. `body.sig.junk` verifies if `body.sig` does. This is token malleability, not a bypass. Reject tokens that do not have exactly two segments.
+
+6. **Test gap (`test/tokens.test.js`):** The tests cover valid, tampered-payload, expired and short-secret cases, but not empty or truncated signatures, malformed JSON, or extra segments. That is why the critical bypass is not caught. The tampered-payload test passes only because the forged body's MAC differs from the original signature in full.
+
+**Not a finding:** `sign` puts the claims before `iat` and `exp`, so callers cannot override expiry. The MAC is fixed to HMAC-SHA256, so there is no algorithm-confusion path.
+
+**Recommendation:** Fix findings 1–3 before tomorrow's release, and add tests for an empty signature, a truncated signature, a `null` payload and malformed JSON. Findings 4–5 are cheap to fix at the same time.

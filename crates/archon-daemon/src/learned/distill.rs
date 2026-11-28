@@ -238,7 +238,8 @@ fn cheap_choice<'a>(
     let canonical = |choice: &ModelChoice| {
         let mut choice = choice.clone();
         choice.model = catalog.check(&choice.model).ok()?;
-        policy.check(&choice).is_ok().then_some(choice)
+        let unasked = catalog.picks_unasked(&choice.model, policy);
+        (unasked && policy.check(&choice).is_ok()).then_some(choice)
     };
     // A cost speaks for the model that ran: an alias now naming another model drops it.
     let as_ran = |choice: &ModelChoice| canonical(choice).filter(|c| c.model == choice.model);
@@ -578,6 +579,30 @@ mod tests {
         let policy = archon_core::policy::ModelPolicy::default();
         let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &dear).unwrap();
         assert_eq!(choice.model, dear, "only the model that ran is priced");
+    }
+
+    #[test]
+    fn an_antigravity_run_never_prices_the_errand_unless_allowed() {
+        let flash: ModelRef = "antigravity/gemini-3.8-flash".parse().unwrap();
+        let dear: ModelRef = "claude-code/claude-sonnet-5".parse().unwrap();
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let catalog = ModelCatalog::new(vec![listed(&flash), listed(&dear)]);
+        let cheap = ModelChoice::pinned(flash.clone(), Effort::Low);
+        let costly = ModelChoice::pinned(dear.clone(), Effort::Low);
+        let ran = [(0.0, &cheap), (0.5, &costly)];
+        let open = archon_core::policy::ModelPolicy::default();
+        let choice = cheap_choice(ran.into_iter(), &open, &catalog, &flash).unwrap();
+        assert_eq!(choice.model, dear, "opt-in models are never picked unasked");
+        let only_flash = [(0.0, &cheap)];
+        assert!(cheap_choice(only_flash.into_iter(), &open, &catalog, &flash).is_ok());
+        let named =
+            archon_core::policy::ModelPolicy::from_lists(&[flash.clone(), dear.clone()], &[], None);
+        let choice = cheap_choice(ran.into_iter(), &named, &catalog, &dear).unwrap();
+        assert_eq!(choice.model, flash, "the allowlist opts it in");
     }
 
     /// Supersession steers Archon's tier picks only: a listed, superseded

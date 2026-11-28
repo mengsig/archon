@@ -1,0 +1,14 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `5b872d6` on `main`.
+
+**The bug:** `sliding_windows` in `window.py` built its range as `range(len(items) - size)`, which leaves out the last window. For `[1, 2, 3]` with size 2 it returned `[[1, 2]]` instead of `[[1, 2], [2, 3]]`, and for a list whose length equals `size` it returned nothing.
+
+**The fix:** the range is now `range(len(items) - size + 1)`, one line in `window.py`. I did not touch the tests.
+
+**Edge cases:** I checked these by hand and in a quick script:
+- `size > len(items)` gives an empty list.
+- An empty list gives an empty list.
+- `size == len(items)` gives the whole list as one window.
+- `size == 1` gives each item as its own window.
+- `size <= 0` still raises `ValueError`.
+
+The commit message carries the `Co-Authored-By` line from the attribution reminder. I removed the `__pycache__/` directory my test runs created, so the tree is clean.

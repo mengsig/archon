@@ -1,0 +1,28 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests; committed as 7dc5718 on main (author mengsig). All 29 unit tests pass (python3 -m unittest test_retry_budget).
+
+Implementation:
+- Validates every argument first (type(x) is int, so bool/float/str/int subclasses raise ValueError; minimums enforced; retry_after validated only when not None). Validation runs before the attempt-limit return.
+- attempt >= max_attempts returns None.
+- Backoff via _backoff_ms: zero base or zero cap returns 0; if exponent >= cap.bit_length() it returns cap directly, so no huge power of two is built. Otherwise min(cap, base << exponent).
+- retry_after is a floor applied after the cap (not capped).
+- Budget check: elapsed + delay >= budget returns None; otherwise returns delay, including 0. The delay is never shortened.
+
+Tests cover validation (types, minimums, validation before exhausted returns), attempt limits, backoff sequence and saturation, huge-attempt and huge-cap cases, a comparison against the naive formula, retry_after floor behaviour, and budget boundaries.
+
+Decision: I left the Co-Authored-By line out of the commit. The repo's CLAUDE.md says not to put Claude attribution in commits, and that takes precedence over the attribution reminder. Tell me if you want it added.
+
+Note: `python3 -I -m unittest` fails to import the test module because -I drops the working directory from sys.path. Running without -I works.
+
+`retry_delay` is implemented per `SPEC.md` and committed as `7dc5718` on `main`, with the author set to `mengsig`. All 29 unit tests pass.
+
+- **Validation:** every argument is checked before any early return. Only built-in `int` values are accepted, so `bool`, `float`, `str` and int subclasses raise `ValueError`. The minimums are enforced, and `retry_after_ms` is checked only when it is not `None`.
+- **Attempt limit:** `attempt >= max_attempts` returns `None`.
+- **Backoff:** a zero base or zero cap gives 0. Otherwise `min(cap, base << (attempt-1))`, and when the exponent is at least `cap.bit_length()` the cap is returned directly, so no large power of two is built.
+- **Retry-After:** used as a floor after the cap is applied, so it is not limited by `cap_ms`.
+- **Budget:** returns `None` when `elapsed + delay >= budget`, otherwise returns the delay, including 0. The delay is never shortened to fit.
+
+The tests cover validation, attempt limits, backoff saturation (including huge attempts and caps), a comparison against the naive formula, the Retry-After floor, and the budget boundaries.
+
+Two things you may want to check:
+- **Commit attribution:** I left the `Co-Authored-By` line out because the repo's `CLAUDE.md` says not to put Claude attribution in commits, and that takes precedence over the attribution reminder. Say if you want it added.
+- **`-I` flag:** `python3 -I -m unittest` cannot import the test module, because `-I` drops the working directory from `sys.path`. Running without `-I` works.

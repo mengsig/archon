@@ -1,0 +1,41 @@
+{
+  "head": "acaad050ea30db9449bfb3821173d76d5a87bf57",
+  "arm": "old",
+  "model": "haiku",
+  "only": "",
+  "load5": 10.162109375,
+  "hashes": {
+    "archon": "b8be4cf3786f9baa453bf0b0cc9c9e3850d680339828058e1c7b20fad2ddebb7",
+    "aether": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "archon-bench": "96dd736441e638e2ae2d0816ec598e78fc40a16d2c7683ef67b74773547e21e6"
+  },
+  "versions": {
+    "archon": "archon 1.6.6",
+    "aether": "aether 1.4.3"
+  },
+  "start": "2026-11-28T07:20:13.558352+00:00",
+  "command": [
+    "archon-bench",
+    "run",
+    "--archon-bin",
+    "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/bin/archon",
+    "--aether-socket",
+    "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/run/a.sock",
+    "--results-dir",
+    "/home/mengsig/.local/share/archon/worktrees/archon/qi_01M8DXX5C44F2BT641XCBPAWYB/bench/results-release-1.6.7/.work/old-haiku/results",
+    "--arms",
+    "archon,aether",
+    "--trials",
+    "3",
+    "--parallel",
+    "3",
+    "--effort",
+    "high",
+    "--max-usd",
+    "37",
+    "--model",
+    "claude-code/claude-haiku-5-5"
+  ],
+  "exit": 0,
+  "end": "2026-11-28T10:44:48.583361+00:00"
+}

@@ -408,6 +408,12 @@ pub struct FakeFactory {
     pub fail_initial_navigation: Mutex<bool>,
     /// Every launch takes this long.
     pub delay: Mutex<std::time::Duration>,
+    /// The stack check refuses every preview with this reason.
+    pub stack_down: Mutex<Option<String>>,
+    /// The recipe each stack check was given, in order.
+    pub checked_recipes: Mutex<Vec<Option<archon_core::design::recipe::PreviewRecipe>>>,
+    /// The next stack check says it was reached, then waits to be resumed.
+    stack_gate: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 impl FakeFactory {
@@ -425,6 +431,20 @@ impl FakeFactory {
                 .is_none()
         );
         resume
+    }
+
+    /// Hold the next stack check: the first channel fires when it is
+    /// reached, and it goes on once the second is sent.
+    pub fn pause_next_stack_check(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached) = oneshot::channel();
+        let (resume, resume_rx) = oneshot::channel();
+        let gate = self
+            .stack_gate
+            .lock()
+            .unwrap()
+            .replace((reached_tx, resume_rx));
+        assert!(gate.is_none(), "one held stack check at a time");
+        (reached, resume)
     }
 
     pub fn launched(&self) -> usize {
@@ -452,6 +472,23 @@ impl BrowserFactory for FakeFactory {
         _url: &str,
     ) -> Result<Arc<dyn adb::UpstreamGuard>, archon_core::error::ArchonError> {
         Ok(Arc::new(FixtureServer))
+    }
+
+    async fn check_stack(
+        &self,
+        _url: &str,
+        recipe: Option<&archon_core::design::recipe::PreviewRecipe>,
+    ) -> Result<(), archon_core::error::ArchonError> {
+        self.checked_recipes.lock().unwrap().push(recipe.cloned());
+        let gate = self.stack_gate.lock().unwrap().take();
+        if let Some((reached, resume)) = gate {
+            reached.send(()).expect("the test waits for the check");
+            resume.await.expect("the test resumes the check");
+        }
+        match self.stack_down.lock().unwrap().clone() {
+            Some(reason) => Err(archon_core::error::ArchonError::Invalid(reason)),
+            None => Ok(()),
+        }
     }
 
     fn binary(&self, _configured: Option<&Path>) -> Result<PathBuf, adb::BrowserError> {
@@ -598,6 +635,7 @@ impl Fixture {
         fixture
             .as_agent(Request::DesignPreview {
                 url: PREVIEW.into(),
+                recipe: None,
                 caller: Some(fixture.agent.clone()),
             })
             .await

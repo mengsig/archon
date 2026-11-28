@@ -4219,7 +4219,9 @@ fn reviewer_said(h: &Harness, lead: &AetherAgentId, summary: &str) -> AetherAgen
 const YAML_VERDICT: &str = "complete_task:\n  verdict: pass\n  head: 51fb6147\n  findings: []";
 
 /// An unreadable reviewer result goes back to the lead at once, in one note
-/// with the exact shape, instead of failing the lead's record afterwards.
+/// with the exact shape, instead of failing the lead's record afterwards. The
+/// note reaches the running turn without interrupting it: an interrupted
+/// codex turn could end with the note read and park the lead for good.
 #[tokio::test]
 async fn an_unreadable_reviewer_result_goes_back_to_the_lead_once() {
     let h = Harness::new().await;
@@ -4232,13 +4234,13 @@ async fn an_unreadable_reviewer_result_goes_back_to_the_lead_once() {
             .await
             .unwrap();
     }
-    assert_eq!(
-        h.backend.interrupts(),
-        std::slice::from_ref(&lead_id),
-        "interrupted once"
+    assert!(
+        h.backend.interrupts().is_empty(),
+        "the lead's turn is not interrupted"
     );
     let messages = h.backend.messages();
     assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(h.backend.notes(), messages, "sent as Archon's note");
     let (to, note) = &messages[0];
     assert_eq!(to, &lead_id);
     assert!(
@@ -4311,14 +4313,14 @@ async fn unreadable_reviewer_notes_are_bounded_and_only_for_reviewers() {
             .unwrap();
     }
     assert_eq!(h.backend.messages().len(), 2, "at most two notes");
-    assert_eq!(h.backend.interrupts().len(), 2, "at most two interrupts");
+    assert!(h.backend.interrupts().is_empty(), "no note interrupts");
     assert_eq!(escalated(&h, &lead).await, None, "the stage goes on");
 }
 
-/// A note Aether did not answer is retried by the pump's replay, and the
-/// replay does not interrupt the lead again.
+/// A note Aether did not answer is retried by the pump's replay, which
+/// delivers it once and interrupts nothing.
 #[tokio::test]
-async fn an_unanswered_note_is_resent_without_a_second_interrupt() {
+async fn an_unanswered_note_is_resent_without_an_interrupt() {
     let h = Harness::new().await;
     adaptive_item(&h).await;
     let lead = h.running().await.remove(0);
@@ -4330,14 +4332,14 @@ async fn an_unanswered_note_is_resent_without_a_second_interrupt() {
     executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
         .await
         .unwrap();
-    assert_eq!(h.backend.messages().len(), 1);
-    assert_eq!(h.backend.interrupts(), [lead_id]);
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "delivered once: {messages:?}");
+    assert_eq!(messages[0].0, lead_id);
+    assert!(h.backend.interrupts().is_empty());
 }
 
-/// Whether the lead was interrupted or told of a reviewer that settled unreadable now.
+/// Whether the lead was told of a reviewer that settled unreadable now.
 async fn noted_unreadable(h: &Harness, lead: &AetherAgentId) -> bool {
-    let interrupted = |h: &Harness| h.backend.interrupts().iter().filter(|a| *a == lead).count();
-    let before = interrupted(h);
     let unreadable = reviewer_said(h, lead, YAML_VERDICT);
     executor::reviewer_settled(&h.ctx, lead, &unreadable)
         .await
@@ -4348,11 +4350,12 @@ async fn noted_unreadable(h: &Harness, lead: &AetherAgentId) -> bool {
         .messages()
         .iter()
         .any(|(to, text)| to == lead && text.contains(&named));
-    interrupted(h) > before || told
+    assert!(h.backend.interrupts().is_empty(), "no note interrupts");
+    told
 }
 
 /// Only a live, fresh attempt that owes a review is told: a resumed attempt
-/// settles on its turn's last word (§6.7), so it is never interrupted, and a
+/// settles on its turn's last word (§6.7), so it gets no note, and a
 /// stage that owes no review or has ended gets nothing.
 #[tokio::test]
 async fn only_a_live_fresh_lead_owing_a_review_is_told_of_an_unreadable_reviewer() {

@@ -1,0 +1,5 @@
+Implemented and committed both repositories. Three-column ledger input and legacy CSV default to USD; supplied currency codes are validated, and reports now totals by account and currency in sorted order.
+
+- `ledger`: `cargo test` passed. Commit `c09edfa` (`Add currency support to ledger export`).
+- `reports`: `python3 -m unittest` passed. Commit `652ff8c` (`Total reports by currency`).
+- Both repositories have clean working trees.

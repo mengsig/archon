@@ -546,6 +546,9 @@ pub struct SettingsView {
     /// for the global one.
     pub global: OperatorSettings,
     pub effective: EffectiveSettings,
+    /// A repository's saved design preview recipe, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_recipe: Option<crate::design::recipe::SavedRecipe>,
 }
 
 impl SettingsView {
@@ -613,6 +616,11 @@ impl SettingsView {
             "learned stage timeouts {learned} ({})",
             source("learned_stage_timeouts")
         ));
+        if let Some(saved) = &self.design_recipe {
+            lines.push(format!("design preview recipe: {}", saved.describe()));
+        } else if self.repo.is_some() {
+            lines.push("design preview recipe: none saved".to_owned());
+        }
         lines.join("\n")
     }
 }
@@ -676,6 +684,7 @@ mod tests {
             scoped: global.clone(),
             global,
             effective,
+            design_recipe: None,
         };
         let text = view.describe();
         assert!(text.contains("per item $5.00 ("), "{text}");

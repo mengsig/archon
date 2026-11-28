@@ -1,0 +1,19 @@
+Both repos now carry the currency column end to end. Each change is committed on a new `add-currency-column` branch, and both test suites pass on the committed code.
+
+**Commits**
+- `ledger` (`099d876`): accepts an optional fourth currency column and defaults to `USD`. The header is now `date,account,amount_cents,currency`. A malformed currency exits 2 with `line N: bad currency ...` on stderr. Other input errors still exit 1.
+- `reports` (`2d976ed`): totals per (account, currency), sorted by account then currency, with header `account,currency,total_cents`. A CSV without a `currency` column is counted as `USD`. A malformed currency prints `reports: bad currency ...` to stderr and exits 2.
+
+**Verification**
+- `cargo test` in `ledger`: 8 tests pass, including new tests that run the binary and check its exit codes and stderr. `cargo clippy --all-targets` is clean.
+- `python3 -m unittest` in `reports`: 4 tests pass. Two are new: a per-currency total, and the bad-currency exit.
+- End to end, `ledger` output piped into `reports` gives the expected per-account, per-currency totals.
+- READMEs are updated in both repos.
+
+**Choices I made that you may want to change**
+- **Empty fourth column** (`...\t900\t`) is treated as a malformed currency and exits 2. I did not treat it as "missing", because the spec only defines a missing column as the default.
+- **Lowercase or padded codes** (`eur`, ` EUR `): `ledger` trims whitespace like it does for other fields, so ` EUR ` is accepted, but `eur` is rejected. `reports` does not trim, since its input is `ledger`'s own output.
+- **Branch, not `main`:** the git rules say to branch off the default branch, so I did. Merge or fast-forward when you're happy with it.
+- **No Co-Authored-By trailer** on the commits. The CLAUDE.md rule against Claude attribution overrides the reminder that asked for it.
+- **Commit author:** the commits use the repo's configured identity, `mengsig <[redacted-email]>`. That differs from the account email `[redacted-email]`. I did not change the config. If you want the other identity, I can amend the commits.
+- **Line number in `reports` errors:** the `reports` error names the account and bad code but not the line number, which `ledger` does include. I left it out to keep the code simple.

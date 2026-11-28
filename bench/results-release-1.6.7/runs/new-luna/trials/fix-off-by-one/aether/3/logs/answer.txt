@@ -1,0 +1,3 @@
+Fixed the endpoint in [window.py](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0c94e5466aa1840dc76ba6c3/fix-off-by-one/window.py). It now includes the final valid window, including when the window spans the entire input; oversized windows still return an empty list.
+
+`python3 -m unittest` passes. Committed as `856c674` (`Fix sliding window endpoint`).

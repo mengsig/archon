@@ -1,0 +1,55 @@
+Review of src/tokens.js (session-lib, HMAC-SHA256 session tokens). Do not ship as-is: verify() has a critical auth bypass. No code or files were changed. npm test passes 4/4, but the existing tests miss the bypass.
+
+Findings, most severe first:
+
+1. CRITICAL, auth bypass. File src/tokens.js, function verify(), lines 24-27. The code splits the token on '.' and checks `expected.startsWith(signature)`. An empty signature is a prefix of every string, so a token with an empty signature verifies. Repro (secret 'k'.repeat(40)): verify(base64url('{"user":"root","exp":9e15}') + '.', secret, {now: 2000}) returns {user:'root', exp:9e15}. The same holds for any token whose signature is a prefix of the real one. Even a 1-character prefix is accepted for the correct body, so a brute force needs about 64 tries per character, with no rate limit. Fix: require equal length and use crypto.timingSafeEqual on the Buffers of the expected and presented MAC.
+
+2. MEDIUM, verify() throws on untrusted input instead of returning null. Same function, lines 28-29. JSON.parse is unguarded and payload.exp is read without checking that the payload is an object. Repro: verify('abc.', secret) throws SyntaxError; verify('bnVsbA.', secret) (base64 of 'null') throws TypeError. The documented contract is "null otherwise", and a throw on the request path is a crash or DoS vector. Exploitable directly only through finding 1, but it is wrong independently. Fix: wrap the parse in try/catch returning null, and check that the payload is a plain object.
+
+3. MEDIUM, verify() does not enforce the secret rules that sign() does. Lines 22-31 versus sign() line 15. verify(token, '') accepts tokens HMAC'd with an empty key. Repro: a token built with createHmac('sha256','') verifies with secret ''. Anyone can forge tokens if a caller ever passes an empty or short secret, such as from a missing env var. Fix: apply the same length check in verify() (or a shared helper), and fail loudly.
+
+4. LOW, the test suite gives false confidence. test/tokens.test.js. The 'tampered payloads' test keeps the original signature and changes only the payload, so it never exercises the prefix or empty-signature path. No test covers empty or truncated signatures, extra segments, malformed input, or empty secrets. Add these with the fix from finding 1.
+
+5. LOW, sign() silently produces unusable tokens for bad ttlSeconds. Line 16. ttlSeconds: NaN (or Infinity) makes exp serialize to null. The token is returned without error, and verify() then always rejects it. Fix: validate ttlSeconds is a finite positive number.
+
+6. LOW, tokens with extra segments are accepted. Line 24. verify(real + '.zzz', secret) succeeds because split('.') ignores the rest. Harmless alone, but a sign of loose parsing. Fix: require exactly two segments.
+
+7. INFO, design gaps, not bugs. verify() does not reject iat in the future. The secret check is length-only, so 'a'.repeat(32) is accepted, and there is no audience or issuer binding. Decide whether these matter for production.
+
+Ruled out: encoding.js is fine. The base64url decoding is lenient, but the MAC covers the raw string, so non-canonical bodies cannot pass unless the signature already matches. The exp-overwrite in sign() (claims spread first, then exp) is correct.
+
+Recommendation: block the release until finding 1 is fixed and covered by a test that uses an empty signature and a truncated signature.
+
+**Do not ship `src/tokens.js` as it stands.** `verify()` accepts forged tokens. I changed no code and wrote no files. `npm test` passes 4/4, but the existing tests don't exercise the bug.
+
+**1. CRITICAL: auth bypass in `verify()`** (`src/tokens.js`, lines 24–27)
+The code splits the token on `.` and checks `expected.startsWith(signature)`. An empty string is a prefix of every string, so a token with an empty signature verifies. With secret `'k'.repeat(40)`:
+
+```js
+verify(base64url('{"user":"root","exp":9e15}') + '.', secret, { now: 2000 })
+// → { user: 'root', exp: 9e15 }
+```
+
+A signature that is only a prefix of the real one also passes. I confirmed a 1-character prefix is accepted for the correct body. Brute-forcing a prefix takes about 64 tries per character, with no rate limit. Fix: require equal length and compare with `crypto.timingSafeEqual`.
+
+**2. MEDIUM: `verify()` throws on untrusted input instead of returning `null`** (lines 28–29)
+`JSON.parse` is unguarded, and `payload.exp` is read without checking the payload is an object. `verify('abc.', secret)` throws `SyntaxError`, and `verify('bnVsbA.', secret)` throws `TypeError`. The documented contract is "null otherwise", and a throw on the request path is a crash or DoS vector. Exploitable directly through finding 1, but wrong on its own. Fix: wrap the parse in try/catch returning `null`, and check the payload is a plain object.
+
+**3. MEDIUM: `verify()` skips the secret checks that `sign()` enforces** (lines 22–31 vs. line 15)
+`verify(token, '')` accepts tokens HMAC'd with an empty key. If a caller ever passes an empty or short secret, for example from a missing env var, anyone can forge tokens. Fix: apply the same length check in `verify()`, ideally via a shared helper.
+
+**4. LOW: the test suite gives false confidence** (`test/tokens.test.js`)
+The "tampered payloads" test keeps the original signature and changes only the payload, so it never reaches the prefix path. Nothing covers empty or truncated signatures, extra segments, malformed input, or empty secrets. Add these alongside the fix for finding 1.
+
+**5. LOW: `sign()` silently returns unusable tokens for bad `ttlSeconds`** (line 16)
+`ttlSeconds: NaN` (or `Infinity`) makes `exp` serialize to `null`. The token is returned without error, and `verify()` always rejects it. Fix: validate that `ttlSeconds` is a finite positive number.
+
+**6. LOW: extra segments are accepted** (line 24)
+`verify(real + '.zzz', secret)` succeeds because `split('.')` ignores the rest. Harmless alone, but it's a sign of loose parsing. Fix: require exactly two segments.
+
+**7. INFO: design gaps, not bugs**
+`verify()` doesn't reject a future `iat`. The secret check is length-only, so `'a'.repeat(32)` passes. There is no audience or issuer binding. Decide whether these matter for production.
+
+**Ruled out:** `src/encoding.js` is fine. Base64url decoding is lenient, but the MAC covers the raw string, so a non-canonical body can't pass unless the signature already matches. The `exp` overwrite in `sign()` (claims spread first, then `exp`) is correct.
+
+**Recommendation:** block the release until finding 1 is fixed and covered by tests using an empty signature and a truncated signature.

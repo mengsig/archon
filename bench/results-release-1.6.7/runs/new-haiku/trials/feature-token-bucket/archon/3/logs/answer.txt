@@ -1,0 +1,22 @@
+I've queued the rate limiter as item `qi_01M8GQ67NYK8HHER6PCY552FC2` on the `feature-token-bucket` repository. It has not started yet, and I haven't edited any code myself.
+
+- **Pipeline:** `direct`. This is one module with a short spec, so one agent builds it and checks it.
+- **Review:** `standard`, one step up from `none`. The spec has edge cases such as clock regression and key eviction, where a quiet mistake could slip through.
+- **Shipping:** the repository ships `local`, so the work is committed to a local branch and not pushed. That matches your request to commit.
+- **Brief:** the agent reads `SPEC.md` in full first and treats it as the source of truth over the stubs and the existing tests. It must cover each error and edge case in the spec with tests. It must use only the standard library, keep functions under 60 lines, and run the test suite before finishing.
+- **Notification:** I tagged the item `notify`, so you'll hear back when it finishes.
+
+Done: Implement rate limiter in ratelimit.py per SPEC.md. Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, and added 28 tests in test_ratelimit.py covering each spec error case and edge case. Committed f3f2f28 (tree dbf5897) on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p; not pushed. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK (baseline on the stubs: 3 errors). Independent review agt_01M8GQ9E4NY6N2M83W2V95P6KC passed f3f2f28 with no blocking findings. Non-blocking follow-ups: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n; SPEC does not cover NaN. Nothing left running; no lint tool is installed here, so no lint was run.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQ9E4NY6N2M83W2V95P6KC)
+
+SHIPPED: commit f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7 on the run branch
+Branch `archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/16ee3d078594c770e6d72d07/feature-token-bucket holds it (2 files changed, 261 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GQ67NYK8HHER6PCY552FC2`; land it in `main`: `archon merge qi_01M8GQ67NYK8HHER6PCY552FC2`.
+
+Rate limiter done. `TokenBucket` and `KeyedLimiter` are implemented in `ratelimit.py` per SPEC.md, with 28 tests in `test_ratelimit.py` (`python3 -m unittest test_ratelimit`: all pass). Committed f3f2f28 on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p, not pushed. Independent review passed with no blocking findings. Follow-ups, none blocking: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n, since SPEC does not cover it. No lint tool was available, so lint was not run.
+
+Implemented TokenBucket and KeyedLimiter in ratelimit.py per SPEC.md, and added 28 tests in test_ratelimit.py covering each spec error case and edge case. Committed f3f2f28 (tree dbf5897) on archon/cy552fc2-implement-rate-limiter-in-ratelimit-py-p; not pushed. Checks: python3 -m unittest test_ratelimit gives 28 tests, OK (baseline on the stubs: 3 errors). Independent review agt_01M8GQ9E4NY6N2M83W2V95P6KC passed f3f2f28 with no blocking findings. Non-blocking follow-ups: max_keys accepts non-integers; no direct test that a False try_acquire leaves state unchanged; the LRU test does not assert survivor state. Assumption: NaN is rejected for capacity, refill and n; SPEC does not cover NaN. Nothing left running; no lint tool is installed here, so no lint was run.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GQ9E4NY6N2M83W2V95P6KC)
+
+SHIPPED: commit f3f2f2853d80bb0792d7713ea8369b0d0d1ce6b7 on the run branch

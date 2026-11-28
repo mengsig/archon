@@ -1,0 +1,38 @@
+I've queued the refactor as item `qi_01M8GPEHRDH05K05N5QMMFGTA8` on the `refactor-order-status` repository, using the `refactor` pipeline. I did not edit the repository myself.
+
+- **Pipeline:** `refactor` characterizes current behaviour first, then refactors, verifies, and reviews. Its review level is fixed by the pipeline (strict), so I left it unset.
+- **Brief:** your spec is carried over as written. It also requires that errors, report output and ordering, and parsing stay identical, and that the old string semantics are characterized before any change.
+- **Shipping:** the repository ships locally, so the work will be committed on a local branch and not pushed.
+
+I'll report when the item finishes or fails.
+
+Done: Refactor orders crate status String to OrderStatus enum. Review of the OrderStatus refactor at HEAD 208c900 (worktree clean, no pushes). Verdict: PASS, with no blocking findings.
+
+Structural goal: met. src/status.rs holds OrderStatus with as_str, Display, FromStr to ParseStatusError, and can_transition_to. Order::status is OrderStatus, the root re-exports both types, and status literals in src/ appear only in status.rs. pay, ship and cancel share Order::transition_to, and the error strings, status_counts name ordering and from_line parsing match the baseline when read against the code.
+
+Checks run: cargo test passes (3 unit, 18 characterization, 3 existing, 0 doctests). cargo clippy --all-targets -- -D warnings passes. tests/characterization.rs is unchanged since 43e72f3, and tests/orders.rs, Cargo.toml and Cargo.lock are unchanged from baseline.
+
+Advisory findings (non-blocking): the hand-written ALL list in status.rs can drift from the variants; cargo fmt still fails on pre-existing lines in report.rs and tests/orders.rs; the Order Debug output now shows the enum name; the literal rule was applied to src/ only, so tests still contain literals and the operator should confirm this scope. Risk is high: the public Order::status field type changed, which the brief permits but which breaks callers.
+
+Nothing was left running.
+
+VERDICT: PASS
+
+SHIPPED: commit 208c900b0d78457a7f86fbf68d3df6ab84c39980 on the run branch
+Branch `archon/qmmfgta8-refactor-orders-crate-status-string-to-o` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/84e8d9ef7591981f9a832f8a/refactor-order-status holds it (7 files changed, 441 insertions(+), 27 deletions(-)). Review: `archon diff qi_01M8GPEHRDH05K05N5QMMFGTA8`; land it in `main`: `archon merge qi_01M8GPEHRDH05K05N5QMMFGTA8`.
+
+Freed 0.0 GiB of build output: item qi_01M8GPEHRDH05K05N5QMMFGTA8 ended and its cargo target directory went.
+
+Review of the OrderStatus refactor at HEAD 208c900 (worktree clean, no pushes). Verdict: PASS, with no blocking findings.
+
+Structural goal: met. src/status.rs holds OrderStatus with as_str, Display, FromStr to ParseStatusError, and can_transition_to. Order::status is OrderStatus, the root re-exports both types, and status literals in src/ appear only in status.rs. pay, ship and cancel share Order::transition_to, and the error strings, status_counts name ordering and from_line parsing match the baseline when read against the code.
+
+Checks run: cargo test passes (3 unit, 18 characterization, 3 existing, 0 doctests). cargo clippy --all-targets -- -D warnings passes. tests/characterization.rs is unchanged since 43e72f3, and tests/orders.rs, Cargo.toml and Cargo.lock are unchanged from baseline.
+
+Advisory findings (non-blocking): the hand-written ALL list in status.rs can drift from the variants; cargo fmt still fails on pre-existing lines in report.rs and tests/orders.rs; the Order Debug output now shows the enum name; the literal rule was applied to src/ only, so tests still contain literals and the operator should confirm this scope. Risk is high: the public Order::status field type changed, which the brief permits but which breaks callers.
+
+Nothing was left running.
+
+VERDICT: PASS
+
+SHIPPED: commit 208c900b0d78457a7f86fbf68d3df6ab84c39980 on the run branch

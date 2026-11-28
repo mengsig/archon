@@ -1,0 +1,17 @@
+`ledger.py` is implemented to `SPEC.md` and committed as `3de6333` (author `mengsig`). All 26 tests pass under `python3 -m unittest`.
+
+**Implementation** (`ledger.py`)
+- The constructor takes a shallow copy of the input and validates it. Non-dict input, empty or non-string names, and balances outside `[0, MAX_BALANCE]` raise `ValueError`. Booleans are rejected because the check uses `type(x) is int`.
+- `transfer` validates the amount in `[1, MAX_BALANCE]` before touching accounts. It then raises `KeyError` for an unknown account and returns `False` for insufficient funds or destination overflow, leaving balances unchanged.
+- A same-account transfer returns `source_balance >= amount` and never writes.
+- Every call takes one `threading.Lock`, so checks and both writes are atomic, and `snapshot()` returns a copy taken under the same lock. Opposite transfers cannot deadlock because only one lock exists.
+
+**Tests** (`test_ledger.py`)
+- The two original tests are kept. The new cases cover construction, copy isolation, every invalid-input path, the amount-before-account ordering, boundary values, overflow, same-account behaviour, and two threaded tests (opposite transfers, and snapshot totals never changing).
+- The threaded tests are deterministic: fixed iteration counts and assertions on invariants. They use a 30-second join timeout only as a deadlock guard.
+
+**Choices I made where the spec was silent**
+- Non-string account names passed to `transfer` raise `KeyError`, not `TypeError`. This avoids an unhashable-key error and treats them as unknown accounts.
+- A single lock serializes all ledger operations. It is the simplest design that meets the linearizability requirement; per-account locks would add throughput at the cost of ordering complexity.
+
+I did not run a linter because `pyflakes` is not installed here. The generated `__pycache__/` was removed, so the working tree is clean.

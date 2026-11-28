@@ -388,6 +388,7 @@ fn orchestrators_alone(
             | Request::DesignPreview { .. }
             | Request::DesignNoteReport { .. }
             | Request::DesignHistory { .. }
+            | Request::DesignRecipe { .. }
     );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
@@ -409,6 +410,7 @@ fn check_named_caller(
         | Request::DesignPreview { caller, .. }
         | Request::DesignNoteReport { caller, .. }
         | Request::DesignHistory { caller, .. }
+        | Request::DesignRecipe { caller }
         | Request::SubmitVerdict { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
@@ -488,7 +490,8 @@ pub(crate) async fn route(
         | Request::DesignFinishCancel { .. }
         | Request::DesignPreview { .. }
         | Request::DesignNoteReport { .. }
-        | Request::DesignHistory { .. }) => crate::design::handle(ctx, client, request).await,
+        | Request::DesignHistory { .. }
+        | Request::DesignRecipe { .. }) => crate::design::handle(ctx, client, request).await,
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {
             item,
@@ -721,6 +724,7 @@ async fn handle_queue(
             legacy_proposals,
         } => settings::set(ctx, repo.as_ref(), settings, legacy_proposals).await,
         Request::ResetSettings { repo } => settings::reset(ctx, repo.as_ref()).await,
+        Request::ClearDesignRecipe { repo } => settings::clear_design_recipe(ctx, &repo).await,
         Request::ListPipelines { repo, pipeline } => {
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await
         }

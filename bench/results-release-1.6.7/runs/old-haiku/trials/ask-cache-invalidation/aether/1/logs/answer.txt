@@ -1,0 +1,35 @@
+Root cause: category listing pages are cached with a 600s TTL that updatePrice never invalidates. Product pages stay fresh because updatePrice deletes the product cache key, and product() re-reads the store on the next request. Listing rows copy priceCents into the cache (catalog.js:22-32, config.js:7 LISTING_TTL_SECONDS=600), and updatePrice (pricing.js:6-13) only calls cache.delete(productKey(sku)). No listing:<category>:<page> entry is touched, so a stale row lives until its own TTL expires, which is the "about ten minutes" support sees. Reproduced read-only: after updatePrice, product() returns 4500 while listing() still returns 5000 until t=600s. The existing tests pass (3/3) and do not cover listings after an update. Fix (smallest): in updatePrice, after the store update, evict the listing entries for updated.category (for example a TtlCache prefix-delete on `listing:${category}:`, or a per-category version in the listing key). Better long term: stop caching denormalized priceCents in listing rows and hydrate prices from the product lookup at read time. Add a test that a listing reflects the new price right after updatePrice. Caveats: the cache is an in-process Map, so with multiple instances the other instances stay stale until TTL even after the fix; the store is a stand-in, so the real DB write path is outside this repo. No code was changed.
+
+The stale price on category pages comes from the listing cache, which `updatePrice` never invalidates. Product pages are fresh because `updatePrice` evicts the product cache key. Nothing evicts the listing keys, so each listing row stays stale until its own 600-second TTL expires. I did not change any code.
+
+**Code path**
+
+- `src/pricing.js:6-13` (`updatePrice`): writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That evicts only `product:<sku>`.
+- `src/catalog.js:12-20` (`product`): after the eviction, the next read misses the cache and reads the store, so product pages update immediately.
+- `src/catalog.js:22-33` (`listing`): caches whole rows under `listing:<category>:<page>`, and each row copies `priceCents`. Nothing removes these keys when a price changes.
+- `src/config.js:4-7`: `PRODUCT_TTL_SECONDS: 3600`, `LISTING_TTL_SECONDS: 600`. The 600 seconds is the "about ten minutes" support is seeing.
+
+**Why it is that long**
+
+A listing entry is rebuilt only when it expires. The 600-second TTL was chosen because listings are expensive to build (the comment in `config.js` says so), but the cache holds denormalized price data and the invalidation path does not account for it.
+
+**Reproduction (read-only, against the repo's modules)**
+
+- Before the update: listing and product both show 5000.
+- After `updatePrice(c, "A1", 4500)`: `product("A1")` returns 4500, `listing("tools")` still returns 5000.
+- At t=599s the listing is still 5000. At t=600s it becomes 4500.
+
+The existing test suite passes (3/3). The test named "product pages see price updates immediately" only checks the product path, so nothing covers listings after an update.
+
+**Fix options**
+
+1. **Smallest change (recommended first):** in `updatePrice`, after the store update, evict the listing entries for `updated.category`. For example, add a prefix delete to `TtlCache` and call `cache.deletePrefix(\`listing:${category}:\`)`. Watch for prefix collisions if category names can contain `:`.
+2. **Versioned keys:** include a per-category version in the listing key and bump it on price change. This is O(1) and leaves old entries to expire on their own.
+3. **Longer term:** stop caching `priceCents` in listing rows. Cache only the SKU order and hydrate prices from the product lookup at read time. This removes the class of bug, at the cost of more lookups per listing read.
+
+Whichever option is chosen, add a test that `listing(category)` shows the new price immediately after `updatePrice`.
+
+**Caveats**
+
+- The cache is an in-process `Map`. If `catalog-service` runs as multiple instances, `updatePrice` only clears the local instance, and the others stay stale until their TTL expires even after the fix. I could not check the deployment topology from this repo.
+- `ProductStore` is a stand-in for the database, so the real write path is outside this repo.

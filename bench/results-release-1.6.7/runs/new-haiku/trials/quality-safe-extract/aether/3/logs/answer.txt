@@ -1,0 +1,36 @@
+Implemented safe_extract.extract per SPEC.md and added focused tests. Committed as 9dafff1 on main (safe_extract.py and test_safe_extract.py only; an untracked __pycache__/ was left out). `python3 -m unittest` runs 36 tests, all passing.
+
+Behavior:
+- entries must be a list (tuples, iterators, generators are rejected without being consumed). Each entry must be a 2-tuple with a str name and bytes data.
+- Names must be nonempty relative POSIX paths. Leading '/', backslash, colon, NUL, and empty, '.' or '..' components are rejected. Names that cannot be encoded for the filesystem are rejected up front.
+- Duplicate names and file/directory collisions within the batch are rejected in either order.
+- Root must be a str or Path naming an existing real directory (not a symlink). A missing root or a non-directory is a ValueError. Other OSErrors propagate.
+- Before any write, every target is checked on disk. Symlinks (including dangling ones) and existing targets or non-directory ancestors below root are rejected. Writes use exclusive creation.
+- Output is names in input order. Empty batches return [] after root validation.
+
+Judgment calls:
+- Symlinks above root are allowed; only components below root are checked.
+- Entries must be tuples, so a list entry such as ["a", b""] is rejected as malformed.
+- Filesystem name-length limits (ENAMETOOLONG) are not pre-validated, so that error can still occur mid-batch. The spec treats I/O errors as out of scope.
+- Case-insensitive filesystems are not handled specially.
+
+The implementation and tests are committed as `9dafff1` on `main`, with all 36 tests passing.
+
+Only `safe_extract.py` and `test_safe_extract.py` are in the commit. An untracked `__pycache__/` directory was left out. The commit has no attribution trailer, because the CLAUDE.md in this repo says not to add generated-by lines and it takes precedence over the reminder.
+
+**What it does**
+- Rejects any non-list batch without consuming it, and any malformed entry (not a 2-tuple, non-str name, non-bytes data).
+- Enforces the name rules: relative POSIX paths, with no leading `/`, backslash, colon, NUL, or empty, `.` or `..` components. Percent signs and unicode are kept literally.
+- Rejects duplicate names and file/directory collisions within the batch, in either order.
+- Requires root to be an existing real directory (a str or Path). Symlinks are rejected.
+- Before writing anything, checks every target on disk. Symlinks, including dangling ones, and existing targets or non-directory ancestors below root are rejected. Writes use exclusive creation, so nothing is overwritten.
+- Returns names in input order. Unexpected OS errors propagate.
+
+**Choices I made where the spec left room**
+- Entries must be tuples. A list entry such as `["a", b""]` is rejected as malformed.
+- Symlinks above root are allowed; only components below root are checked.
+- Names that can't be encoded for the filesystem are rejected up front, so a late encoding error can't leave a partial batch.
+
+**Known gaps**
+- Filesystem name-length limits (ENAMETOOLONG) are not pre-validated, so that error can still occur partway through a batch. The spec treats I/O errors as out of scope.
+- Case-insensitive filesystems are not handled specially.

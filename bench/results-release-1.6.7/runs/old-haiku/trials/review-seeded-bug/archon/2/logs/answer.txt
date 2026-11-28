@@ -1,0 +1,43 @@
+**Do not ship `src/tokens.js` as it is.** The first finding lets anyone forge a valid token. Nothing was changed, and I did not run the code. Each finding below comes from reading it.
+
+**Scope caveat:** you named `session-lib`, but the only registered repository is `review-seeded-bug`, and I reviewed its `src/tokens.js`. Its mirror is at the base commit `81eea9a` ("bench fixture") with a clean tree, and mirrors hold the base commit without uncommitted work. If your rewrite is uncommitted or on another branch, the file I read may be the old version. Confirm that this is the file you mean.
+
+### 1. Critical: `verify` accepts an empty signature, so any payload can be forged
+- **File/function:** `src/tokens.js`, `verify`, line 27.
+- **What goes wrong:** `expected.startsWith(signature)` is true when `signature` is `''`. The signature check is then skipped entirely, and the attacker's payload is returned.
+- **Input:** take `{"user":"root","exp":9e15}`, base64url-encode it as `B`, and send `B.`. `token.split('.')` gives `signature === ''`, so `verify` returns `{user:'root', exp:9e15}`.
+- **Severity:** critical. Any caller that trusts `verify` can be logged in as any user.
+- **Test gap:** `test/tokens.test.js` only tries a forged payload with a real signature, so it misses this.
+
+### 2. High: the signature check is a prefix match and is not constant-time
+- **File/function:** `src/tokens.js`, `verify`, line 27.
+- **What goes wrong:** `startsWith` accepts any leading part of the correct MAC, not only the whole MAC. The comparison also exits early on the first mismatched character, which leaks timing.
+- **Input:** for a body the attacker has seen signed, a truncated signature (for example, the first character only) is accepted when it matches the real MAC's prefix. Guessing one character at a time with a timing oracle is also possible.
+- **Severity:** high. The fix is `crypto.timingSafeEqual` on equal-length buffers, with the full signature required.
+
+### 3. Medium: `verify` can throw instead of returning `null`
+- **File/function:** `src/tokens.js`, `verify`, lines 28–29.
+- **What goes wrong:** `JSON.parse` is not guarded, so malformed JSON throws. A body that decodes to `null` makes `payload.exp` throw a `TypeError`. Both happen before the expiry check. Through finding 1, an attacker can make the request path throw with a body such as `base64url("not json")` plus `.`.
+- **Severity:** medium. Once finding 1 is fixed, this is reachable only with a valid signature. The function's contract ("null otherwise") is still broken.
+
+### 4. Medium: `verify` does not check the secret
+- **File/function:** `src/tokens.js`, `verify`, line 26.
+- **What goes wrong:** `sign` rejects secrets shorter than 32 characters, but `verify` does not. If the verifying side ever gets `''`, the HMAC key is empty, and anyone can compute a valid signature with that key and pass verification.
+- **Input:** `verify(token, '', …)` accepts a token that was signed with `sign(claims, '')`-style HMAC over an empty key.
+- **Severity:** medium. It needs a misconfigured or empty secret on the verifying side. The fix is to apply the same length check in `verify`.
+
+### 5. Low: `sign` accepts unchecked `ttlSeconds`
+- **File/function:** `src/tokens.js`, `sign`, line 16.
+- **What goes wrong:** `ttlSeconds` is not validated. `NaN` produces `exp: null` in the JSON, so the token is issued but always rejected. A negative value issues a token that is already expired. A huge value gives an effectively permanent token.
+- **Input:** `sign({u:1}, S, {ttlSeconds: 1e12})` issues a token valid for about 31,000 years.
+- **Severity:** low, but it is a silent failure, which the commandments forbid.
+
+### 6. Low: extra segments are ignored
+- **File/function:** `src/tokens.js`, `verify`, line 24.
+- **What goes wrong:** `token.split('.')` drops anything after the second segment, so `body.sig.junk` verifies. This makes tokens malleable and non-canonical.
+- **Severity:** low. The fix is to require exactly two segments.
+
+### Not reviewed
+- `src/encoding.js` is two lines. Node's base64url decoding is lenient and ignores invalid characters, so one payload can have several encodings. The signature still covers the exact string, so this is not a forgery path.
+
+**Recommendation:** fix findings 1 and 2 together (require a non-empty, full, constant-time comparison), then 3 and 4, and add tests for an empty signature, a truncated signature, an empty secret, and a malformed body. If you want those fixes, I can queue them as an Archon item with `strict` review, since this touches authentication.

@@ -1,0 +1,40 @@
+**Do not ship this as written.** `verify` accepts a forged token with no secret at all.
+
+**Repository caveat:** No repository named `session-lib` is registered. The only one is `review-seeded-bug`, and its mirror at `bb789a8` ("bench fixture") has `src/tokens.js`. I reviewed that file. The mirror holds only committed base code, so if your rewrite is uncommitted or lives in another repo, this review may not cover it. Register that repo or point me at the right commit and I'll redo the review.
+
+I made no changes to any repository. The probe scripts are in `scratch/tokens-review/`.
+
+## Findings (all in `src/tokens.js`)
+
+**1. `verify`: forged tokens with an empty signature are accepted. Critical.**
+- Line 24 `token.split('.')` gives `signature === ''` for `<body>.`. Line 25 only rejects `undefined`, so the empty string passes. Line 27 `expected.startsWith('')` is always true.
+- Input: `base64url('{"sub":"admin","exp":<future ms>}') + "."`. `verify` returns `{sub:'admin',...}` for any secret. Confirmed by running it against the mirror.
+- Related: line 27 is a prefix check, not an equality check, and it is not constant-time. Any prefix of the real MAC passes, and the comparison leaks timing.
+- Fix: reject empty or missing signatures. Compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers.
+
+**2. `verify` accepts a token whose secret is empty. High (conditional).**
+- `sign` enforces `secret.length >= 32`, but `verify` does not. With verifier secret `''`, a token signed with an empty HMAC key verifies. Confirmed: `verify(<token signed with key ''>, '')` returns the payload.
+- This only bites if a deployment ends up with an empty or short secret, but the two functions should enforce the same key policy.
+- Fix: validate the secret in `verify` the same way `sign` does.
+
+**3. `verify` throws instead of returning `null` on malformed input. Medium.**
+- Line 28 `JSON.parse` is unguarded. Input `"bm90LWpzb24."` (`not-json`) throws `SyntaxError`.
+- Input `"bnVsbA."` (`null`) passes `JSON.parse`, then line 29 throws `TypeError` on `payload.exp`.
+- The documented contract is "payload or null", so a request handler gets an exception from attacker-controlled input. Today this is reachable because of finding 1. Once finding 1 is fixed it only happens for validly signed tokens, so severity drops to low.
+- Fix: check the signature before parsing. Wrap the parse in a try that returns `null` for invalid JSON, and check that the payload is a non-null object before reading `exp`.
+
+**4. `verify` ignores extra dot-separated segments. Low.**
+- `token.split('.')` drops everything after the second segment, so `<body>.<sig>.junk` verifies. Not forgeable, but it is a non-canonical token format that the spec does not describe.
+- Fix: require exactly two segments.
+
+**5. `sign` does not validate `ttlSeconds`. Low.**
+- `ttlSeconds: 0` or a negative value yields a token that is already expired. `NaN` makes `exp` serialise as `null`, and such a token never verifies. Both fail silently.
+- Fix: assert `Number.isFinite(ttlSeconds) && ttlSeconds > 0` at the boundary.
+
+**6. Notes, not defects.**
+- `verify` does not check `iat`, so a token with a future `iat` is accepted. This matters only if tokens are meant to be time-bounded from both sides.
+- `encoding.js` uses Buffer's lenient base64url decoding, which skips invalid characters. The MAC covers the raw body string, so this is not exploitable here. It is still worth knowing for any future decode-then-compare design.
+
+## Verdict
+
+Finding 1 is a critical authentication bypass, and its fix is small. Findings 2 and 3 should be fixed in the same change. Findings 4 and 5 can be handled alongside. Once the repo question is settled I can have the fix made and reviewed through an item, if you want that.

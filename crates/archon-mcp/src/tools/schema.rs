@@ -67,6 +67,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         design_preview(),
         design_note(),
         design_history(),
+        design_recipe(),
     ]
 }
 
@@ -76,11 +77,42 @@ fn design_preview() -> ToolDefinition {
         "Design preview",
         "Stage agent of a live design stage: point the operator's preview at your dev server. \
          `url` is an http:// URL whose host is 127.0.0.1, localhost or [::1], with any port; \
-         anything else is refused. Call it again after a server restart.",
+         anything else is refused. Archon checks that this worktree serves it and that the \
+         page and each recipe step's `ready` URL or `port` answer without a server error. Pass \
+         `recipe` once the whole stack is up: it is saved for the repository. Call it again \
+         after a server restart.",
         object(
-            json!({"url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."}}),
+            json!({
+                "url": {"type": "string", "minLength": 1, "description": "For example http://127.0.0.1:5173/."},
+                "recipe": {"type": "object", "description": "How the stack came up; env var names, never values.",
+                    "properties": {
+                        "source": {"type": "string", "description": "Where the route came from, e.g. docs/dev-preview.md."},
+                        "steps": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                            "name": {"type": "string", "description": "a-z0-9_-, as in .archon/services/<name>.pid."},
+                            "command": {"type": "string", "description": "Secrets as $NAME; Compose -p \"$COMPOSE_PROJECT_NAME\"."},
+                            "dir": {"type": "string"},
+                            "run": {"enum": ["service", "once"]},
+                            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                            "ready": {"type": "string", "description": "A loopback URL that answers once it is up."},
+                            "port_pick": {"description": "\"free\" or {\"env\":\"NAME\"}: a per-run port, with this run's port"}
+                        }, "required": ["name", "command"]}},
+                        "env": {"type": "array", "items": {"type": "string"}},
+                        "notes": {"type": "string"}
+                    }, "required": ["source", "steps"]}
+            }),
             &["url"],
         ),
+        false,
+    )
+}
+
+fn design_recipe() -> ToolDefinition {
+    define(
+        "design_recipe",
+        "Design recipe",
+        "Stage agent of a live design stage: the preview recipe an earlier session saved for \
+         this repository, if any. Try it before discovering the stack.",
+        object(json!({}), &[]),
         false,
     )
 }

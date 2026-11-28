@@ -1015,7 +1015,7 @@ mod tests {
 
     fn welcome(protocol_version: u32) -> Welcome {
         serde_json::from_value(serde_json::json!({
-            "protocol_version": protocol_version, "daemon_version": "1.4.3",
+            "protocol_version": protocol_version, "daemon_version": "1.4.4",
             "instance_id": "i-1", "schema_version": 1, "pid": 7,
         }))
         .unwrap()
@@ -1056,7 +1056,7 @@ mod tests {
         assert!(
             lacking
                 .detail
-                .contains("Aether version 1.4.3 lacks host_context")
+                .contains("Aether version 1.4.4 lacks host_context")
         );
         assert!(lacking.detail.contains("effective full"));
         welcome.features.push("host_context".into());
@@ -1072,12 +1072,12 @@ mod tests {
     #[test]
     fn doctor_enforces_the_minimum_aether_release() {
         let mut daemon = welcome(PROTOCOL_VERSION);
-        daemon.daemon_version = "1.4.2".into();
+        daemon.daemon_version = "1.4.3".into();
         let old = aether_ok(&daemon);
         assert_eq!(old.level, Level::Fail, "{}", old.detail);
-        assert!(old.detail.contains("1.4.2") && old.detail.contains("1.4.3"));
+        assert!(old.detail.contains("1.4.3") && old.detail.contains("1.4.4"));
         assert!(old.detail.contains("aether update"));
-        daemon.daemon_version = "1.4.3".into();
+        daemon.daemon_version = "1.4.4".into();
         assert_eq!(aether_ok(&daemon).level, Level::Ok);
     }
 

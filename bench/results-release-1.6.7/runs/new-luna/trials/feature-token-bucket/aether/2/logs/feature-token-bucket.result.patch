@@ -1,0 +1,129 @@
+diff --git a/ratelimit.py b/ratelimit.py
+index f5b6ddd..d305238 100644
+--- a/ratelimit.py
++++ b/ratelimit.py
+@@ -1,31 +1,116 @@
+ """Token-bucket rate limiting. See SPEC.md."""
+ 
++import math
+ import time
++from collections import OrderedDict
++
++
++def _validate_positive(value, name):
++    """Reject values that do not satisfy the spec's strictly-positive rule."""
++    try:
++        positive = value > 0
++    except TypeError as exc:
++        raise ValueError(f"{name} must be greater than zero") from exc
++    if not positive:
++        raise ValueError(f"{name} must be greater than zero")
+ 
+ 
+ class TokenBucket:
+     def __init__(self, capacity, refill_per_sec, clock=time.monotonic):
+-        raise NotImplementedError
++        _validate_positive(capacity, "capacity")
++        _validate_positive(refill_per_sec, "refill_per_sec")
++        self.capacity = capacity
++        self.refill_per_sec = refill_per_sec
++        self._clock = clock
++        self._tokens = capacity
++        self._last_time = clock()
++        self._clock_behind = False
++
++    def _validate_request(self, n):
++        _validate_positive(n, "n")
++        if n > self.capacity:
++            raise ValueError("n must not exceed capacity")
++
++    def _refill(self):
++        now = self._clock()
++        if now > self._last_time:
++            elapsed = now - self._last_time
++            self._tokens = min(
++                self.capacity, self._tokens + elapsed * self.refill_per_sec
++            )
++            self._last_time = now
++            self._clock_behind = False
++        elif now < self._last_time:
++            self._clock_behind = True
++        return now, not self._clock_behind
+ 
+     def try_acquire(self, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        _, clock_ready = self._refill()
++        if not clock_ready:
++            return False
++        if self._tokens >= n:
++            self._tokens -= n
++            return True
++        return False
+ 
+     def available(self):
+-        raise NotImplementedError
++        self._refill()
++        return self._tokens
+ 
+     def wait_time(self, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        now, clock_ready = self._refill()
++        if not clock_ready:
++            resume_at = math.nextafter(self._last_time, math.inf)
++            return (resume_at - now) + max(
++                0.0, (n - self._tokens) / self.refill_per_sec
++            )
++        if self._tokens >= n:
++            return 0.0
++        return (n - self._tokens) / self.refill_per_sec
+ 
+ 
+ class KeyedLimiter:
+     def __init__(self, capacity, refill_per_sec, max_keys=1024, clock=time.monotonic):
+-        raise NotImplementedError
++        # Let TokenBucket enforce the shared capacity and refill constraints.
++        _validate_positive(capacity, "capacity")
++        _validate_positive(refill_per_sec, "refill_per_sec")
++        _validate_positive(max_keys, "max_keys")
++        if not isinstance(max_keys, int):
++            raise ValueError("max_keys must be an integer")
++        self.capacity = capacity
++        self.refill_per_sec = refill_per_sec
++        self.max_keys = max_keys
++        self._clock = clock
++        self._buckets = OrderedDict()
++
++    def _validate_request(self, n):
++        _validate_positive(n, "n")
++        if n > self.capacity:
++            raise ValueError("n must not exceed capacity")
++
++    def _get_bucket(self, key):
++        try:
++            bucket = self._buckets[key]
++        except KeyError:
++            if len(self._buckets) >= self.max_keys:
++                self._buckets.popitem(last=False)
++            bucket = TokenBucket(
++                self.capacity, self.refill_per_sec, clock=self._clock
++            )
++            self._buckets[key] = bucket
++        else:
++            self._buckets.move_to_end(key)
++        return bucket
+ 
+     def try_acquire(self, key, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        return self._get_bucket(key).try_acquire(n)
+ 
+     def wait_time(self, key, n=1):
+-        raise NotImplementedError
++        self._validate_request(n)
++        return self._get_bucket(key).wait_time(n)
+ 
+     def __len__(self):
+-        raise NotImplementedError
++        return len(self._buckets)

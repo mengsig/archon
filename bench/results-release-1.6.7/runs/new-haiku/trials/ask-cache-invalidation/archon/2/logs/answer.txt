@@ -1,0 +1,28 @@
+**Root cause: `updatePrice` invalidates only the product cache entry, and category listings are cached separately for 600 seconds, so they keep the old price until that entry expires.**
+
+I read the mirror at `repos/ask-cache-invalidation` (HEAD `d7056e4`, "bench fixture"). I changed nothing and did not run the tests.
+
+**The code path**
+
+- **Write:** `updatePrice` in `src/pricing.js:6-13` updates the store, then calls `catalog.cache.delete(productKey(sku))` (line 11). That removes only `product:<sku>`.
+- **Product page read:** `Catalog.product` (`src/catalog.js:12-20`) reads `product:<sku>`. The entry was just deleted, so it reloads from the store and shows the new price at once.
+- **Category read:** `Catalog.listing` (`src/catalog.js:22-33`) caches each page under `listing:<category>:<page>` (`src/keys.js:4`). Each cached row carries `priceCents` (line 29). Nothing deletes these keys on a price change, so the old price is served.
+
+**Why the delay is about ten minutes**
+
+- `LISTING_TTL_SECONDS` is 600 (`src/config.js:7`). The TTL is set once when the page is built (`src/catalog.js:30`) and is not refreshed on reads.
+- The stale window therefore ends when that page's entry expires. It can be anywhere from 0 to 600 seconds, depending on when the page was last built, and 600 seconds is the upper bound.
+- The config comment gives the reason for caching listings: they are "expensive to build (joins + sorting)". The TTL was presumably meant as the only freshness guard, but it is not one for prices.
+
+**Suggested fix**
+
+1. Make the listing cache a per-category entry instead of per-page: cache the sorted category result from `store.inCategory`, then slice the page in `listing()`. The expensive sort stays cached, and each category now has one key.
+2. In `updatePrice`, delete that category's listing key along with the product key. The store's `update` already returns the updated product, including `category`, so no extra lookup is needed.
+3. Add a test that calls `catalog.listing('tools')`, runs `updatePrice`, and asserts the new price appears. The existing tests only check the product page (`test/catalog.test.js:13-18`), which is why this went unnoticed.
+
+Lowering `LISTING_TTL_SECONDS` would shrink the window but not remove it, and would add load. Per-page invalidation works too, but it needs a key-prefix delete the cache does not have.
+
+**Caveats**
+
+- The cache is an in-process `Map` (`src/cache.js`). If the storefront runs several instances, `updatePrice` clears only the instance that handled the write. The other instances would then show stale prices on both pages, for up to 3600 seconds on product pages and 600 on listings. Support's report fits a single instance, but the deployment topology is not in this repo, so please confirm it.
+- The same gap applies to any change that moves a product between categories or renames it, since the listing is sorted by name. Those paths should be fixed together.

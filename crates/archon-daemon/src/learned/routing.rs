@@ -82,6 +82,7 @@ pub(crate) fn plan_for_item(
                 && saved.0.0.values().flatten().all(|choice| {
                     eligible_model(&catalog, &choice.model, max_tier)
                         .is_some_and(|id| id == choice.model)
+                        && catalog.picks_unasked(&choice.model, policy)
                 }) =>
         {
             saved
@@ -258,13 +259,16 @@ fn stage_evidence(
 
 /// Whether evidence recorded on `choice` counts now: it speaks only for the
 /// model it ran, so an alias since moved to another model counts for neither.
+/// An opt-in provider's model counts only once the policy names it.
 fn applies(
     catalog: &archon_core::model_tier::ModelCatalog,
     (policy, max_tier): (&ModelPolicy, Tier),
     choice: &ModelChoice,
 ) -> bool {
     let listed = eligible_model(catalog, &choice.model, max_tier);
-    listed.is_some_and(|id| id == choice.model) && policy.check(choice).is_ok()
+    listed.is_some_and(|id| id == choice.model)
+        && policy.check(choice).is_ok()
+        && catalog.picks_unasked(&choice.model, policy)
 }
 
 fn eligible_model(
@@ -553,6 +557,29 @@ mod tests {
             "superseded, still listed"
         );
         assert!(!applies(&catalog, read, &ran(&gone)), "retired");
+    }
+    #[test]
+    fn learned_routing_never_picks_antigravity_until_the_policy_names_it() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let [flash, sonnet]: [ModelRef; 2] =
+            ["antigravity/gemini-3.8-flash", "claude-code/sonnet"].map(|m| m.parse().unwrap());
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let catalog = ModelCatalog::new(vec![listed(&flash), listed(&sonnet)]);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        let open = ModelPolicy::default();
+        assert!(applies(&catalog, (&open, Tier::Frontier), &ran(&sonnet)));
+        assert!(
+            !applies(&catalog, (&open, Tier::Frontier), &ran(&flash)),
+            "evidence from an explicit plan never routes another item there"
+        );
+        let named = ModelPolicy::from_lists(&[flash.clone(), sonnet.clone()], &[], None);
+        assert!(applies(&catalog, (&named, Tier::Frontier), &ran(&flash)));
+        let denied = ModelPolicy::from_lists(&[], std::slice::from_ref(&flash), None);
+        assert!(!applies(&catalog, (&denied, Tier::Frontier), &ran(&flash)));
     }
     #[test]
     fn exploration_is_stable_and_ten_percent_is_a_hard_configuration_ceiling() {

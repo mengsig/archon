@@ -1,0 +1,33 @@
+**Root cause:** `updatePrice` invalidates only the product cache entry, so category listings keep serving a copy of the old price until their 10-minute TTL expires.
+
+**The code path**
+
+1. `src/pricing.js:6-13`, `updatePrice(catalog, sku, priceCents)`: writes the new price to the store, then calls `catalog.cache.delete(productKey(sku))`. That is the only invalidation. It removes `product:<sku>` and nothing else.
+2. `src/catalog.js:22-33`, `Catalog.listing(category, page)`: caches under `listing:<category>:<page>` the rows `{ sku, name, priceCents }`, copying `priceCents` into the cached value at build time.
+3. `src/config.js:4-7`: `PRODUCT_TTL_SECONDS: 3600`, `LISTING_TTL_SECONDS: 600`.
+
+So the product page reads `product:<sku>`, which was just deleted, and rebuilds it from the store. Category pages read `listing:tools:0`, which still holds the old `priceCents` until expiry.
+
+**Why the delay is about ten minutes:** A listing is cached for 600 s from the moment it was built, and reads never refresh it. Staleness is therefore bounded by `LISTING_TTL_SECONDS`, not extended by repeated reads. The worst case is a listing built just before the price change.
+
+**Reproduced.** I ran a script against the mirror (no files changed; `git status` clean):
+
+```
+listing before: [{"sku":"A1","name":"Anvil","priceCents":5000}]
+product after : 4500
+listing after : [{"sku":"A1","name":"Anvil","priceCents":5000}]   <- stale
+listing @599.999s: 5000
+listing @600s   : 4500
+```
+
+**Why the tests miss it:** `test/catalog.test.js` checks that product pages update immediately, but no test checks listing freshness after `updatePrice`.
+
+**Fix options**
+
+- **Recommended: stop caching price in listings.** Cache only the sorted sku/name rows and hydrate `priceCents` from `catalog.product(sku)` when serving a page. Those lookups hit the product cache, which `updatePrice` already invalidates. This makes the two views agree by construction and keeps the expensive part (the category filter and sort) cached. Cost: up to 24 cache lookups per page request.
+- **Alternative: invalidate listings on price change.** `updatePrice` would look up the product's category and delete that category's listing pages. `TtlCache` has no prefix or category index, so this needs one, or a per-category version in the listing key. It is more code and more coupling than the first option.
+- **Not a fix:** lowering `LISTING_TTL_SECONDS` only shrinks the window and increases rebuild cost.
+
+Whichever option is chosen, add a test that calls `listing()`, then `updatePrice()`, then asserts the listing shows the new price.
+
+**Scope notes:** I read the mirror at `repos/ask-cache-invalidation` (HEAD `5ab6afb`, the base commit, which is `main`). Its `package.json` is named `catalog-service`. I did not look at the storefront or any other service that renders category pages, so if the storefront calls a different path, that is not covered here. No code was changed, and no item was queued.

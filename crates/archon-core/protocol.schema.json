@@ -4724,6 +4724,17 @@
               "const": "design_preview",
               "type": "string"
             },
+            "recipe": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PreviewRecipe"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How the stack came up; saved for the repository once the preview\nand the recipe's readiness checks answer."
+            },
             "url": {
               "type": "string"
             }
@@ -4824,6 +4835,47 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the preview recipe saved for its repository.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_recipe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Operator only: forget a repository's saved preview recipe.",
+          "properties": {
+            "cmd": {
+              "const": "clear_design_recipe",
+              "type": "string"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
           ],
           "type": "object"
         }
@@ -13038,6 +13090,29 @@
         }
       ]
     },
+    "PortPick": {
+      "description": "How a step's port is chosen when it is not the same every run.",
+      "oneOf": [
+        {
+          "const": "free",
+          "description": "The command, or the script it runs, picks a free port itself.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The command reads its port from this variable, listed in `env`, which\nthe session sets to a free port before it runs.",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "PrRef": {
       "description": "A pull request with what is known of its state; the reference's fields\nsit beside the state.",
       "properties": {
@@ -13103,6 +13178,41 @@
         "closed"
       ],
       "type": "string"
+    },
+    "PreviewRecipe": {
+      "additionalProperties": false,
+      "description": "How the preview stack came up, step by step, in start order.",
+      "properties": {
+        "env": {
+          "description": "Names of the environment variables the steps need; never values.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "description": "Anything the next session should know, such as the page to open.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Where the route came from, such as `docs/dev-preview.md` or\n`package.json scripts.dev`.",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/RecipeStep"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "source",
+        "steps"
+      ],
+      "type": "object"
     },
     "Priority": {
       "enum": [
@@ -13886,6 +13996,64 @@
       "required": [
         "name",
         "remaining_percent"
+      ],
+      "type": "object"
+    },
+    "RecipeStep": {
+      "additionalProperties": false,
+      "description": "One command of a recipe.",
+      "properties": {
+        "command": {
+          "description": "The shell command, run from `dir`.",
+          "type": "string"
+        },
+        "dir": {
+          "description": "The directory it runs from, relative to the worktree; its root when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The step's name; a service's PID goes in `.archon/services/<name>.pid`.",
+          "type": "string"
+        },
+        "port": {
+          "description": "The loopback TCP port the step listens on, when it is a service.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "port_pick": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortPick"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How a port that differs from run to run is chosen; `port` and `ready`\nthen hold this run's values, which the saved recipe leaves out."
+        },
+        "ready": {
+          "description": "A loopback `http://` URL that answers without a server error once the step is up.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "$ref": "#/$defs/StepRun",
+          "default": "service"
+        }
+      },
+      "required": [
+        "name",
+        "command"
       ],
       "type": "object"
     },
@@ -19456,6 +19624,17 @@
               "const": "design_preview",
               "type": "string"
             },
+            "recipe": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PreviewRecipe"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How the stack came up; saved for the repository once the preview\nand the recipe's readiness checks answer."
+            },
             "url": {
               "type": "string"
             }
@@ -19556,6 +19735,47 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent reads the preview recipe saved for its repository.",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "design_recipe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Operator only: forget a repository's saved preview recipe.",
+          "properties": {
+            "cmd": {
+              "const": "clear_design_recipe",
+              "type": "string"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
           ],
           "type": "object"
         }
@@ -20033,6 +20253,28 @@
       ],
       "type": "string"
     },
+    "SavedRecipe": {
+      "description": "A recipe as Archon keeps it for a repository.",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/QueueItemId",
+          "description": "The item whose design session saved it."
+        },
+        "recipe": {
+          "$ref": "#/$defs/PreviewRecipe"
+        },
+        "saved_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recipe",
+        "saved_at",
+        "item"
+      ],
+      "type": "object"
+    },
     "ServerFrame": {
       "oneOf": [
         {
@@ -20227,6 +20469,17 @@
     "SettingsView": {
       "description": "`Reply::Settings`: what one scope stores, what lies beneath, and the\nvalues in force with their sources.",
       "properties": {
+        "design_recipe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SavedRecipe"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A repository's saved design preview recipe, if any."
+        },
         "effective": {
           "$ref": "#/$defs/EffectiveSettings"
         },
@@ -21237,6 +21490,21 @@
         "orchestrator"
       ],
       "type": "string"
+    },
+    "StepRun": {
+      "description": "Whether a step keeps running or runs to completion.",
+      "oneOf": [
+        {
+          "const": "service",
+          "description": "Keeps running: a dev server, a backend, a Compose stack.",
+          "type": "string"
+        },
+        {
+          "const": "once",
+          "description": "Runs to completion first: an install, a migration, a seed.",
+          "type": "string"
+        }
+      ]
     },
     "StorageUsage": {
       "description": "Allocated bytes for one storage kind, without following symlinks.",

@@ -1,0 +1,325 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GP2JMYRX1XCVKMME6WJVET",
+      "repo": "repo_01M8GP26KGHFC96JE9DEVMDRXV",
+      "pipeline": "direct",
+      "title": "Implement ledger.py per SPEC.md with focused tests",
+      "brief": "Operator's words (authenticated local operator): \"Implement `ledger.py` according to `SPEC.md`. Preserve the documented API, handle every specified error and boundary case, and add focused tests. The existing tests cover basics only. Use the Python standard library and commit your work.\"\n\nGoal: make ledger.py implement SPEC.md exactly. Read SPEC.md in the repository first; it is the source of truth for the API, the error cases and the boundary cases.\n\nConstraints:\n- Preserve the documented API (names, signatures, return values) exactly as SPEC.md states.\n- Handle every error and boundary case SPEC.md specifies; raise the specified errors, not generic ones.\n- Use only the Python standard library.\n- Keep existing tests passing; extend test_ledger.py (or add focused test cases) covering each specified error and boundary case, not only the basics.\n- Follow the repository's style. Keep functions small and explicit; validate inputs at the API boundary.\n- Commit the work on the item's branch with a clear message. Do not add attribution lines.\n\nAcceptance criteria:\n- Every requirement in SPEC.md is implemented, and a test exercises each specified error and boundary case.\n- The full test suite passes (run it with the standard library test runner that the repository uses).\n- No behaviour outside SPEC.md is changed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [
+        "ledger",
+        "spec-impl"
+      ],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GP2JMYRX1XCVKMME6WJVET",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:59:13.954404310Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:59:13.961339076Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:59:13.954404310Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "elevated",
+        "risk_signals": [
+          "domain:security"
+        ],
+        "keys": {
+          "implement": {
+            "risk_class": "elevated",
+            "risk_signals": [
+              "domain:security"
+            ],
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GP2JNN4PWSNPVG70R9QRFH",
+        "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(source, destination, amount) -> bool, snapshot() -> dict, MAX_BALANCE. Validation happens at the API boundary, with ValueError for bad balances/amounts/input and KeyError for unknown accounts. One per-ledger threading.Lock makes transfers and snapshots linearizable, and opposite transfers cannot deadlock. Extended test_ledger.py to 37 tests covering each specified error and boundary case, plus two bounded-join concurrency tests that re-raise worker-thread exceptions. Check: python3 -B -m unittest, 37 tests OK at head 5d4a051 (tree 501709102a2c7ddb54860cf4cf113763bbf26ff8). Commits on archon/me6wjvet-implement-ledger-py-per-spec-md-with-foc: 11e268f (implementation and tests) and 5d4a051 (test-only review fixes). Review: pass at 11e268f and a pass of the head delta; both findings resolved, none open. Risk is high because the change adds the lock that guards all balance mutations. Process note: the finished reviewer agents (agt_01M8GP47HJP98043TGXM8N1NB4, agt_01M8GP6TFC712N6Y98B6EAZQWN) left claude -p child processes (PIDs 3970331, 3976801) running; they stop when this stage ends, and I did not kill them because I did not start them. I started no servers. Nothing is left undone. Operator note: the delta review used the short finding labels (ledger-reviewer:1/2) rather than the full agt_…:N IDs, though it asked for and received a disposition for each.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GP47HJP98043TGXM8N1NB4), claude-code/claude-haiku-5-5 (agent agt_01M8GP6TFC712N6Y98B6EAZQWN)\n\nSHIPPED: commit 5d4a05123b227cad56ffa7267b5d0740230cb7d7 on the run branch"
+      },
+      "created_at": "2026-11-28T08:59:13.950596279Z",
+      "updated_at": "2026-11-28T09:02:08.276318040Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GP2JNN4PWSNPVG70R9QRFH",
+        "item": "qi_01M8GP2JMYRX1XCVKMME6WJVET",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GP2JVN08K7CV2TNJA55NAM",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/ae130d69a22c3e0a92f1bce7/.archon/data/worktrees/quality-ledger-transfer/qi_01M8GP2JMYRX1XCVKMME6WJVET",
+        "branch": "archon/me6wjvet-implement-ledger-py-per-spec-md-with-foc",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(source, destination, amount) -> bool, snapshot() -> dict, MAX_BALANCE. Validation happens at the API boundary, with ValueError for bad balances/amounts/input and KeyError for unknown accounts. One per-ledger threading.Lock makes transfers and snapshots linearizable, and opposite transfers cannot deadlock. Extended test_ledger.py to 37 tests covering each specified error and boundary case, plus two bounded-join concurrency tests that re-raise worker-thread exceptions. Check: python3 -B -m unittest, 37 tests OK at head 5d4a051 (tree 501709102a2c7ddb54860cf4cf113763bbf26ff8). Commits on archon/me6wjvet-implement-ledger-py-per-spec-md-with-foc: 11e268f (implementation and tests) and 5d4a051 (test-only review fixes). Review: pass at 11e268f and a pass of the head delta; both findings resolved, none open. Risk is high because the change adds the lock that guards all balance mutations. Process note: the finished reviewer agents (agt_01M8GP47HJP98043TGXM8N1NB4, agt_01M8GP6TFC712N6Y98B6EAZQWN) left claude -p child processes (PIDs 3970331, 3976801) running; they stop when this stage ends, and I did not kill them because I did not start them. I started no servers. Nothing is left undone. Operator note: the delta review used the short finding labels (ledger-reviewer:1/2) rather than the full agt_…:N IDs, though it asked for and received a disposition for each.\n\nREVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GP47HJP98043TGXM8N1NB4), claude-code/claude-haiku-5-5 (agent agt_01M8GP6TFC712N6Y98B6EAZQWN)\n\nSHIPPED: commit 5d4a05123b227cad56ffa7267b5d0740230cb7d7 on the run branch"
+        },
+        "cost_usd": 0.051353689999999994,
+        "started_at": "2026-11-28T08:59:14.140236552Z",
+        "finished_at": "2026-11-28T09:02:08.276318040Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GP2JV43M9Q7SQDDHJTTD7X",
+        "run": "prun_01M8GP2JNN4PWSNPVG70R9QRFH",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "claude-code",
+            "model": "claude-haiku-5-5"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GP2JW43R77QYFRPHWNXFGD",
+        "aether_task": "tsk_01M8GP2JW4741S30EKPHDNRWEJ",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "elevated",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: elevated -> high; capped at medium; consider a stronger tier; unchanged",
+        "summary": "Implemented ledger.py per SPEC.md: Ledger(balances), transfer(source, destination, amount) -> bool, snapshot() -> dict, MAX_BALANCE. Validation happens at the API boundary, with ValueError for bad balances/amounts/input and KeyError for unknown accounts. One per-ledger threading.Lock makes transfers and snapshots linearizable, and opposite transfers cannot deadlock. Extended test_ledger.py to 37 tests covering each specified error and boundary case, plus two bounded-join concurrency tests that re-raise worker-thread exceptions. Check: python3 -B -m unittest, 37 tests OK at head 5d4a051 (tree 501709102a2c7ddb54860cf4cf113763bbf26ff8). Commits on archon/me6wjvet-implement-ledger-py-per-spec-md-with-foc: 11e268f (implementation and tests) and 5d4a051 (test-only review fixes). Review: pass at 11e268f and a pass of the head delta; both findings resolved, none open. Risk is high because the change adds the lock that guards all balance mutations. Process note: the finished reviewer agents (agt_01M8GP47HJP98043TGXM8N1NB4, agt_01M8GP6TFC712N6Y98B6EAZQWN) left claude -p child processes (PIDs 3970331, 3976801) running; they stop when this stage ends, and I did not kill them because I did not start them. I started no servers. Nothing is left undone. Operator note: the delta review used the short finding labels (ledger-reviewer:1/2) rather than the full agt_…:N IDs, though it asked for and received a disposition for each.",
+        "structured": {
+          "checks": [
+            "python3 -B -m unittest"
+          ],
+          "commit": "5d4a05123b227cad56ffa7267b5d0740230cb7d7",
+          "evidence": [
+            {
+              "after": "Ran 37 tests in 0.003s\n\nOK",
+              "before": "ledger.py stub: Ledger.__init__ raises NotImplementedError",
+              "caption": "Test suite result before and after the change",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "5d4a05123b227cad56ffa7267b5d0740230cb7d7",
+          "pr": {
+            "body": "Approach: ledger.py holds a private dict copied from the input, guarded by one threading.Lock; transfer validates the amount, then both accounts (KeyError), then applies the same-account / insufficient-funds / overflow rules under the lock. Snapshot copies under the lock. Single lock means opposite transfers cannot deadlock. Tests: test_ledger.py extended (37 total) covering every SPEC error and boundary case, plus two thread tests with bounded joins that re-raise worker exceptions. Check: python3 -B -m unittest -> 37 tests OK at head 5d4a051. Assumptions: non-string account names passed to transfer raise KeyError (treated as unknown accounts); built-in int checks use type(x) is int so bool and int subclasses are rejected. Standard library only.",
+            "summary": "made Ledger implement SPEC.md. now validates balances and amounts at the boundary, raises ValueError or KeyError as specified, and serialises transfers and snapshots with one lock. before: stub raising NotImplementedError; now: 37 tests pass",
+            "title": "Implement Ledger per SPEC.md with focused tests"
+          },
+          "review": {
+            "reviewed_head": "5d4a05123b227cad56ffa7267b5d0740230cb7d7",
+            "reviewer_agents": [
+              "agt_01M8GP47HJP98043TGXM8N1NB4",
+              "agt_01M8GP6TFC712N6Y98B6EAZQWN"
+            ],
+            "reviewer_models": [
+              "claude-code/claude-haiku-5-5",
+              "claude-code/claude-haiku-5-5"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GP47HJP98043TGXM8N1NB4",
+                "base": "5499bc0938444d90822e7bedaa7ee6c75318091a",
+                "findings": 2,
+                "head": "11e268ff520538842ad68ac3b7bf1e170d31381e",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GP6TFC712N6Y98B6EAZQWN",
+                "base": "11e268ff520538842ad68ac3b7bf1e170d31381e",
+                "findings": 0,
+                "head": "5d4a05123b227cad56ffa7267b5d0740230cb7d7",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GP47HJP98043TGXM8N1NB4",
+              "agt_01M8GP6TFC712N6Y98B6EAZQWN"
+            ],
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GP47HJP98043TGXM8N1NB4:1": {
+                "blocking": false,
+                "description": "_run_all ignores exceptions raised in worker threads, so LedgerConcurrency passes even when transfer() always raises (verified with a mutant: tracebacks print but the tests report OK). Collect worker exceptions and re-raise them in the test. at test_ledger.py:192",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GP2JV43M9Q7SQDDHJTTD7X"
+                },
+                "id": "agt_01M8GP47HJP98043TGXM8N1NB4:1",
+                "resolved_in": null
+              },
+              "agt_01M8GP47HJP98043TGXM8N1NB4:2": {
+                "blocking": false,
+                "description": "Only a non-string source is tested for KeyError; a non-string destination has no test. at test_ledger.py:124",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GP2JV43M9Q7SQDDHJTTD7X"
+                },
+                "id": "agt_01M8GP47HJP98043TGXM8N1NB4:2",
+                "resolved_in": null
+              }
+            },
+            "rounds": [
+              {
+                "head": "11e268ff520538842ad68ac3b7bf1e170d31381e",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GP47HJP98043TGXM8N1NB4",
+                    "base": "5499bc0938444d90822e7bedaa7ee6c75318091a",
+                    "finding_count": 2,
+                    "finding_ids": [
+                      "agt_01M8GP47HJP98043TGXM8N1NB4:1",
+                      "agt_01M8GP47HJP98043TGXM8N1NB4:2"
+                    ],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": false,
+                    "verdict": "pass"
+                  }
+                ]
+              },
+              {
+                "head": "5d4a05123b227cad56ffa7267b5d0740230cb7d7",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GP6TFC712N6Y98B6EAZQWN",
+                    "base": "11e268ff520538842ad68ac3b7bf1e170d31381e",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "claude-code/claude-haiku-5-5",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Adds the lock guarding all balance mutations (concurrency/locking). Touches ledger.py and test_ledger.py only; no other code depends on ledger.py. Review: both reviewers confirmed the concurrency behaviour; tests only in the delta."
+          },
+          "tree": "501709102a2c7ddb54860cf4cf113763bbf26ff8"
+        },
+        "cost_usd": 0.051353689999999994,
+        "started_at": "2026-11-28T08:59:14.148298565Z",
+        "finished_at": "2026-11-28T09:02:04.933994762Z"
+      }
+    ],
+    "spent_usd": 0.051353689999999994,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GP2JV43M9Q7SQDDHJTTD7X": {
+        "direct_usd": 0.031387309999999995,
+        "delegated_usd": 0.01996638,
+        "agents": [
+          {
+            "agent": "agt_01M8GP47HJP98043TGXM8N1NB4",
+            "parent": "agt_01M8GP2JW43R77QYFRPHWNXFGD",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "high",
+            "cost_usd": 0.01482659
+          },
+          {
+            "agent": "agt_01M8GP6TFC712N6Y98B6EAZQWN",
+            "parent": "agt_01M8GP2JW43R77QYFRPHWNXFGD",
+            "model": {
+              "provider": "claude-code",
+              "model": "claude-haiku-5-5"
+            },
+            "effort": "medium",
+            "cost_usd": 0.005139790000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:59:13.954404310Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:59:13.961339076Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:59:13.954404310Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

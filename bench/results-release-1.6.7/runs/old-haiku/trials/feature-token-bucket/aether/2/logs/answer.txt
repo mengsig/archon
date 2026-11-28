@@ -1,0 +1,20 @@
+Implemented the rate limiter in ratelimit.py per SPEC.md (TokenBucket and KeyedLimiter, standard library only) and committed it on main as b9f622f. Also added 10 edge-case tests to test_ratelimit.py; all 13 tests pass with `python3 -m unittest -v test_ratelimit`. The working tree is clean.
+
+Choices I made where the spec is silent:
+- A 1e-9 token tolerance in the acquire and wait_time comparisons, so sleeping exactly wait_time() seconds lets the acquire succeed despite float rounding.
+- max_keys must be an int: a non-int raises TypeError, and an int below 1 raises ValueError as specified. A float such as 1.5 would otherwise break the eviction bound.
+- Requests are validated before any state changes, so an invalid call neither creates a key nor evicts one.
+- Clock regressions are handled by never moving the bucket's last-seen time backwards, so no tokens are added until the clock passes the latest time already seen.
+
+The commit has no Co-Authored-By trailer: the project CLAUDE.md says not to add Claude attribution, and it takes precedence over the attribution reminder.
+
+I implemented the rate limiter in `ratelimit.py` per `SPEC.md`, using only the standard library, and committed it on `main` as `b9f622f`. All 13 tests pass (`python3 -m unittest -v test_ratelimit`), and the working tree is clean.
+
+I also added 10 edge-case tests to `test_ratelimit.py` covering the spec's error cases, capacity capping, fractional refill, `wait_time`, clock regressions, and LRU eviction.
+
+Choices I made where the spec is silent:
+- **Float tolerance:** comparisons allow 1e-9 tokens of slack, so sleeping exactly `wait_time()` seconds lets the acquire succeed despite float rounding.
+- **`max_keys` type:** a non-int raises `TypeError`, and an int below 1 raises `ValueError` as specified. A float like 1.5 would otherwise break the eviction bound.
+- **Validation order:** requests are validated before any state changes, so an invalid call neither creates a key nor evicts one.
+- **Clock regressions:** the bucket never moves its last-seen time backwards, so no tokens are added until the clock passes the latest time it has already seen.
+- **Commit trailer:** the commit has no Co-Authored-By line. The project CLAUDE.md says not to add Claude attribution, and I treated it as overriding the attribution reminder.

@@ -1,0 +1,12 @@
+Queued as **qi_01M8GJY5MACM2YHRYJVVZV9JR9** in the `refactor` pipeline. Its acceptance criteria include preserving behavior, running `cargo test`, and committing the change. The pipeline uses its built-in strict review.
+
+Done: Replace string order statuses with OrderStatus. Reviewed commit 40d98ff0e5b0df0619241765ccba06e908c4d1cb. The enum refactor meets the structural goal: status values, spelling, parsing, and allowed transitions are cohesive in status.rs, and callers operate on typed variants while report strings retain their prior formatting and ordering. No behavior differences or blocking findings found. Verified the five integration tests, cargo check, clippy with warnings denied, rustfmt check, diff whitespace, centralized status literals, and clean worktree. A stale pre-existing Cargo artifact initially exposed only three tests; after cleaning this item's configured Cargo target, all five current tests ran and passed. Risk is medium because the required public field type change affects callers. VERDICT: PASS
+
+SHIPPED: commit 40d98ff0e5b0df0619241765ccba06e908c4d1cb on the run branch
+Branch `archon/vvzv9jr9-replace-string-order-statuses-with-order` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/cf665d8b6385da426b263808/refactor-order-status holds it (7 files changed, 158 insertions(+), 26 deletions(-)). Review: `archon diff qi_01M8GJY5MACM2YHRYJVVZV9JR9`; land it in `main`: `archon merge qi_01M8GJY5MACM2YHRYJVVZV9JR9`.
+
+Freed 0.0 GiB of build output: item qi_01M8GJY5MACM2YHRYJVVZV9JR9 ended and its cargo target directory went.
+
+Reviewed commit 40d98ff0e5b0df0619241765ccba06e908c4d1cb. The enum refactor meets the structural goal: status values, spelling, parsing, and allowed transitions are cohesive in status.rs, and callers operate on typed variants while report strings retain their prior formatting and ordering. No behavior differences or blocking findings found. Verified the five integration tests, cargo check, clippy with warnings denied, rustfmt check, diff whitespace, centralized status literals, and clean worktree. A stale pre-existing Cargo artifact initially exposed only three tests; after cleaning this item's configured Cargo target, all five current tests ran and passed. Risk is medium because the required public field type change affects callers. VERDICT: PASS
+
+SHIPPED: commit 40d98ff0e5b0df0619241765ccba06e908c4d1cb on the run branch

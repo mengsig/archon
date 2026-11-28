@@ -1,0 +1,33 @@
+Queued `safe_extract.py` as item `qi_01M8GP29GFRDSQECB3E0H44H1K` in `quality-safe-extract`.
+
+- **Pipeline:** `adaptive`, because safe extraction is security-sensitive (path traversal and link handling), so it can't go to `direct`.
+- **Review:** `strict`, for the same reason.
+- **Shipping:** `ship local`, so the work is committed on a local branch and never pushed.
+- **Brief:** implement the API in `SPEC.md` exactly, handle every specified error and boundary case, add focused stdlib tests for them, and commit. The brief points the agents at `SPEC.md` at the repository root; I haven't read the spec myself, so I can't yet confirm its exact contents.
+
+I'll report back when the item finishes or fails.
+
+Done: Implement safe_extract.py per SPEC.md with focused stdlib tests. Implemented safe_extract.extract per SPEC.md with 42 stdlib unittest tests; all pass. Branch head ccc1f6f (tree cdc87c8457cf04eb4ac19058fb7d93cd0bac4aa7) on archon/e0h44h1k-implement-safe-extract-py-per-spec-md-wi, on top of bb41bb9 (feat) and base 813241f. The tree is clean; no processes were started. Changed paths: safe_extract.py, test_safe_extract.py.
+
+Review: three whole-change reviewers (review-1 agt_01M8GP4F2ZN2ZZ2H7QMJCMMYNN, review-2 agt_01M8GP4KZECV8YMGS08T77T11S, review-3 agt_01M8GP4SWWQA5TW008Y8TZHNW4) each failed bb41bb9 on the same blocking defects: lone-surrogate names that fail mid-batch after earlier writes, and an empty-string root that writes to the cwd. Fixed in ccc1f6f with Review-Fix trailers. Delta reviewer agt_01M8GPA75YBCY6JZM8P5JRN1Z6 passed ccc1f6f against base bb41bb9, verifying all three IDs resolved with no new blocking findings. The reviewer rated risk medium; I kept high because the change writes files from untrusted names.
+
+Non-blocking follow-ups left open: case-only collisions on case-insensitive filesystems; a root such as 'link/..' is checked only at the final component; the TOCTOU window between validation and write is out of scope per the spec; and the non-root unsearchable-ancestor test is skipped under root.
+
+Verification: `python3 -m unittest test_safe_extract` gives Ran 42 tests OK on ccc1f6f. A syntax parse of both files passes. pyflakes is not installed here, so no lint run.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GPA75YBCY6JZM8P5JRN1Z6), claude-code/claude-haiku-5-5 (agent agt_01M8GP4F2ZN2ZZ2H7QMJCMMYNN), claude-code/claude-haiku-5-5 (agent agt_01M8GP4KZECV8YMGS08T77T11S), claude-code/claude-haiku-5-5 (agent agt_01M8GP4SWWQA5TW008Y8TZHNW4)
+
+SHIPPED: commit ccc1f6f19cecc30e971cf524c26626e7f76ec9de on the run branch
+Branch `archon/e0h44h1k-implement-safe-extract-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/release…
+
+Implemented safe_extract.extract per SPEC.md with 42 stdlib unittest tests; all pass. Branch head ccc1f6f (tree cdc87c8457cf04eb4ac19058fb7d93cd0bac4aa7) on archon/e0h44h1k-implement-safe-extract-py-per-spec-md-wi, on top of bb41bb9 (feat) and base 813241f. The tree is clean; no processes were started. Changed paths: safe_extract.py, test_safe_extract.py.
+
+Review: three whole-change reviewers (review-1 agt_01M8GP4F2ZN2ZZ2H7QMJCMMYNN, review-2 agt_01M8GP4KZECV8YMGS08T77T11S, review-3 agt_01M8GP4SWWQA5TW008Y8TZHNW4) each failed bb41bb9 on the same blocking defects: lone-surrogate names that fail mid-batch after earlier writes, and an empty-string root that writes to the cwd. Fixed in ccc1f6f with Review-Fix trailers. Delta reviewer agt_01M8GPA75YBCY6JZM8P5JRN1Z6 passed ccc1f6f against base bb41bb9, verifying all three IDs resolved with no new blocking findings. The reviewer rated risk medium; I kept high because the change writes files from untrusted names.
+
+Non-blocking follow-ups left open: case-only collisions on case-insensitive filesystems; a root such as 'link/..' is checked only at the final component; the TOCTOU window between validation and write is out of scope per the spec; and the non-root unsearchable-ancestor test is skipped under root.
+
+Verification: `python3 -m unittest test_safe_extract` gives Ran 42 tests OK on ccc1f6f. A syntax parse of both files passes. pyflakes is not installed here, so no lint run.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GPA75YBCY6JZM8P5JRN1Z6), claude-code/claude-haiku-5-5 (agent agt_01M8GP4F2ZN2ZZ2H7QMJCMMYNN), claude-code/claude-haiku-5-5 (agent agt_01M8GP4KZECV8YMGS08T77T11S), claude-code/claude-haiku-5-5 (agent agt_01M8GP4SWWQA5TW008Y8TZHNW4)
+
+SHIPPED: commit ccc1f6f19cecc30e971cf524c26626e7f76ec9de on the run branch

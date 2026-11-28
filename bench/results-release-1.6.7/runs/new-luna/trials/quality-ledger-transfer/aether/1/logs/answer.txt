@@ -1,0 +1,3 @@
+Implemented and committed as `07b9a81` (`Implement atomic bounded ledger`).
+
+The ledger validates inputs and amounts, makes transfers and snapshots thread safe, and returns independent copies. Added boundary and concurrency tests; all 11 tests pass, and the working tree is clean.

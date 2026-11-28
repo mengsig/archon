@@ -1,0 +1,26 @@
+Implemented retry_delay in retry_budget.py per SPEC.md and added focused tests; committed as 3ee3cf0 on main (author mengsig). All 31 tests pass (`python3 -m unittest test_retry_budget`).
+
+Implementation:
+- All arguments are validated up front via `_require_int`, before the attempt-limit and budget early returns. Only built-in int is accepted (bool, float, str, and int subclasses raise ValueError). Lower bounds follow the spec; retry_after_ms may be None.
+- Backoff is `_backoff_ms`: zero base or zero cap returns 0. Otherwise, once the exponent reaches cap_ms.bit_length(), it returns cap_ms without computing the power of two. Otherwise it returns min(cap, base << exponent).
+- Retry-After is a floor applied after the cap, not limited by it. The budget check is `elapsed + delay >= budget` → None, so the wait is never shortened.
+
+Verification: beyond the unit tests, I checked `_backoff_ms` against the naive `min(cap, base*2**(attempt-1))` over 681,100 combinations of base, cap and attempt, with no mismatches.
+
+Choices to review:
+- Invalid inputs raise ValueError, as the spec says, including wrong types (not TypeError).
+- I did not add a Co-Authored-By trailer. The CLAUDE.md in the repo says not to add Claude attribution to commits, and it takes precedence over the attribution reminder.
+- `__pycache__` was removed and not committed.
+
+I implemented `retry_delay` in `retry_budget.py` per `SPEC.md`, added focused tests, and committed the work as `3ee3cf0` on `main`. All 31 tests pass.
+
+- **Validation:** every argument is checked before any early return. Only built-in `int` is accepted, so `bool`, `float`, `str` and int subclasses raise `ValueError`.
+- **Backoff:** a zero base or zero cap gives 0. Otherwise the code returns the cap as soon as the exponent reaches the cap's bit length, so it never builds a huge power of two.
+- **Retry-After:** applied as a floor after the cap, so it is not limited by `cap_ms`, and the wait is never shortened to fit the budget.
+- **Budget:** a retry is refused when `elapsed_ms + delay >= budget_ms`.
+
+I also cross-checked the backoff helper against the naive formula over about 681,000 combinations of base, cap and attempt, with no mismatches.
+
+Two choices to review:
+- **Commit attribution:** I left out the `Co-Authored-By` trailer. The repo's CLAUDE.md says not to add Claude attribution to commits, and that takes precedence over the reminder.
+- **Exception type:** invalid inputs raise `ValueError` for wrong types as well as out-of-range values, following the spec's wording rather than `TypeError`.

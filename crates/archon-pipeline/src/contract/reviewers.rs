@@ -206,6 +206,7 @@ fn unplaced_model(
         .find_map(|model| {
             let canonical = catalog.check(model).ok()?;
             (policy.permits_model(&canonical)
+                && catalog.picks_unasked(&canonical, policy)
                 && (!governed || provider_reports_cost(&canonical.provider)))
             .then_some(canonical)
         })
@@ -615,6 +616,31 @@ mod tests {
         assert!(rules.contains("balanced unavailable under policy"));
         assert_no_lookup_instruction(&rules);
         assert!(!rules.contains("sonnet") && !rules.contains("sol"));
+    }
+
+    #[test]
+    fn reviewer_defaults_never_pick_an_unnamed_antigravity_model() {
+        let entry = |model: &str| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        };
+        let catalog = ModelCatalog::new(vec![
+            entry("antigravity/gpt-oss-120b"),
+            entry("antigravity/gemini-4-neon"),
+        ]);
+        let own: ModelRef = "antigravity/gemini-4-neon".parse().unwrap();
+        let (open, config) = (ModelPolicy::default(), ReviewConfig::default());
+        let (model, tier) = resolve_default(Tier::Strong, &own, &open, &config, &catalog).unwrap();
+        assert_eq!(
+            (model.to_string(), tier),
+            ("antigravity/gpt-oss-120b".to_owned(), Tier::Balanced),
+            "only the orphaned secondary route serves, never Neon"
+        );
+        let gemini_only = catalog.restricted(|m| m.model.model.starts_with("gemini"));
+        assert_eq!(unplaced_model(&own, &open, &gemini_only, false), None);
+        let named = policy_allowing(&["antigravity/gemini-4-neon"]);
+        assert_eq!(unplaced_model(&own, &named, &gemini_only, false), Some(own));
     }
 
     #[test]

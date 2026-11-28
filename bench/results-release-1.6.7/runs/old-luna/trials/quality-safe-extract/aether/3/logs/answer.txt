@@ -1,0 +1,3 @@
+Implemented `extract` with full batch and filesystem validation, including path safety, collisions, existing targets, and symlink checks. Added focused tests; all 9 tests pass.
+
+Committed as `776856c` (`Implement safe extraction validation`). `__pycache__/` remains untracked from the test run.

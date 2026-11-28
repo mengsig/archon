@@ -1,0 +1,619 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMYBMJ0VT33JP663NG0844",
+      "repo": "repo_01M8GMWWZNA87AJAAWKW8DVG15",
+      "pipeline": "direct",
+      "title": "Group report totals by account and currency",
+      "brief": "Update the Python CSV stdin report. Group totals by account and currency; output exact header account,currency,total_cents and rows sorted by account then currency. Continue to support legacy ledger CSV with no currency column, treating rows as USD. Validate present currency codes as exactly three uppercase ASCII letters; malformed currency input must print an error to stderr and exit 2. Update README, run python3 -m unittest, and commit the completed changes.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMYBMJ0VT33JP663NG0844",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.124581821Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.140066724Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.124581821Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GMYBMCSVXRAECXDDM2XPHT",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMYBND4EXHRH8ZFGAY96PK",
+        "summary": "Updated the CSV report to group and sort totals by account and currency, with legacy rows defaulting to USD and malformed supplied codes rejected with status 2. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 3a07ca3688c081da1383bcef6f9a83968ae9345d; independent review passed with no findings. Nothing left open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN18W0F57RD7NWRBPRD177)\n\nSHIPPED: commit 3a07ca3688c081da1383bcef6f9a83968ae9345d on the run branch"
+      },
+      "created_at": "2026-11-28T08:39:27.116828235Z",
+      "updated_at": "2026-11-28T08:42:18.915972447Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMYBND4EXHRH8ZFGAY96PK",
+        "item": "qi_01M8GMYBMJ0VT33JP663NG0844",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMYBW78F6NAV0Y1RJ87M8Y",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8610dc86306621c3b75d0e9d/.archon/data/worktrees/reports/qi_01M8GMYBMJ0VT33JP663NG0844",
+        "branch": "archon/63ng0844-group-report-totals-by-account-and-curre",
+        "state": {
+          "state": "succeeded",
+          "summary": "Updated the CSV report to group and sort totals by account and currency, with legacy rows defaulting to USD and malformed supplied codes rejected with status 2. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 3a07ca3688c081da1383bcef6f9a83968ae9345d; independent review passed with no findings. Nothing left open.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN18W0F57RD7NWRBPRD177)\n\nSHIPPED: commit 3a07ca3688c081da1383bcef6f9a83968ae9345d on the run branch"
+        },
+        "cost_usd": 0.010443880000000004,
+        "started_at": "2026-11-28T08:39:27.320450642Z",
+        "finished_at": "2026-11-28T08:42:18.915972447Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMYBVH7GZ3847QAZPZF3HN",
+        "run": "prun_01M8GMYBND4EXHRH8ZFGAY96PK",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMYBX1BCY4V6BCGBTGSB91",
+        "aether_task": "tsk_01M8GMYBX1BCY4V6BCGBTGSB92",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Updated the CSV report to group and sort totals by account and currency, with legacy rows defaulting to USD and malformed supplied codes rejected with status 2. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 3a07ca3688c081da1383bcef6f9a83968ae9345d; independent review passed with no findings. Nothing left open.",
+        "structured": {
+          "checks": [
+            "python3 -m unittest (passed: 3 tests)",
+            "git diff --check (passed)"
+          ],
+          "commit": "3a07ca3688c081da1383bcef6f9a83968ae9345d",
+          "evidence": [
+            {
+              "after": "account,currency,total_cents\ngroceries,USD,-5500\nrent,USD,-120000\n\npython3 -m unittest: Ran 3 tests — OK",
+              "before": "account,total_cents\ngroceries,-5500\nrent,-120000",
+              "caption": "Before, legacy input produced account-only output; after, the test asserts the exact currency-aware header and USD rows. New tests verify grouping, sorting, and malformed-code status.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "3a07ca3688c081da1383bcef6f9a83968ae9345d",
+          "pr": {
+            "body": "Updated reports.py to aggregate by account and currency, default only absent currency columns to USD, validate codes as exactly three uppercase ASCII letters, and report malformed codes on stderr with exit status 2. Updated README.md and tests for legacy inputs, grouping, sorting, and invalid codes. Assumption: an empty currency field is malformed because a supplied value must pass validation. `python3 -m unittest` passed (3 tests); `git diff --check` passed. No AGENTS.md guidance files were found.",
+            "summary": "Reports now totals by account and currency. Before: account-only totals and a two-column header; now: sorted account/currency totals with legacy CSV defaulting to USD.",
+            "title": "Group report totals by account and currency"
+          },
+          "review": {
+            "reviewed_head": "3a07ca3688c081da1383bcef6f9a83968ae9345d",
+            "reviewer_agents": [
+              "agt_01M8GN18W0F57RD7NWRBPRD177"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GN18W0F57RD7NWRBPRD177",
+                "base": "bf4cf45a32fd191f185c0faaede8521b89ab8f71",
+                "findings": 0,
+                "head": "3a07ca3688c081da1383bcef6f9a83968ae9345d",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GN18W0F57RD7NWRBPRD177"
+            ],
+            "risk": {
+              "level": "medium",
+              "why": "Contained behavior change to the CLI report; reviewer confirmed scope is limited to this command-line tool."
+            },
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {},
+            "rounds": [
+              {
+                "head": "3a07ca3688c081da1383bcef6f9a83968ae9345d",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GN18W0F57RD7NWRBPRD177",
+                    "base": "bf4cf45a32fd191f185c0faaede8521b89ab8f71",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained CLI behavior change in reports.py with input validation and output grouping; impact is limited to the report command. The test suite and independent review passed."
+          },
+          "tree": "8a261fc6ebc5fe391d067db880fe30980f0be081"
+        },
+        "cost_usd": 0.010443880000000004,
+        "started_at": "2026-11-28T08:39:27.345321141Z",
+        "finished_at": "2026-11-28T08:42:15.406978870Z"
+      }
+    ],
+    "spent_usd": 0.010443880000000004,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMYBVH7GZ3847QAZPZF3HN": {
+        "direct_usd": 0.006587440000000002,
+        "delegated_usd": 0.003856440000000001,
+        "agents": [
+          {
+            "agent": "agt_01M8GN18W0F57RD7NWRBPRD177",
+            "parent": "agt_01M8GMYBX1BCY4V6BCGBTGSB91",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "cost_usd": 0.003856440000000001
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.124581821Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.140066724Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.124581821Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  },
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GMYBMDTH8J8N5R32PK8AB4",
+      "repo": "repo_01M8GMWWY812A9D0MBHQNYA9TT",
+      "pipeline": "direct",
+      "title": "Export transaction currency in ledger CSV",
+      "brief": "Update the Rust TSV-to-CSV CLI. Accept an optional fourth TSV column containing ISO 4217 currency code; when absent, use USD. Validate codes as exactly three uppercase ASCII letters. Emit the exact CSV header date,account,amount_cents,currency and include currency on every row. A malformed currency code must print an error naming its 1-based input line number to stderr and exit 2; preserve status 1 for all other input errors. Update README, run cargo test, and commit the completed changes.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GMYBMDTH8J8N5R32PK8AB4",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.119665488Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.139732046Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:39:27.119665488Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "standard",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "initiative": "ini_01M8GMYBMCSVXRAECXDDM2XPHT",
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GMYBNCQN02H2EW5RYAP3WE",
+        "summary": "Added optional transaction currency to ledger TSV exports, defaulting to USD and rejecting non-[A-Z]{3} values with a line-numbered status-2 error. Updated README and tests; cargo test, formatting, and diff checks pass. Committed as 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN2NC28H1HXC5KCGN0WNYJ), codex/gpt-6-luna (agent agt_01M8GN5A01Y16CP2ZBEYBGXWYJ), codex/gpt-6-luna (agent agt_01M8GN9EF84E59XJPN86J2JTAN)\n\nSHIPPED: commit 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5 on the run branch"
+      },
+      "created_at": "2026-11-28T08:39:27.116828235Z",
+      "updated_at": "2026-11-28T08:46:48.211106097Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GMYBNCQN02H2EW5RYAP3WE",
+        "item": "qi_01M8GMYBMDTH8J8N5R32PK8AB4",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GMYBWA5PQ0HRRMST245Q9D",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8610dc86306621c3b75d0e9d/.archon/data/worktrees/ledger/qi_01M8GMYBMDTH8J8N5R32PK8AB4",
+        "branch": "archon/32pk8ab4-export-transaction-currency-in-ledger-cs",
+        "state": {
+          "state": "succeeded",
+          "summary": "Added optional transaction currency to ledger TSV exports, defaulting to USD and rejecting non-[A-Z]{3} values with a line-numbered status-2 error. Updated README and tests; cargo test, formatting, and diff checks pass. Committed as 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5.\n\nREVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN2NC28H1HXC5KCGN0WNYJ), codex/gpt-6-luna (agent agt_01M8GN5A01Y16CP2ZBEYBGXWYJ), codex/gpt-6-luna (agent agt_01M8GN9EF84E59XJPN86J2JTAN)\n\nSHIPPED: commit 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5 on the run branch"
+        },
+        "cost_usd": 0.03428744,
+        "started_at": "2026-11-28T08:39:27.317778278Z",
+        "finished_at": "2026-11-28T08:46:48.211106097Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GMYBVBQ4444HAJZZA514WV",
+        "run": "prun_01M8GMYBNCQN02H2EW5RYAP3WE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GMYBX6QSS5TVH89ZXKV1FE",
+        "aether_task": "tsk_01M8GMYBX6YWTXXQHPBDNXEV0C",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Added optional transaction currency to ledger TSV exports, defaulting to USD and rejecting non-[A-Z]{3} values with a line-numbered status-2 error. Updated README and tests; cargo test, formatting, and diff checks pass. Committed as 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5.",
+        "structured": {
+          "checks": [
+            "CARGO_TARGET_DIR=/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8610dc86306621c3b75d0e9d/.archon/data/cache/ledger/items/qi_01M8GMYBMDTH8J8N5R32PK8AB4/cargo-target cargo test",
+            "cargo fmt -- --check",
+            "git diff --check"
+          ],
+          "commit": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+          "evidence": [
+            {
+              "after": "date,account,amount_cents,currency\n2026-03-01,a,100,USD",
+              "before": "date,account,amount_cents\n2026-03-01,groceries,-4510",
+              "caption": "CSV export before and after currency support.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+          "pr": {
+            "body": "The parser accepts an optional fourth TSV field, validates its raw value as exactly three uppercase ASCII letters, and classifies currency failures so the CLI emits the 1-based input line and exits 2. Other input errors retain exit 1. README and parser/CLI integration tests were updated. cargo test passed (3 integration tests); cargo fmt -- --check and git diff --check passed. A blank fourth field is invalid.",
+            "summary": "Made ledger exports include a currency column. Before: three-column CSV; now: four-column CSV, with USD as the default and validated currency codes.",
+            "title": "Export transaction currency in ledger CSV"
+          },
+          "review": {
+            "resolved_findings": [
+              "agt_01M8GN2NC28H1HXC5KCGN0WNYJ:1"
+            ],
+            "reviewed_head": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+            "reviewer_agents": [
+              "agt_01M8GN2NC28H1HXC5KCGN0WNYJ",
+              "agt_01M8GN5A01Y16CP2ZBEYBGXWYJ",
+              "agt_01M8GN9EF84E59XJPN86J2JTAN"
+            ],
+            "reviewer_models": [
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna",
+              "codex/gpt-6-luna"
+            ],
+            "reviewer_verdicts": [
+              {
+                "agent": "agt_01M8GN2NC28H1HXC5KCGN0WNYJ",
+                "base": "f9f7ff8e8227718b181aa5dfb903fc750f9d88f4",
+                "findings": 1,
+                "head": "6522f64ed78ef3687511c0f2ce33494687996850",
+                "verdict": "fail"
+              },
+              {
+                "agent": "agt_01M8GN5A01Y16CP2ZBEYBGXWYJ",
+                "base": "6522f64ed78ef3687511c0f2ce33494687996850",
+                "findings": 0,
+                "head": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+                "verdict": "pass"
+              },
+              {
+                "agent": "agt_01M8GN9EF84E59XJPN86J2JTAN",
+                "base": "6522f64ed78ef3687511c0f2ce33494687996850",
+                "findings": 0,
+                "head": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+                "verdict": "pass"
+              }
+            ],
+            "reviewers": [
+              "agt_01M8GN2NC28H1HXC5KCGN0WNYJ",
+              "agt_01M8GN5A01Y16CP2ZBEYBGXWYJ",
+              "agt_01M8GN9EF84E59XJPN86J2JTAN"
+            ],
+            "risk": {
+              "level": "high",
+              "reviewer": "agt_01M8GN9EF84E59XJPN86J2JTAN",
+              "why": "Targeted final delta pass resolves the original blocking finding; the broader interface/schema change remains high risk."
+            },
+            "verdict": "pass"
+          },
+          "review_rounds": {
+            "findings": {
+              "agt_01M8GN2NC28H1HXC5KCGN0WNYJ:1": {
+                "blocking": true,
+                "description": "Currency validation accepts surrounding whitespace",
+                "found_in": {
+                  "number": 1,
+                  "stage": "stg_01M8GMYBVBQ4444HAJZZA514WV"
+                },
+                "id": "agt_01M8GN2NC28H1HXC5KCGN0WNYJ:1",
+                "resolved_in": {
+                  "number": 2,
+                  "stage": "stg_01M8GMYBVBQ4444HAJZZA514WV"
+                }
+              }
+            },
+            "rounds": [
+              {
+                "head": "6522f64ed78ef3687511c0f2ce33494687996850",
+                "number": 1,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GN2NC28H1HXC5KCGN0WNYJ",
+                    "base": "f9f7ff8e8227718b181aa5dfb903fc750f9d88f4",
+                    "finding_count": 1,
+                    "finding_ids": [
+                      "agt_01M8GN2NC28H1HXC5KCGN0WNYJ:1"
+                    ],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": true,
+                    "verdict": "fail"
+                  }
+                ]
+              },
+              {
+                "head": "0146479ba7962fe52ba3abb2a4a7ed108b6a41a5",
+                "number": 2,
+                "reviews": [
+                  {
+                    "agent": "agt_01M8GN5A01Y16CP2ZBEYBGXWYJ",
+                    "base": "6522f64ed78ef3687511c0f2ce33494687996850",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  },
+                  {
+                    "agent": "agt_01M8GN9EF84E59XJPN86J2JTAN",
+                    "base": "6522f64ed78ef3687511c0f2ce33494687996850",
+                    "finding_count": 0,
+                    "finding_ids": [],
+                    "model": "codex/gpt-6-luna",
+                    "next_round_resolved": null,
+                    "verdict": "pass"
+                  }
+                ]
+              }
+            ]
+          },
+          "risk": {
+            "level": "high",
+            "why": "Changes the public parser result type and exported CSV schema. Scope is confined to parser, CLI, tests, and README. The initial review found padded currency acceptance; this was fixed, covered by tests, and confirmed by a targeted delta review."
+          },
+          "tree": "ab2cfeaccbdee1de2e1aaca4f7d9651c2c6f2221"
+        },
+        "cost_usd": 0.03428744,
+        "started_at": "2026-11-28T08:39:27.339711998Z",
+        "finished_at": "2026-11-28T08:46:43.744887828Z"
+      }
+    ],
+    "spent_usd": 0.03428744,
+    "gates": [],
+    "delegations": {
+      "stg_01M8GMYBVBQ4444HAJZZA514WV": {
+        "direct_usd": 0.02223484,
+        "delegated_usd": 0.0120526,
+        "agents": [
+          {
+            "agent": "agt_01M8GN2NC28H1HXC5KCGN0WNYJ",
+            "parent": "agt_01M8GMYBX6QSS5TVH89ZXKV1FE",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "high",
+            "cost_usd": 0.00449784
+          },
+          {
+            "agent": "agt_01M8GN5A01Y16CP2ZBEYBGXWYJ",
+            "parent": "agt_01M8GMYBX6QSS5TVH89ZXKV1FE",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0023850600000000005
+          },
+          {
+            "agent": "agt_01M8GN7MN8MTBS42K6NBMC0EKF",
+            "parent": "agt_01M8GMYBX6QSS5TVH89ZXKV1FE",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0023453
+          },
+          {
+            "agent": "agt_01M8GN9EF84E59XJPN86J2JTAN",
+            "parent": "agt_01M8GMYBX6QSS5TVH89ZXKV1FE",
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "low",
+            "cost_usd": 0.0028244000000000003
+          }
+        ]
+      }
+    },
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.119665488Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.139732046Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:39:27.119665488Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

@@ -71,6 +71,12 @@ impl ModelPolicy {
         canonical
     }
 
+    /// Whether the allowlist names `model` itself, which opts it in
+    /// ([`crate::opt_in`]); an open policy names nothing.
+    pub fn names_model(&self, model: &ModelRef) -> bool {
+        self.allow.as_ref().is_some_and(|set| set.contains(model))
+    }
+
     pub fn permits_model(&self, model: &ModelRef) -> bool {
         let allowed = self.allow.as_ref().is_none_or(|set| set.contains(model));
         allowed && !self.deny.contains(model)

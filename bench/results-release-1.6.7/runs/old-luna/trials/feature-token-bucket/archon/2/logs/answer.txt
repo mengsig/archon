@@ -1,0 +1,14 @@
+Queued the implementation as [qi_01M8GKREM7J990WT4TGFZ87ADG](#). It will implement `SPEC.md`, cover its edge and error cases with tests, use only the standard library, and commit the work.
+
+Done: Implement spec-compliant rate limiter. Implemented the spec-compliant token bucket and keyed LRU limiter, with edge-case tests for validation, fractional refill, clock rollback, wait behavior, and eviction. Final verification passed: 8 unit tests, diff check, and Python compilation. Committed as 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec; tree 0ae600c1cff272abcf56bcb67302877669c8bf27.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec on the run branch
+Branch `archon/gfz87adg-implement-spec-compliant-rate-limiter` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/206a617ac27a9f77ab57e64b/feature-token-bucket holds it (2 files changed, 125 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GKREM7J990WT4TGFZ87ADG`; land it in `main`: `archon merge qi_01M8GKREM7J990WT4TGFZ87ADG`.
+
+Implemented the spec-compliant token bucket and keyed LRU limiter, with edge-case tests for validation, fractional refill, clock rollback, wait behavior, and eviction. Final verification passed: 8 unit tests, diff check, and Python compilation. Committed as 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec; tree 0ae600c1cff272abcf56bcb67302877669c8bf27.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec on the run branch

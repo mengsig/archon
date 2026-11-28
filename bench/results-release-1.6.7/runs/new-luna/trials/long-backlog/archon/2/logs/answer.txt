@@ -1,0 +1,60 @@
+Queued all four tickets as separate `direct` changes in `long-backlog`; each includes focused tests, the requested unittest command, and the standard-library-only constraint.
+
+- TT-101: `qi_01M8GM6G1FQK8G2C76Z3BE5CSE`
+- TT-102: `qi_01M8GM6GYKPT5M5NQ5A3PK8PCJ`
+- TT-103: `qi_01M8GM6H0YQNKV95GJ1BM62ZRW`
+- TT-104: `qi_01M8GM6GW5P84GVY87T7ZRCVE1`
+
+They’re queued independently so each can ship in its own commit. I’ll report the outcomes when the runs finish.
+
+Done: TT-103 Search query syntax. Implemented TT-103 query syntax in tasktracker/search.py and added focused coverage in tests/test_basic.py. The required unittest discovery passed (6 tests), git diff --check passed, and the independent review passed. Committed as 416cc1a81f2e8906f9dd309982e25817a4c41300; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM8ZFYA08N9BPGREPJE9BB)
+
+SHIPPED: commit 416cc1a81f2e8906f9dd309982e25817a4c41300 on the run branch
+Branch `archon/1bm62zrw-tt-103-search-query-syntax` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d8c8e7338a3de896209960d1/long-backlog holds it (2 files changed, 65 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GM6H0YQNKV95GJ1BM62ZRW`; land it in `main`: `archon merge qi_01M8GM6H0YQNKV95GJ1BM62ZRW`.
+
+Done: TT-101 Reject impossible due dates. Implemented TT-101: impossible and unsupported due dates raise InvalidDate containing the original input; +Nd, +0d, today, and tomorrow semantics are covered. Full unittest discovery passed (5 tests), git diff --check passed, and independent review passed with no findings. Committed as 8cd888e3d9171f99a4f826e9999f8db76bed4a26; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM93N9ZD08MDVWH515DB1M)
+
+SHIPPED: commit 8cd888e3d9171f99a4f826e9999f8db76bed4a26 on the run branch
+Branch `archon/z3be5cse-tt-101-reject-impossible-due-dates` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d8c8e7338a3de896209960d1/long-backlog holds it (2 files changed, 23 insertions(+), 7 deletions(-)). Review: `archon diff qi_01M8GM6G1FQK8G2C76Z3BE5CSE`; land it in `main`: `archon merge qi_01M8GM6G1FQK8G2C76Z3BE5CSE`.
+
+Done: TT-104 Undo TaskStore operations. Implemented TaskStore undo for add, complete, and delete with LIFO history, nonreused IDs, and NothingToUndo; added focused tests. Full unittest discovery passed (7 tests), diff check passed, and independent review passed with one nonblocking repeated-completion state-restoration observation. Commit c71954851a980a492589e84a3ec9d526ebc11c7e; no open blocking findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM956Z9CKDE3CE3199VK86)
+
+SHIPPED: commit c71954851a980a492589e84a3ec9d526ebc11c7e on the run branch
+Branch `archon/t7zrcve1-tt-104-undo-taskstore-operations` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d8c8e7338a3de896209960d1/long-backlog holds it (2 files changed, 53 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GM6GW5P84GVY87T7ZRCVE1`; land it in `main`: `archon merge qi_01M8GM6GW5P84GVY87T7ZRCVE1`.
+
+Done: TT-102 RFC 4180 CSV export. Implemented RFC 4180 CSV escaping and CRLF output in tasktracker/export.py, with focused coverage in tests/test_basic.py. The requested unittest suite passed (5 tests); committed as 04dad2b7e750bd73e7e84c4f65249f3c5583d209. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMA0KGC0B883B8MD515GD2)
+
+SHIPPED: commit 04dad2b7e750bd73e7e84c4f65249f3c5583d209 on the run branch
+Branch `archon/a3pk8pcj-tt-102-rfc-4180-csv-export` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/d8c8e7338a3de896209960d1/long-backlog holds it (2 files changed, 20 insertions(+), 2 deletions(-)). Review: `archon diff qi_01M8GM6GYKPT5M5NQ5A3PK8PCJ`; land it in `main`: `archon merge qi_01M8GM6GYKPT5M5NQ5A3PK8PCJ`.
+
+Implemented TT-103 query syntax in tasktracker/search.py and added focused coverage in tests/test_basic.py. The required unittest discovery passed (6 tests), git diff --check passed, and the independent review passed. Committed as 416cc1a81f2e8906f9dd309982e25817a4c41300; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM8ZFYA08N9BPGREPJE9BB)
+
+SHIPPED: commit 416cc1a81f2e8906f9dd309982e25817a4c41300 on the run branch
+
+Implemented RFC 4180 CSV escaping and CRLF output in tasktracker/export.py, with focused coverage in tests/test_basic.py. The requested unittest suite passed (5 tests); committed as 04dad2b7e750bd73e7e84c4f65249f3c5583d209. No open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMA0KGC0B883B8MD515GD2)
+
+SHIPPED: commit 04dad2b7e750bd73e7e84c4f65249f3c5583d209 on the run branch
+
+Implemented TaskStore undo for add, complete, and delete with LIFO history, nonreused IDs, and NothingToUndo; added focused tests. Full unittest discovery passed (7 tests), diff check passed, and independent review passed with one nonblocking repeated-completion state-restoration observation. Commit c71954851a980a492589e84a3ec9d526ebc11c7e; no open blocking findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM956Z9CKDE3CE3199VK86)
+
+SHIPPED: commit c71954851a980a492589e84a3ec9d526ebc11c7e on the run branch
+
+Implemented TT-101: impossible and unsupported due dates raise InvalidDate containing the original input; +Nd, +0d, today, and tomorrow semantics are covered. Full unittest discovery passed (5 tests), git diff --check passed, and independent review passed with no findings. Committed as 8cd888e3d9171f99a4f826e9999f8db76bed4a26; nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GM93N9ZD08MDVWH515DB1M)
+
+SHIPPED: commit 8cd888e3d9171f99a4f826e9999f8db76bed4a26 on the run branch

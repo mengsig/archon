@@ -1,0 +1,3 @@
+Implemented the `OrderStatus` enum, parsing error, lifecycle transitions, and crate root re-exports. Status names are centralized in `src/status.rs`; report ordering and existing error messages are preserved.
+
+`cargo test` passed (3 integration tests). Committed as `0fc3d2a` (`Refactor order status to enum`). Working tree is clean.

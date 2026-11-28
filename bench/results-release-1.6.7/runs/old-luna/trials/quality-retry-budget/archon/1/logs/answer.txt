@@ -1,0 +1,14 @@
+Queued as **qi_01M8GJ8W4EV69DS0JAJZTK07E9** in the `direct` pipeline for `quality-retry-budget`. The acceptance criteria include SPEC.md compliance, focused edge and boundary tests, passing checks, and a commit.
+
+Done: Implement retry_budget.py to SPEC.md. Implemented SPEC-compliant retry delay scheduling with strict argument validation, bounded exponential backoff, Retry-After floor handling, and strict budget checks. Added boundary and invalid-input tests; all 11 tests and diff checks pass on final tree 5fce965c47b422a292a334b2ee8e1534daee0ff8. Committed as f24e6b2685066b594f05350b9136da8a5fbb821e. Independent whole-change review found a test coverage gap, fixed in the follow-up commit, and delta review passed resolving it. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJBFHRZ6HW4F6Z7R4HNNYW), codex/gpt-6-luna (agent agt_01M8GJDZRFX9YE3Z5AZVK3P5KS)
+
+SHIPPED: commit f24e6b2685066b594f05350b9136da8a5fbb821e on the run branch
+Branch `archon/jztk07e9-implement-retry-budget-py-to-spec-md` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/6c3c837332669f4944c57e90/quality-retry-budget holds it (2 files changed, 94 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GJ8W4EV69DS0JAJZTK07E9`; land it in `main`: `archon merge qi_01M8GJ8W4EV69DS0JAJZTK07E9`.
+
+Implemented SPEC-compliant retry delay scheduling with strict argument validation, bounded exponential backoff, Retry-After floor handling, and strict budget checks. Added boundary and invalid-input tests; all 11 tests and diff checks pass on final tree 5fce965c47b422a292a334b2ee8e1534daee0ff8. Committed as f24e6b2685066b594f05350b9136da8a5fbb821e. Independent whole-change review found a test coverage gap, fixed in the follow-up commit, and delta review passed resolving it. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GJBFHRZ6HW4F6Z7R4HNNYW), codex/gpt-6-luna (agent agt_01M8GJDZRFX9YE3Z5AZVK3P5KS)
+
+SHIPPED: commit f24e6b2685066b594f05350b9136da8a5fbb821e on the run branch

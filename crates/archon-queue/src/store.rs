@@ -121,6 +121,16 @@ pub mod keys {
     pub fn item_shape(item: &QueueItemId) -> String {
         format!("shape:{item}")
     }
+
+    /// A repository's saved design preview recipe.
+    pub fn design_recipe(repo: &archon_core::id::RepoId) -> String {
+        format!("design_recipe:{repo}")
+    }
+
+    /// How many times a repository's design recipe was saved or cleared.
+    pub fn design_recipe_revision(repo: &archon_core::id::RepoId) -> String {
+        format!("design_recipe_revision:{repo}")
+    }
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).

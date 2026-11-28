@@ -1,0 +1,3 @@
+Implemented `extract()` with full batch validation before filesystem changes, symlink and target checks, collision detection, and exclusive file creation. Added focused boundary tests.
+
+All 8 tests pass. Commit: `cb4256d` (`Implement safe extraction validation`).

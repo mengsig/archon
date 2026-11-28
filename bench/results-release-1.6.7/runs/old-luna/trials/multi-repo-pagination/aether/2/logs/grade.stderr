@@ -1,0 +1,58 @@
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+OK
+expect_tests: 10 unittest tests passed (minimum 10)
+TAP version 13
+# Subtest: lists items
+ok 1 - lists items
+  ---
+  duration_ms: 1.005599
+  type: 'test'
+  ...
+# Subtest: gets one item and reports failures
+ok 2 - gets one item and reports failures
+  ---
+  duration_ms: 0.37548
+  type: 'test'
+  ...
+# Subtest: finds low stock
+ok 3 - finds low stock
+  ---
+  duration_ms: 0.1008
+  type: 'test'
+  ...
+# Subtest: the client lists all 57 items from the real API
+ok 4 - the client lists all 57 items from the real API
+  ---
+  duration_ms: 56.872169
+  type: 'test'
+  ...
+# Subtest: follows next_cursor across every page
+ok 5 - follows next_cursor across every page
+  ---
+  duration_ms: 1.16485
+  type: 'test'
+  ...
+# Subtest: one page when the server has one page
+ok 6 - one page when the server has one page
+  ---
+  duration_ms: 0.14936
+  type: 'test'
+  ...
+# Subtest: a failing page rejects
+ok 7 - a failing page rejects
+  ---
+  duration_ms: 0.303413
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 100.99577
+expect_tests: 7 node tests passed (minimum 7)

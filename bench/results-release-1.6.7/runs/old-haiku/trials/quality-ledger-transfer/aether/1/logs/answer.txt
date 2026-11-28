@@ -1,0 +1,18 @@
+`ledger.py` now implements the spec, the test suite is expanded, and the work is committed as `6485ef4` on `main`. All 27 tests pass on five consecutive runs.
+
+**Implementation (`ledger.py`)**
+- `Ledger(balances)` rejects non-dict input and invalid names or balances with `ValueError`. Booleans, floats and strings are not accepted as integers. It copies the input dict, so later changes to the caller's dict have no effect.
+- `transfer` validates the amount first, then looks up both accounts (`KeyError` if either is unknown), then applies the rules. Insufficient funds or destination overflow return `False` and change nothing. Same-account transfers return `True` iff the account has the funds, and never change it.
+- `snapshot()` returns a fresh copy under the lock.
+- Thread safety uses one `threading.Lock` per ledger. Every operation takes it, so transfers are atomic and snapshots never see a partial move. Opposite transfers cannot deadlock because only one lock exists.
+- Two precondition asserts sit in the internal `_move` helper; they guard the arithmetic if a future change drops the checks.
+
+**Tests (`test_ledger.py`)**
+- The two original tests are kept.
+- New cases cover construction, copy isolation in both directions, each invalid name and balance, amount boundaries, validation order (amount before accounts), unknown accounts, same-account transfers, and destination overflow with exact fill to `MAX_BALANCE`.
+- Concurrency tests use deterministic outcomes, with no timing or random inputs: balanced opposite transfers, a fixed number of successes under contention for funds and for room, and repeated snapshots during writes that always sum to the total.
+
+**Choices and limits**
+- I used one global lock rather than per-account locks. It is simpler and meets the linearizability requirement; per-account locking would allow more parallelism if that ever matters.
+- I did not add a `Co-Authored-By` line to the commit. The project's CLAUDE.md says not to add Claude attribution, and that instruction takes precedence over the attribution reminder.
+- I did not confirm that the concurrency tests would fail without the lock. Python's GIL makes such races rare, so a passing run does not prove the lock is needed. The correctness argument rests on the single critical section.

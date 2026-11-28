@@ -1,0 +1,166 @@
+diff --git a/retry_budget.py b/retry_budget.py
+index 07b3b5e..4a91082 100644
+--- a/retry_budget.py
++++ b/retry_budget.py
+@@ -1,6 +1,40 @@
+ """Pure bounded retry scheduling. See SPEC.md."""
+ 
+ 
++def _require_int(name, value, minimum):
++    if type(value) is not int:
++        raise ValueError(f"{name} must be a built-in int, got {type(value).__name__}")
++    if value < minimum:
++        raise ValueError(f"{name} must be >= {minimum}, got {value}")
++    return value
++
++
++def _backoff(attempt, base_ms, cap_ms):
++    if base_ms == 0 or cap_ms == 0:
++        return 0
++    doublings = attempt - 1
++    # Once 2**doublings exceeds cap_ms, the capped value is reached; avoid building the power.
++    if doublings >= cap_ms.bit_length():
++        return cap_ms
++    return min(cap_ms, base_ms << doublings)
++
++
+ def retry_delay(attempt, elapsed_ms, *, max_attempts=4, budget_ms=1000,
+                 base_ms=100, cap_ms=400, retry_after_ms=None):
+-    raise NotImplementedError
++    attempt = _require_int("attempt", attempt, 1)
++    elapsed_ms = _require_int("elapsed_ms", elapsed_ms, 0)
++    max_attempts = _require_int("max_attempts", max_attempts, 1)
++    budget_ms = _require_int("budget_ms", budget_ms, 0)
++    base_ms = _require_int("base_ms", base_ms, 0)
++    cap_ms = _require_int("cap_ms", cap_ms, 0)
++    if retry_after_ms is not None:
++        retry_after_ms = _require_int("retry_after_ms", retry_after_ms, 0)
++
++    if attempt >= max_attempts:
++        return None
++    delay = _backoff(attempt, base_ms, cap_ms)
++    if retry_after_ms is not None:
++        delay = max(delay, retry_after_ms)
++    if elapsed_ms + delay >= budget_ms:
++        return None
++    return delay
+diff --git a/test_retry_budget.py b/test_retry_budget.py
+index f3df8dd..6744485 100644
+--- a/test_retry_budget.py
++++ b/test_retry_budget.py
+@@ -1,8 +1,17 @@
++import enum
+ import unittest
+ 
+ from retry_budget import retry_delay
+ 
+ 
++class IntLike(int):
++    pass
++
++
++class Color(enum.IntEnum):
++    RED = 1
++
++
+ class RetryBasics(unittest.TestCase):
+     def test_backoff(self):
+         self.assertEqual(retry_delay(1, 0), 100)
+@@ -16,3 +25,97 @@ class RetryBasics(unittest.TestCase):
+     def test_retry_after(self):
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=250), 250)
+         self.assertEqual(retry_delay(1, 0, retry_after_ms=25), 100)
++
++
++class RetryValidation(unittest.TestCase):
++    def assertRejects(self, *args, **kwargs):
++        with self.assertRaises(ValueError):
++            retry_delay(*args, **kwargs)
++
++    def test_rejects_bool_float_and_int_subclasses(self):
++        self.assertRejects(True, 0)
++        self.assertRejects(1, False)
++        self.assertRejects(1.0, 0)
++        self.assertRejects(1, 0, base_ms=100.0)
++        self.assertRejects(1, 0, cap_ms=True)
++        self.assertRejects(1, 0, budget_ms=IntLike(5))
++        self.assertRejects(1, 0, max_attempts=Color.RED)
++
++    def test_rejects_non_numbers(self):
++        self.assertRejects("1", 0)
++        self.assertRejects(1, None)
++        self.assertRejects(1, 0, retry_after_ms="10")
++
++    def test_rejects_attempt_and_max_attempts_below_one(self):
++        self.assertRejects(0, 0)
++        self.assertRejects(-1, 0)
++        self.assertRejects(1, 0, max_attempts=0)
++
++    def test_rejects_negative_values(self):
++        self.assertRejects(1, -1)
++        self.assertRejects(1, 0, budget_ms=-1)
++        self.assertRejects(1, 0, base_ms=-1)
++        self.assertRejects(1, 0, cap_ms=-1)
++        self.assertRejects(1, 0, retry_after_ms=-1)
++
++    def test_validates_before_attempt_limit_return(self):
++        self.assertRejects(4, -1, max_attempts=1)
++        self.assertRejects(5, 0, max_attempts=1, base_ms=-1)
++
++    def test_validates_before_budget_return(self):
++        self.assertRejects(1, 1000, base_ms=-1)
++        self.assertRejects(1, 0, budget_ms=0, retry_after_ms=-5)
++
++    def test_none_retry_after_is_allowed(self):
++        self.assertEqual(retry_delay(1, 0, retry_after_ms=None), 100)
++
++
++class RetryBoundaries(unittest.TestCase):
++    def test_attempt_greater_than_max_attempts_is_none(self):
++        self.assertIsNone(retry_delay(10, 0, max_attempts=4))
++
++    def test_last_allowed_attempt_still_gets_a_retry(self):
++        self.assertEqual(retry_delay(3, 0, max_attempts=4), 400)
++
++    def test_zero_base_yields_zero_backoff(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=0), 0)
++        self.assertEqual(retry_delay(5, 0, base_ms=0, max_attempts=10), 0)
++
++    def test_zero_cap_yields_zero_backoff(self):
++        self.assertEqual(retry_delay(1, 0, cap_ms=0), 0)
++        self.assertEqual(retry_delay(3, 0, cap_ms=0, base_ms=500), 0)
++
++    def test_base_above_cap_is_capped(self):
++        self.assertEqual(retry_delay(1, 0, base_ms=500, cap_ms=400), 400)
++
++    def test_huge_attempt_saturates_at_cap(self):
++        self.assertEqual(
++            retry_delay(10**6, 0, max_attempts=10**7, budget_ms=10**9), 400)
++
++    def test_huge_base_and_cap_do_not_overflow(self):
++        big = 10**400
++        self.assertEqual(
++            retry_delay(1, 0, base_ms=big, cap_ms=big, budget_ms=2 * big), big)
++
++    def test_retry_after_is_not_limited_by_cap(self):
++        self.assertEqual(
++            retry_delay(1, 0, retry_after_ms=900, cap_ms=400, budget_ms=2000), 900)
++
++    def test_budget_boundary_is_exclusive(self):
++        self.assertIsNone(retry_delay(1, 900))
++        self.assertEqual(retry_delay(1, 899), 100)
++
++    def test_retry_after_pushing_past_budget_returns_none(self):
++        self.assertIsNone(retry_delay(1, 0, retry_after_ms=1000))
++        self.assertEqual(retry_delay(1, 0, retry_after_ms=999), 999)
++
++    def test_zero_budget_allows_no_retry(self):
++        self.assertIsNone(retry_delay(1, 0, budget_ms=0))
++
++    def test_zero_delay_is_returned_inside_budget(self):
++        self.assertEqual(retry_delay(1, 999, base_ms=0), 0)
++        self.assertIsNone(retry_delay(1, 1000, base_ms=0))
++
++
++if __name__ == "__main__":
++    unittest.main()

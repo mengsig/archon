@@ -1,0 +1,84 @@
+diff --git a/README.md b/README.md
+index 25e668a..c941091 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,8 @@
+ # reports
+ 
+-`python3 reports.py < ledger.csv` prints `account,total_cents`, one row per
+-account in alphabetical order, from the CSV that `ledger` exports.
++`python3 reports.py < ledger.csv` prints `account,currency,total_cents`, with
++one total per account and currency, sorted by account and then currency. It
++accepts the current `ledger` CSV format and older CSV files without a
++`currency` column; older files are treated as `USD`. Currency values must be
++three uppercase ASCII letters. A malformed currency prints a diagnostic to
++stderr and exits with status 2.
+diff --git a/reports.py b/reports.py
+index 8061226..01fb2a3 100644
+--- a/reports.py
++++ b/reports.py
+@@ -4,29 +4,56 @@ Usage: python3 reports.py < ledger.csv
+ """
+ 
+ import csv
++import io
+ import sys
+ 
+ 
++class InvalidCurrency(ValueError):
++    """Raised when an input row has a malformed currency code."""
++
++
+ def totals(rows):
+-    """{account: total_cents} from CSV dict rows."""
++    """{(account, currency): total_cents} from CSV dict rows."""
+     result = {}
+     for row in rows:
+         account = row["account"]
+-        result[account] = result.get(account, 0) + int(row["amount_cents"])
++        currency = row.get("currency")
++        if currency is None and "currency" not in row:
++            currency = "USD"
++        if not valid_currency(currency):
++            line_number = getattr(rows, "line_num", "?")
++            raise InvalidCurrency(f"line {line_number}: bad currency {currency!r}")
++        key = (account, currency)
++        result[key] = result.get(key, 0) + int(row["amount_cents"])
+     return result
+ 
+ 
++def valid_currency(currency):
++    return (
++        isinstance(currency, str)
++        and len(currency) == 3
++        and all("A" <= char <= "Z" for char in currency)
++    )
++
++
+ def render(result):
+-    lines = ["account,total_cents"]
+-    for account in sorted(result):
+-        lines.append(f"{account},{result[account]}")
+-    return "\n".join(lines) + "\n"
++    output = io.StringIO(newline="")
++    writer = csv.writer(output, lineterminator="\n")
++    writer.writerow(["account", "currency", "total_cents"])
++    for account, currency in sorted(result):
++        writer.writerow([account, currency, result[(account, currency)]])
++    return output.getvalue()
+ 
+ 
+ def main():
+     rows = csv.DictReader(sys.stdin)
+-    sys.stdout.write(render(totals(rows)))
++    try:
++        sys.stdout.write(render(totals(rows)))
++    except InvalidCurrency as error:
++        print(error, file=sys.stderr)
++        return 2
++    return 0
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    raise SystemExit(main())

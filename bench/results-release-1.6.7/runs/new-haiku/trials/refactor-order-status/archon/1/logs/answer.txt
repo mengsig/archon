@@ -1,0 +1,43 @@
+Queued the refactor as `qi_01M8GJS7Q308B6JXCJ9P5VX0NZ` on the `refactor-order-status` repo. I haven't touched the code myself.
+
+- **Pipeline:** `refactor`, since the goal is a structural change with the same observable behaviour. It runs characterize, refactor, verify, review.
+- **Review:** `strict`, because `Order::status`'s type changes, which is a public API change.
+- **Shipping:** the repo is `ship: local`, so the work is committed on a local branch and not pushed. Per your instruction I did not push.
+- **Brief:** it carries your full spec, plus the requirement to keep the status literals only in `src/status.rs` and to follow the project's CLAUDE.md.
+
+I'll report when it finishes, including `cargo test` results and the review outcome.
+
+Done: Refactor orders: replace string order status with OrderStatus enum. Review of the OrderStatus refactor at head dc3673b (tree 31a594e): PASS, no blocking findings.
+
+Structural goal met: src/status.rs has OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display, can_transition_to for the four lifecycle edges, and FromStr with the public ParseStatusError. Order.status is OrderStatus, and both types are re-exported from the crate root. Status literals appear in src/ only at src/status.rs:23-26. The transition checks in pay, ship and cancel match the old string comparisons. status_counts keeps name ordering and from_line keeps its error order and text. tests/orders.rs, Cargo.toml and Cargo.lock are unchanged from baseline 2e7280d. Commits are authored by mengsig with no attribution trailers.
+
+Checks I ran: cargo test --locked passes (23 tests, 0 failed). cargo clippy --all-targets --locked -- -D warnings passes. Worktree is clean.
+
+Previous findings: #1 (dirty worktree) is resolved. #2 (derived Debug of Order), #3 (status_counts String keys), #4 (pub Order.status) and #5 (pre-existing fmt drift) stay open as advisory, non-blocking. Each is either a consequence of the brief-authorised type change, a public-API change the brief does not authorise, or pre-existing drift with no new hunks.
+
+Risk level: high. Order.status is a public field whose type changes, which breaks source compatibility for library callers. The change is brief-authorised and has no wire-format change.
+
+Nothing was started, pushed or committed by this review.
+
+VERDICT: PASS
+
+SHIPPED: commit dc3673b107a2358fb11ca8919266da962b237458 on the run branch
+Branch `archon/9p5vx0nz-refactor-orders-replace-string-order-sta` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/e8f42d2165379750948d6ef7/refactor-order-status holds it (9 files changed, 430 insertions(+), 20 deletions(-)). Review: `archon diff qi_01M8GJS7Q308B6JXCJ9P5VX0NZ`; lan…
+
+Freed 0.2 GiB of build output: item qi_01M8GJS7Q308B6JXCJ9P5VX0NZ ended and its cargo target directory went.
+
+Review of the OrderStatus refactor at head dc3673b (tree 31a594e): PASS, no blocking findings.
+
+Structural goal met: src/status.rs has OrderStatus (Debug, Clone, Copy, PartialEq, Eq, Hash), as_str, Display, can_transition_to for the four lifecycle edges, and FromStr with the public ParseStatusError. Order.status is OrderStatus, and both types are re-exported from the crate root. Status literals appear in src/ only at src/status.rs:23-26. The transition checks in pay, ship and cancel match the old string comparisons. status_counts keeps name ordering and from_line keeps its error order and text. tests/orders.rs, Cargo.toml and Cargo.lock are unchanged from baseline 2e7280d. Commits are authored by mengsig with no attribution trailers.
+
+Checks I ran: cargo test --locked passes (23 tests, 0 failed). cargo clippy --all-targets --locked -- -D warnings passes. Worktree is clean.
+
+Previous findings: #1 (dirty worktree) is resolved. #2 (derived Debug of Order), #3 (status_counts String keys), #4 (pub Order.status) and #5 (pre-existing fmt drift) stay open as advisory, non-blocking. Each is either a consequence of the brief-authorised type change, a public-API change the brief does not authorise, or pre-existing drift with no new hunks.
+
+Risk level: high. Order.status is a public field whose type changes, which breaks source compatibility for library callers. The change is brief-authorised and has no wire-format change.
+
+Nothing was started, pushed or committed by this review.
+
+VERDICT: PASS
+
+SHIPPED: commit dc3673b107a2358fb11ca8919266da962b237458 on the run branch

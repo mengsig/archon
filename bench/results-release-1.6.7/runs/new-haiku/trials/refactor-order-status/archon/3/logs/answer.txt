@@ -1,0 +1,17 @@
+The refactor is queued as item `qi_01M8GS7CDSBXKWKMJVZVVETGK3` on `refactor-order-status` (base `main`, ship local). I haven't changed the repository myself, and I'll report when the item finishes.
+
+- **Pipeline:** `refactor`, which runs baseline characterisation, the refactor, verification and review before it ships.
+- **Review:** the `refactor` pipeline sets its own strict review, so I could not set `standard`. That is stricter than I planned, which suits a change to a public API.
+- **Commit:** the work will be committed on the item's local branch and not pushed. The commit will carry only your authorship, without the attribution lines the reminder asked me to leave out.
+- **Acceptance:** `cargo test` must pass, no status string literals may appear outside `src/status.rs`, and report output and ordering must match the baseline.
+
+Done: Refactor orders status String into OrderStatus enum. Reviewed the OrderStatus refactor at head 8279d02. The structural goal is met: the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to live in src/status.rs. The root re-exports them, and the status literals in src/ appear only in that file. Transition rules, error messages and status_counts ordering behave as before. Checks run: cargo test exit 0 (4 unit, 16 characterization, 3 original, all passing); cargo clippy --all-targets -D warnings completed with no errors; cargo fmt --check shows the pre-existing drift plus one new wrap in src/report.rs. The test files are unchanged, and the worktree is clean. Advisory items: a fmt nit, status_counts still returning String names, and confirming the literal acceptance criterion applies to production code only. Risk is high because of the breaking public field type change. No services were started, so nothing needs stopping. VERDICT: PASS
+
+SHIPPED: commit 8279d02691eccaf7c420c30c30fc7a1e40fbc268 on the run branch
+Branch `archon/zvvetgk3-refactor-orders-status-string-into-order` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/bce0dff1bd13bf1579d83c72/refactor-order-status holds it (7 files changed, 387 insertions(+), 20 deletions(-)). Review: `archon diff qi_01M8GS7CDSBXKWKMJVZVVETGK3`; land it in `main`: `archon merge qi_01M8GS7CDSBXKWKMJVZVVETGK3`.
+
+Freed 0.1 GiB of build output: item qi_01M8GS7CDSBXKWKMJVZVVETGK3 ended and its cargo target directory went.
+
+Reviewed the OrderStatus refactor at head 8279d02. The structural goal is met: the enum, as_str, Display, FromStr with ParseStatusError, and can_transition_to live in src/status.rs. The root re-exports them, and the status literals in src/ appear only in that file. Transition rules, error messages and status_counts ordering behave as before. Checks run: cargo test exit 0 (4 unit, 16 characterization, 3 original, all passing); cargo clippy --all-targets -D warnings completed with no errors; cargo fmt --check shows the pre-existing drift plus one new wrap in src/report.rs. The test files are unchanged, and the worktree is clean. Advisory items: a fmt nit, status_counts still returning String names, and confirming the literal acceptance criterion applies to production code only. Risk is high because of the breaking public field type change. No services were started, so nothing needs stopping. VERDICT: PASS
+
+SHIPPED: commit 8279d02691eccaf7c420c30c30fc7a1e40fbc268 on the run branch

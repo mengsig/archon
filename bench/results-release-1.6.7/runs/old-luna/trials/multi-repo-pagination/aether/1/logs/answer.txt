@@ -1,0 +1,8 @@
+Implemented cursor pagination in both repositories. The API defaults to 20 items, accepts limits from 1 to 100, returns ordered pages with an opaque `next_cursor`, and responds with 400 for invalid limits or cursors. The client follows cursors until the field is null or absent.
+
+Updated both READMEs and added pagination tests. Verification passed: `python3 -m unittest` (5 tests) and `npm test` (4 tests). Both repositories have clean working trees.
+
+Commits:
+
+- `inventory-api`: `aaed168` — Add cursor pagination to items endpoint
+- `inventory-client`: `0247d2f` — Follow item pagination cursors

@@ -1,0 +1,14 @@
+Queued as **qi_01M8GKRTVP3R88VVH6QFHHF7X3** in the `direct` pipeline. The implementation brief includes the spec’s validation, refill, clock rollback, wait-time, and LRU cases, and asks the worker to check them and commit. The repository ships locally; I’ll report the outcome when the queue finishes.
+
+Done: Implement the specified token bucket rate limiter. Implemented and committed the token bucket and keyed LRU limiter with validation, fractional refill, backward-clock handling, and focused edge-case tests. Verification passed: 7 unittests, py_compile, and git diff --check. Commit 72031a4; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 72031a4b1acf2bd56cd8b7556895e97312daa3c3 on the run branch
+Branch `archon/qfhhf7x3-implement-the-specified-token-bucket-rat` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/96979b8f9f51767cb89f1804/feature-token-bucket holds it (2 files changed, 105 insertions(+), 8 deletions(-)). Review: `archon diff qi_01M8GKRTVP3R88VVH6QFHHF7X3`; land it in `main`: `archon merge qi_01M8GKRTVP3R88VVH6QFHHF7X3`.
+
+Implemented and committed the token bucket and keyed LRU limiter with validation, fractional refill, backward-clock handling, and focused edge-case tests. Verification passed: 7 unittests, py_compile, and git diff --check. Commit 72031a4; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 72031a4b1acf2bd56cd8b7556895e97312daa3c3 on the run branch

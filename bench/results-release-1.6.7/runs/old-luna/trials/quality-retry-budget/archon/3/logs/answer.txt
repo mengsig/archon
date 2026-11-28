@@ -1,0 +1,14 @@
+Queued as `qi_01M8GRMJEYNBPGEVZXNYMEHYTM` in the `direct` pipeline. It covers implementation from `SPEC.md`, focused tests, running relevant tests, and a local commit. I’ll report the outcome when the run finishes.
+
+Done: Implement retry_budget.py from SPEC.md with edge-case tests. Implemented retry_delay with full argument validation, efficient capped exponential backoff, Retry-After floors, and strict budget boundaries. Added focused edge tests; all 9 tests, compilation, and diff checks pass. Committed as 207f649b97e0bc0922a63ac245862b3bd7a58724; worktree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 207f649b97e0bc0922a63ac245862b3bd7a58724 on the run branch
+Branch `archon/nymehytm-implement-retry-budget-py-from-spec-md-w` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/3e7840a2c5c5b4df6bf2d726/quality-retry-budget holds it (2 files changed, 88 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GRMJEYNBPGEVZXNYMEHYTM`; land it in `main`: `archon merge qi_01M8GRMJEYNBPGEVZXNYMEHYTM`.
+
+Implemented retry_delay with full argument validation, efficient capped exponential backoff, Retry-After floors, and strict budget boundaries. Added focused edge tests; all 9 tests, compilation, and diff checks pass. Committed as 207f649b97e0bc0922a63ac245862b3bd7a58724; worktree clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 207f649b97e0bc0922a63ac245862b3bd7a58724 on the run branch

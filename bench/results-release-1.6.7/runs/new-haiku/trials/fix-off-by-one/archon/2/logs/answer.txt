@@ -1,0 +1,20 @@
+I've queued the fix as item `qi_01M8GMNSZRJ1Z39XTEPCFMA761` on the `fix-off-by-one` repository. It runs through the `direct` pipeline at high priority. I have not read or changed `window.py` myself, since Archon's rules keep repository changes with the stage agent.
+
+- **What the agent is told:** find and fix the bug in `window.py` so `python3 -m unittest` passes, leave the test files byte-identical to the base commit, make the function correct for all accepted inputs (including empty and boundary cases), and commit with the repository's existing git identity and no attribution lines.
+- **Review and effort:** one standard reviewer, with the implement stage at balanced tier and high effort. I chose high effort because the operator asked for correctness on every input.
+- **Commit:** the repository ships `local`, so the commit stays on a local branch and nothing is pushed.
+
+I'll report the outcome when the item finishes. If it fails, I'll read the stage output before deciding whether to retry or split the work.
+
+Done: Fix window.py bug so python3 -m unittest passes. Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window and returned [] when len == size. It now uses range(len(items) - size + 1). Committed as 6e76023 (tree 86fa257) on archon/pcfma761-fix-window-py-bug-so-python3-m-unittest, with no attribution lines. Checks: python3 -m unittest failed before the fix (failures=2) and now runs 3 tests, OK, exit 0. A brute-force sweep (lengths 0-7, sizes 1-9) matches a reference implementation. test_window.py is identical to base a0837e1. One reviewer (agt_01M8GMPGP6KZ24J48AEX42ZEFC, low effort, the diff is one line) passed the head with risk low. No processes left running. Open: I added no extra asserts, since the change is minimal and the existing ValueError guard covers the one invalid input; the repo has no contributor guidance file.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMPGP6KZ24J48AEX42ZEFC)
+
+SHIPPED: commit 6e7602359d929870caaf407beca13ab78dcc0eaa on the run branch
+Branch `archon/pcfma761-fix-window-py-bug-so-python3-m-unittest` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/4b341cbe5bd639174bafe4f5/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GMNSZRJ1Z39XTEPCFMA761`; land it in `main`: `archon merge qi_01M8GMNSZRJ1Z39XTEPCFMA761`.
+
+Fixed the off-by-one in window.py: sliding_windows used range(len(items) - size), which dropped the final window and returned [] when len == size. It now uses range(len(items) - size + 1). Committed as 6e76023 (tree 86fa257) on archon/pcfma761-fix-window-py-bug-so-python3-m-unittest, with no attribution lines. Checks: python3 -m unittest failed before the fix (failures=2) and now runs 3 tests, OK, exit 0. A brute-force sweep (lengths 0-7, sizes 1-9) matches a reference implementation. test_window.py is identical to base a0837e1. One reviewer (agt_01M8GMPGP6KZ24J48AEX42ZEFC, low effort, the diff is one line) passed the head with risk low. No processes left running. Open: I added no extra asserts, since the change is minimal and the existing ValueError guard covers the one invalid input; the repo has no contributor guidance file.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GMPGP6KZ24J48AEX42ZEFC)
+
+SHIPPED: commit 6e7602359d929870caaf407beca13ab78dcc0eaa on the run branch

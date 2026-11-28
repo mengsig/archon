@@ -1,0 +1,31 @@
+Queued initiative **“Add currency-aware ledger and reports”** (`ini_01M8GHCFSR7R06XPPZBD8JPYPH`) with one `direct` item per repository. Both are queued; the work includes implementation, tests, README updates, and a commit in each repository. The repositories ship locally.
+
+Done: Total reports by account and currency. Added currency-aware report aggregation with legacy CSV defaulting to USD, strict currency validation, tests, and README updates. `python3 -m unittest` passed (4 tests) and `git diff --check` passed on commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 (tree b64d5f3d36f8067c588ff117a02bf18600f73396). Working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 on the run branch
+Branch `archon/dby2y47f-total-reports-by-account-and-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/31c66f55b75df80c6c7f8ca9/reports holds it (3 files changed, 64 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M8GHCGPNM8S2FYFRDBY2Y47F`; land it in `main`: `archon merge qi_01M8GHCGPNM8S2FYFRDBY2Y47F`.
+
+Done: Add optional currency column to ledger TSV/CSV. Added optional currency parsing and currency-aware CSV output, defaulting omitted currency to USD and reporting malformed currency with a line number and exit 2. Updated README and tests. Final checks passed: cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Commit 2d855dbda9f53492b0f89e7e9b8af025278447e3; tree 744ea9a82655b841f76c4b6fd1596cae5cc0d562.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 2d855dbda9f53492b0f89e7e9b8af025278447e3 on the run branch
+Branch `archon/dtyr3v3z-add-optional-currency-column-to-ledger-t` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/31c66f55b75df80c6c7f8ca9/ledger holds it (4 files changed, 73 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M8GHCFSS9EB7K6F0DTYR3V3Z`; land it in `main`: `archon merge qi_01M8GHCFSS9EB7K6F0DTYR3V3Z`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GHCFSS9EB7K6F0DTYR3V3Z ended and its cargo target directory went.
+
+Added currency-aware report aggregation with legacy CSV defaulting to USD, strict currency validation, tests, and README updates. `python3 -m unittest` passed (4 tests) and `git diff --check` passed on commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 (tree b64d5f3d36f8067c588ff117a02bf18600f73396). Working tree is clean.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 2ae521890696ed2c94fd5a5fd5733dbdeda56d09 on the run branch
+
+Added optional currency parsing and currency-aware CSV output, defaulting omitted currency to USD and reporting malformed currency with a line number and exit 2. Updated README and tests. Final checks passed: cargo fmt --check, cargo test, cargo clippy --all-targets -- -D warnings, and git diff --check. Commit 2d855dbda9f53492b0f89e7e9b8af025278447e3; tree 744ea9a82655b841f76c4b6fd1596cae5cc0d562.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 2d855dbda9f53492b0f89e7e9b8af025278447e3 on the run branch

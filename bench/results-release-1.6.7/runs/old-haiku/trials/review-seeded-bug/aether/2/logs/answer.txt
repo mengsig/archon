@@ -1,0 +1,53 @@
+Reviewed src/tokens.js (sign/verify HMAC-SHA256); no code changed. Findings: (1) CRITICAL: verify() line 27 uses expected.startsWith(signature), so an empty signature ('<body>.') is accepted with no secret — verified: forged {user:'root'} token verifies. Also prefix-match and non-constant-time compare. (2) HIGH: verify() does not validate the secret; secret '' accepts HMAC('') forgeries — verified. (3) MEDIUM: verify() throws SyntaxError/TypeError on untrusted input (e.g. 'bm90LWpzb24.') instead of returning null. (4) LOW: sign() with ttlSeconds NaN/0 yields tokens that never verify, silently. (5) LOW: extra dot segments accepted (split ignores rest). (6) NIT: weak secret length-only check. Test suite passes 4/4 but has no empty/truncated-signature or empty-secret tests. Recommend not shipping until (1) and (2) are fixed with regression tests.
+
+The review of `src/tokens.js` is done, and I made no changes to the repo. The existing suite passes 4/4, but it does not cover the main bug. **Don't ship this as is.** The first two findings need fixing, with regression tests, before release.
+
+## Findings (most severe first)
+
+**1. Critical: `verify()` accepts an empty signature, so anyone can forge a token without the secret**
+- **File/function:** `src/tokens.js`, `verify()`, line 27 (`expected.startsWith(signature)`).
+- **Cause:** `startsWith` is a prefix match, and an empty string is a prefix of everything. The `signature === undefined` guard on line 25 does not catch `""`, so any token of the form `<body>.` passes the MAC check.
+- **Verified input:**
+  ```js
+  const body = Buffer.from(JSON.stringify({ user: 'root', exp: 9e15 })).toString('base64url');
+  verify(body + '.', SECRET); // → { user: 'root', exp: 9000000000000000 }
+  ```
+  This is a complete authentication bypass.
+- **Related:** any leading prefix of the real MAC is also accepted, and the comparison is not constant-time, which gives a timing oracle. The fix is an exact-length check followed by `crypto.timingSafeEqual`.
+- **Test gap:** the "tampered payloads" test reuses the valid signature with a changed payload. It never tries an empty or truncated signature, which is why it passes.
+
+**2. High: `verify()` does not validate the secret, so an empty secret accepts attacker-signed tokens**
+- **File/function:** `src/tokens.js`, `verify()`, line 26 (`mac(body, secret)`).
+- **Cause:** `sign()` rejects secrets shorter than 32 characters (line 15), but `verify()` has no such check. If a deployment has `SESSION_SECRET=''`, `createHmac` accepts an empty key, and anyone can compute `HMAC-SHA256('', body)`.
+- **Verified:** `verify(<body>.<HMAC with key ''>, '')` returns the forged payload.
+- **Fix:** apply the same secret validation on both sides, through one shared helper.
+
+**3. Medium: `verify()` throws on untrusted input instead of returning `null`**
+- **File/function:** `src/tokens.js`, `verify()`, line 28 (`JSON.parse`) and line 29 (`payload.exp`).
+- **Cause:** the contract is "the payload, or null otherwise." With the bypass from finding 1, `verify('bm90LWpzb24.', SECRET)` throws `SyntaxError`. A body that decodes to JSON `null` throws a `TypeError` at `payload.exp`. An unwrapped caller would turn attacker input into a 500 or a crash. Once finding 1 is fixed, this only happens for bodies with a valid MAC, but it should still return `null`.
+- **Fix:** wrap the parse, check that the payload is a non-null object, and return `null` on failure.
+
+**4. Low: `sign()` silently issues tokens that can never verify when `ttlSeconds` is invalid**
+- **File/function:** `src/tokens.js`, `sign()`, line 16 (`exp: now + ttlSeconds * 1000`).
+- **Cause:** `ttlSeconds: NaN` gives `exp: NaN`, which `JSON.stringify` turns into `null`, so `verify` rejects the token with no error. `0` or a negative value produces tokens that are already expired.
+- **Fix:** validate `ttlSeconds` as a positive finite number.
+
+**5. Low: `verify()` accepts extra dot-separated segments**
+- **File/function:** `src/tokens.js`, `verify()`, line 24 (`token.split('.')`).
+- **Cause:** `body.sig.junk` is accepted if `body.sig` verifies, because the destructuring ignores the rest. This is not a forgery, but it makes tokens non-canonical. Requiring exactly two parts is cheap.
+
+**6. Nit: the `sign()` secret check is length-only**
+- **File/function:** `src/tokens.js`, `sign()`, line 15.
+- **Cause:** `'a'.repeat(32)` passes, so entropy is not checked. It also does not reject non-strings consistently.
+
+## What is correct
+- The algorithm is pinned and there is no header, so there is no `alg: none` or algorithm-confusion path.
+- `sign()` spreads the caller's claims before setting `iat` and `exp`, so callers cannot override the expiry.
+- The MAC covers the exact encoded body, so the payload cannot be changed without invalidating the MAC. Finding 1 still defeats this in practice.
+
+## Design notes (not bugs)
+- There is no revocation: logout does not invalidate a token before `exp`.
+- There is no `kid`, so there is no key rotation path.
+
+## Recommendation
+Fix findings 1 and 2 before release, and add regression tests for an empty, truncated, or extra-segment signature and for `verify` with an empty secret. Then fix finding 3. Findings 4 to 6 can follow.

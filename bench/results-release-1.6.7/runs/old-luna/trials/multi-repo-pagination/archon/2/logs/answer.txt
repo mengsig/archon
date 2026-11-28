@@ -1,0 +1,29 @@
+The coordinated initiative is queued with one direct item per repository; both items share the agreed API/client contract and include their requested tests, README updates, and commits. I’ll track the completion reports.
+
+Done: Follow cursor pages in inventory-client. Implemented cursor pagination in inventory-client: listItems requests the first page without a cursor, appends page items in returned order, forwards each non-null next_cursor unchanged, and stops when next_cursor is null or absent. Updated README and added tests. npm test passed (5/5); committed as 5a441c081197c86c42befa8d2521e83ede718325. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 5a441c081197c86c42befa8d2521e83ede718325 on the run branch
+Branch `archon/wzr2w40x-follow-cursor-pages-in-inventory-client` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f50640738c1f6fe33f211598/inventory-client holds it (3 files changed, 40 insertions(+), 3 deletions(-)). Review: `archon diff qi_01M8GNFTY3JNKWSP1XWZR2W40X`; land it in `main`: `archon merge qi_01M8GNFTY3JNKWSP1XWZR2W40X`.
+
+Done: Implement cursor pagination in inventory-api. Implemented GET /items cursor pagination with limit validation, opaque continuation cursors, ordered pages, and updated README documentation. Added pagination and invalid-input coverage; python3 -m unittest passes (6 tests). Committed as c8882859c11bb72c3540b816cf108db3094bac00; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c8882859c11bb72c3540b816cf108db3094bac00 on the run branch
+Branch `archon/c9dy82bq-implement-cursor-pagination-in-inventory` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/f50640738c1f6fe33f211598/inventory-api holds it (3 files changed, 75 insertions(+), 4 deletions(-)). Review: `archon diff qi_01M8GNFTWN9CYDPH4FC9DY82BQ`; land it in `main`: `archon merge qi_01M8GNFTWN9CYDPH4FC9DY82BQ`.
+
+Initiative finished; coordinated result queued.
+
+Implemented cursor pagination in inventory-client: listItems requests the first page without a cursor, appends page items in returned order, forwards each non-null next_cursor unchanged, and stops when next_cursor is null or absent. Updated README and added tests. npm test passed (5/5); committed as 5a441c081197c86c42befa8d2521e83ede718325. Nothing remains open.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 5a441c081197c86c42befa8d2521e83ede718325 on the run branch
+
+Implemented GET /items cursor pagination with limit validation, opaque continuation cursors, ordered pages, and updated README documentation. Added pagination and invalid-input coverage; python3 -m unittest passes (6 tests). Committed as c8882859c11bb72c3540b816cf108db3094bac00; no known gaps.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit c8882859c11bb72c3540b816cf108db3094bac00 on the run branch

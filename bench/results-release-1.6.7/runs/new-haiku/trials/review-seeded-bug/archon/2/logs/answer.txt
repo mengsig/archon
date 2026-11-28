@@ -1,0 +1,3 @@
+Cancelled agent agt_01M8GQ1RJFV5WFMP2GHP842YX8: model policy: effort x_high exceeds the configured maximum high; raise [models] max_effort to allow it. A helper follows the policy of each repository whose mirror its workspace holds, here the mirror of `review-seeded-bug`; `workspace_root` of one mirror, or of `scratch`, narrows that
+
+The first review attempt was cancelled because I asked for `xhigh` effort, which is above this installation's `high` maximum. I did not change the policy. I've restarted the review of `src/tokens.js` at `high` effort on Haiku 5.5, read-only in the `review-seeded-bug` mirror (the repo whose package is `session-lib`). I'm waiting for its findings.

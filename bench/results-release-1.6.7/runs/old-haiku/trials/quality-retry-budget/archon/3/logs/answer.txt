@@ -1,0 +1,18 @@
+I queued the work as item `qi_01M8GTG3NX1PM39NCB4YBFVT81` on `quality-retry-budget`. It uses the `direct` pipeline with one standard-level reviewer, and it ships locally, not as a PR.
+
+The brief gives the agent the full spec and acceptance criteria: every numbered rule, ValueError for invalid types and bounds (including validation that runs before the budget and attempt early returns), the boundary tests listed in the request, the stdlib-only constraint, and a commit with no attribution lines. It also asks for the exact test output, so a failing test will show up in the result.
+
+I haven't written or run any code myself, since this orchestrator doesn't change repositories. I'll report back when the item finishes, or sooner if it fails or is blocked.
+
+Done: Implement retry_budget.retry_delay per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed efdf9e3 (tree 779d8d2) on archon/4ybfvt81-implement-retry-budget-retry-delay-per-s, not pushed. Before: the 3 original tests errored with NotImplementedError. After: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v` runs 29 tests, all OK. Validation runs before the None-returns; backoff saturates without a large power of two. An independent reviewer passed head efdf9e3 with no blocking findings. Non-blocking follow-ups, left unchanged: drop the tautological assert after the Retry-After floor; add a test at the exact shift-skip transition; simplify the call_with helper; the input-unchanged test is weak since ints are immutable. Still running: reviewer process pid 168182 from completed child agt_01M8GTHNT4HXMSVSDYT13QNKDE, which the runtime stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GTHNT4HXMSVSDYT13QNKDE)
+
+SHIPPED: commit efdf9e3e4487a6e4933cba4a842c87a27673c2cf on the run branch
+Branch `archon/4ybfvt81-implement-retry-budget-retry-delay-per-s` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/a97947399ef21cc3ed269c9b/quality-retry-budget holds it (2 files changed, 170 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GTG3NX1PM39NCB4YBFVT81`; land it in `main`: `archon merge qi_01M8GTG3NX1PM39NCB4YBFVT81`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py. Committed efdf9e3 (tree 779d8d2) on archon/4ybfvt81-implement-retry-budget-retry-delay-per-s, not pushed. Before: the 3 original tests errored with NotImplementedError. After: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v` runs 29 tests, all OK. Validation runs before the None-returns; backoff saturates without a large power of two. An independent reviewer passed head efdf9e3 with no blocking findings. Non-blocking follow-ups, left unchanged: drop the tautological assert after the Retry-After floor; add a test at the exact shift-skip transition; simplify the call_with helper; the input-unchanged test is weak since ints are immutable. Still running: reviewer process pid 168182 from completed child agt_01M8GTHNT4HXMSVSDYT13QNKDE, which the runtime stops when this run ends.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GTHNT4HXMSVSDYT13QNKDE)
+
+SHIPPED: commit efdf9e3e4487a6e4933cba4a842c87a27673c2cf on the run branch

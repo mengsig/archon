@@ -1,0 +1,20 @@
+### Finding
+
+**High severity — unauthenticated token forgery**  
+**File/function:** [src/tokens.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/d2577cc48815ba6f21759822/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:22), `verify`
+
+`expected.startsWith(signature)` accepts any prefix of the HMAC, including an empty signature. For example:
+
+```js
+const forged = `${Buffer.from(JSON.stringify({
+  user: 'admin', iat: 0, exp: 9e15
+})).toString('base64url')}.`;
+
+verify(forged, secret);
+```
+
+The empty signature passes, so `verify` returns attacker-chosen, unexpired claims. If downstream code trusts those claims for identity or authorization, this allows authentication bypass. Some malformed payloads can also reach `JSON.parse` and throw instead of returning `null`.
+
+Require a full-length signature match and use a constant-time comparison; handle malformed payloads so verification returns `null`.
+
+No files were changed, and I did not run tests.

@@ -1,0 +1,9 @@
+## Findings
+
+1. **High — `verify`, [src/tokens.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0b9305f83c6a8d1d44ae4e9c/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:27): accepts forged tokens.** `expected.startsWith(signature)` accepts any prefix of the correct MAC, including an empty signature. For example, an attacker can supply `<base64url({"user":"admin","exp":9999999999999})>.`; the empty signature passes, so `verify` returns attacker-chosen claims. Require an exact, correctly sized signature comparison.
+
+2. **Medium — `verify`, [src/tokens.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0b9305f83c6a8d1d44ae4e9c/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:28): malformed tokens can throw.** Because the empty signature passes the check, `verify('!.', secret)` reaches `JSON.parse` with an empty string and throws `SyntaxError` instead of returning `null`. If callers don’t catch it, an invalid token can disrupt request handling. Reject malformed signatures before parsing and handle decode/parse errors.
+
+3. **Conditional — `verify`, [src/tokens.js](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/0b9305f83c6a8d1d44ae4e9c/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:26): does not enforce the signer’s minimum secret length.** `sign` rejects secrets under 32 characters, but `verify` accepts an empty string as an HMAC key. If production verification is configured with an empty secret, an attacker who knows that configuration can create valid tokens. Apply the same secret validation in `verify`.
+
+No code was changed and I did not run tests.

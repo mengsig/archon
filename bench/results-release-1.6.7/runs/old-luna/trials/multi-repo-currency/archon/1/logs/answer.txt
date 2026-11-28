@@ -1,0 +1,33 @@
+Queued atomic initiative **“Add currency-aware ledger exports and account reports”** with parallel work in both repositories. Each item includes implementation, README updates, the requested full test command, and a commit.
+
+The initiative is local-ship and atomic; both items must succeed together. No repository changes have been made yet.
+
+Done: Add currency-aware per-account totals to reports. Added per-account, per-currency totals with strict three-letter uppercase ASCII currency validation; legacy CSV defaults to USD. README and tests updated. `python3 -m unittest` passed (3 tests), and independent review passed with no findings. Commit 510b145; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHBD4NY892GT7ZQMZH0A4B)
+
+SHIPPED: commit 510b1456fc300d7dcd268dd4dc5f69f563696e20 on the run branch
+Branch `archon/ykgtmsj6-add-currency-aware-per-account-totals-to` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/5991e59fb4bd535e720d22f1/reports holds it (3 files changed, 49 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M8GH9FXA2BC29CQAYKGTMSJ6`; land it in `main`: `archon merge qi_01M8GH9FXA2BC29CQAYKGTMSJ6`.
+
+Done: Add currency column and validation to ledger TSV export. Added optional currency parsing and four-column CSV export, with USD defaults, strict uppercase three-letter validation, line-numbered currency errors at exit 2, and other input errors at exit 1. Updated README and tests; cargo fmt check and cargo test passed (4 integration tests), plus CLI probes and diff check. Committed as 62dcd828d2b9e57ed5dbf0ece0ddcc168c1a6ac8. Independent review passed; one nonblocking follow-up is direct CLI stdout assertion. Nothing remains open for implementation.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHEPJ8B6N2NZE7PW0HYCY9)
+
+SHIPPED: commit 62dcd828d2b9e57ed5dbf0ece0ddcc168c1a6ac8 on the run branch
+Branch `archon/k8814qja-add-currency-column-and-validation-to-le` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/5991e59fb4bd535e720d22f1/ledger holds it (4 files changed, 129 insertions(+), 21 deletions(-)). Review: `archon diff qi_01M8GH9FWKAGAFS41NK8814QJA`; land it in `main`: `archon merge qi_01M8GH9FWKAGAFS41NK8814QJA`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GH9FWKAGAFS41NK8814QJA ended and its cargo target directory went.
+
+Added per-account, per-currency totals with strict three-letter uppercase ASCII currency validation; legacy CSV defaults to USD. README and tests updated. `python3 -m unittest` passed (3 tests), and independent review passed with no findings. Commit 510b145; no open issues.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHBD4NY892GT7ZQMZH0A4B)
+
+SHIPPED: commit 510b1456fc300d7dcd268dd4dc5f69f563696e20 on the run branch
+
+Added optional currency parsing and four-column CSV export, with USD defaults, strict uppercase three-letter validation, line-numbered currency errors at exit 2, and other input errors at exit 1. Updated README and tests; cargo fmt check and cargo test passed (4 integration tests), plus CLI probes and diff check. Committed as 62dcd828d2b9e57ed5dbf0ece0ddcc168c1a6ac8. Independent review passed; one nonblocking follow-up is direct CLI stdout assertion. Nothing remains open for implementation.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GHEPJ8B6N2NZE7PW0HYCY9)
+
+SHIPPED: commit 62dcd828d2b9e57ed5dbf0ece0ddcc168c1a6ac8 on the run branch

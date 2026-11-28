@@ -1,0 +1,21 @@
+I queued the work as item `qi_01M8GPA8X3YFMYJ38FRW7YJ6NZ` on the `quality-retry-budget` repo, rather than editing it myself. It is in the queue now and will report back when it finishes.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. Its model is balanced tier at medium effort, which suits a small, fully specified pure function.
+- **Review:** `standard`, because the validation and boundary logic is easy to get subtly wrong. Merge is `manual`, so nothing merges without your go-ahead.
+- **Scope:** the brief carries your request and the full SPEC.md requirements. It asks for validation of every argument before any early return, `bool`/`float` rejection, saturating backoff for huge attempt values, the `retry_after` floor that ignores `cap_ms`, and the budget boundary `elapsed + delay >= budget` returning `None`. It also asks for focused stdlib tests and a run of `python -m unittest`.
+- **Commit:** the brief asks for a local commit under the repo's existing git identity, with no attribution lines. That follows your CLAUDE.md, which takes precedence over the default co-author trailer. It also says not to push and not to touch SPEC.md.
+
+I have not verified the implementation yet. I'll report the test results and the review verdict when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and added 35 focused unittest cases to test_retry_budget.py. The 3 existing tests are kept. Commit 01b4793 (tree 24451f20b29d647a0883a66f192469b74249fe34) is on archon/rw7yj6nz-implement-retry-budget-py-per-spec-md-wi, not pushed. python -m unittest: 38 tests OK. Read-only review at head 01b4793: pass, no findings. Risk low. Open items: no linter is installed here, so none was run, and the before-state tests were not run against the stub. Nothing was left running by me; the reviewer's claude child process (pid 3989474) will stop when this agent ends, or stop it with kill 3989474.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GPBZYYTHAV143KJW8AC6S2)
+
+SHIPPED: commit 01b47935696b03f8544ac202f181cf44c5300b5d on the run branch
+Branch `archon/rw7yj6nz-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-936q30rs/archon-bench/work/20261128T072014Z/d13b1e490b184d742bbbfcf7/quality-retry-budget holds it (2 files changed, 209 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GPA8X3YFMYJ38FRW7YJ6NZ`; land it in `main`: `archon merge qi_01M8GPA8X3YFMYJ38FRW7YJ6NZ`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and added 35 focused unittest cases to test_retry_budget.py. The 3 existing tests are kept. Commit 01b4793 (tree 24451f20b29d647a0883a66f192469b74249fe34) is on archon/rw7yj6nz-implement-retry-budget-py-per-spec-md-wi, not pushed. python -m unittest: 38 tests OK. Read-only review at head 01b4793: pass, no findings. Risk low. Open items: no linter is installed here, so none was run, and the before-state tests were not run against the stub. Nothing was left running by me; the reviewer's claude child process (pid 3989474) will stop when this agent ends, or stop it with kill 3989474.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GPBZYYTHAV143KJW8AC6S2)
+
+SHIPPED: commit 01b47935696b03f8544ac202f181cf44c5300b5d on the run branch

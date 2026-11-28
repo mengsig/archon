@@ -43,6 +43,7 @@ pub mod model_tier;
 pub mod notify;
 pub mod operator_commands;
 pub mod ops;
+pub mod opt_in;
 pub mod outcome;
 pub mod paths;
 pub mod plan_origin;

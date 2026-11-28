@@ -1,0 +1,31 @@
+Queued atomic initiative **ini_01M8GMYBMCSVXRAECXDDM2XPHT** with one direct-pipeline item per repository. Both items include the currency behavior, backward compatibility where required, README updates, the requested test command, and a commit in that repository. The initiative keeps both changes as drafts until both members pass.
+
+Done: Group report totals by account and currency. Updated the CSV report to group and sort totals by account and currency, with legacy rows defaulting to USD and malformed supplied codes rejected with status 2. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 3a07ca3688c081da1383bcef6f9a83968ae9345d; independent review passed with no findings. Nothing left open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN18W0F57RD7NWRBPRD177)
+
+SHIPPED: commit 3a07ca3688c081da1383bcef6f9a83968ae9345d on the run branch
+Branch `archon/63ng0844-group-report-totals-by-account-and-curre` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8610dc86306621c3b75d0e9d/reports holds it (3 files changed, 44 insertions(+), 15 deletions(-)). Review: `archon diff qi_01M8GMYBMJ0VT33JP663NG0844`; land it in `main`: `archon merge qi_01M8GMYBMJ0VT33JP663NG0844`.
+
+Done: Export transaction currency in ledger CSV. Added optional transaction currency to ledger TSV exports, defaulting to USD and rejecting non-[A-Z]{3} values with a line-numbered status-2 error. Updated README and tests; cargo test, formatting, and diff checks pass. Committed as 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN2NC28H1HXC5KCGN0WNYJ), codex/gpt-6-luna (agent agt_01M8GN5A01Y16CP2ZBEYBGXWYJ), codex/gpt-6-luna (agent agt_01M8GN9EF84E59XJPN86J2JTAN)
+
+SHIPPED: commit 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5 on the run branch
+Branch `archon/32pk8ab4-export-transaction-currency-in-ledger-cs` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/8610dc86306621c3b75d0e9d/ledger holds it (4 files changed, 100 insertions(+), 17 deletions(-)). Review: `archon diff qi_01M8GMYBMDTH8J8N5R32PK8AB4`; land it in `main`: `archon merge qi_01M8GMYBMDTH8J8N5R32PK8AB4`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GMYBMDTH8J8N5R32PK8AB4 ended and its cargo target directory went.
+
+Updated the CSV report to group and sort totals by account and currency, with legacy rows defaulting to USD and malformed supplied codes rejected with status 2. Updated README and tests. `python3 -m unittest` passed (3 tests); `git diff --check` passed. Committed as 3a07ca3688c081da1383bcef6f9a83968ae9345d; independent review passed with no findings. Nothing left open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN18W0F57RD7NWRBPRD177)
+
+SHIPPED: commit 3a07ca3688c081da1383bcef6f9a83968ae9345d on the run branch
+
+Added optional transaction currency to ledger TSV exports, defaulting to USD and rejecting non-[A-Z]{3} values with a line-numbered status-2 error. Updated README and tests; cargo test, formatting, and diff checks pass. Committed as 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GN2NC28H1HXC5KCGN0WNYJ), codex/gpt-6-luna (agent agt_01M8GN5A01Y16CP2ZBEYBGXWYJ), codex/gpt-6-luna (agent agt_01M8GN9EF84E59XJPN86J2JTAN)
+
+SHIPPED: commit 0146479ba7962fe52ba3abb2a4a7ed108b6a41a5 on the run branch

@@ -1,0 +1,9 @@
+Implemented and committed both repositories.
+
+- `ledger`: accepts an optional currency code (defaults to `USD`), exports the new CSV column, and exits with status 2 for invalid codes.
+- `reports`: totals by account and currency, supports legacy CSV as `USD`, and exits with status 2 for invalid codes.
+- Updated both READMEs and added coverage for the new behavior.
+
+Verification passed: `cargo test`, `python3 -m unittest`, and a direct check that invalid ledger currency reports the line number and exits 2. Both working trees are clean.
+
+Commits: `ledger` `c6f0dd9`; `reports` `acec0a5`.

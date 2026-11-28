@@ -20,6 +20,7 @@ mod design_assets;
 mod design_gate;
 mod design_iterations;
 mod design_pictures;
+mod design_recipe;
 mod design_session;
 mod design_undo;
 mod device_authority;

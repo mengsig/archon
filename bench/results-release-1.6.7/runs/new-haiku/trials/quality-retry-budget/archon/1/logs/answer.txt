@@ -1,0 +1,21 @@
+I've queued the work as item `qi_01M8GJ6ANG3HGMGP053GBJSTXT` in the `quality-retry-budget` repository. I didn't edit or test the code myself.
+
+- **Pipeline:** `direct`, one agent that implements, checks and commits. The repo ships locally, so the commit stays on a local branch and nothing is pushed.
+- **Review:** `standard`. The spec is a single pure function with tricky boundary rules, so one review pass is worth it.
+- **Brief:** it includes your request and the full spec, with acceptance criteria covering validation order, bool/float rejection, the attempt and budget boundaries, large `attempt` values, the Retry-After floor and the no-mutation rule.
+- **Commit:** the agent is told to use the repo's configured git identity and to add no attribution lines. Your CLAUDE.md rule takes precedence over the Co-Authored-By line in the session reminder, so I left that line out.
+
+I'll report the outcome when the item finishes.
+
+Done: Implement retry_budget.py per SPEC.md with focused tests. Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py; the 3 existing tests are kept and 33 new ones added (36 total), all passing with python3 -m unittest. Committed ffd3b0f on archon/3gbjstxt-implement-retry-budget-py-per-spec-md-wi under the repo's configured identity, nothing pushed, no other files touched. Interpretation choices: wrong-type and bool/float arguments raise ValueError (per spec), and int subclasses such as IntEnum are rejected as not built-in int. An independent read-only reviewer passed ffd3b0f with no findings. Nothing is left running (the reviewer's leftover process had already exited). Open: none for the spec.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJ855AZ04R138W359DXC48)
+
+SHIPPED: commit ffd3b0f4a3226d8aed3bf112fae203dd36ef53e5 on the run branch
+Branch `archon/3gbjstxt-implement-retry-budget-py-per-spec-md-wi` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-97kgf4a4/archon-bench/work/20261128T072018Z/73dca42603b3630980f9d2db/quality-retry-budget holds it (2 files changed, 203 insertions(+), 1 deletion(-)). Review: `archon diff qi_01M8GJ6ANG3HGMGP053GBJSTXT`; land it in `main`: `archon merge qi_01M8GJ6ANG3HGMGP053GBJSTXT`.
+
+Implemented retry_delay in retry_budget.py per SPEC.md and extended test_retry_budget.py; the 3 existing tests are kept and 33 new ones added (36 total), all passing with python3 -m unittest. Committed ffd3b0f on archon/3gbjstxt-implement-retry-budget-py-per-spec-md-wi under the repo's configured identity, nothing pushed, no other files touched. Interpretation choices: wrong-type and bool/float arguments raise ValueError (per spec), and int subclasses such as IntEnum are rejected as not built-in int. An independent read-only reviewer passed ffd3b0f with no findings. Nothing is left running (the reviewer's leftover process had already exited). Open: none for the spec.
+
+REVIEW: pass, by claude-code/claude-haiku-5-5 (agent agt_01M8GJ855AZ04R138W359DXC48)
+
+SHIPPED: commit ffd3b0f4a3226d8aed3bf112fae203dd36ef53e5 on the run branch

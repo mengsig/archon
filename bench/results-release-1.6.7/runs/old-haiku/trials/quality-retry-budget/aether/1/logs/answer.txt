@@ -1,0 +1,14 @@
+`retry_budget.py` is implemented per SPEC.md and committed as `ec3978c` on `main`. All 28 tests pass (`python3 -m unittest`), and the working tree is clean.
+
+**What changed**
+- **`retry_budget.py`**: `retry_delay` validates every argument first, then applies the attempt limit, the backoff, the Retry-After floor, and the budget check, in that order.
+  - The backoff saturates at the cap without building a large power of two. Huge attempt values return the cap directly.
+  - Retry-After is a floor and is not capped by `cap_ms`.
+  - A retry is refused whenever `elapsed_ms + delay >= budget_ms`, and the delay is never shortened to fit.
+- **`test_retry_budget.py`**: the original three tests are kept. I added focused tests for validation (bool, float, int subclass, out-of-range, validation before early returns), the attempt limit, backoff saturation and huge values, the Retry-After floor, and exact budget boundaries.
+- I also cross-checked the saturating backoff against the naive `min(cap, base * 2**(attempt-1))` over a grid of about 100k inputs, with zero mismatches.
+
+**Choices I made**
+- **"Built-in int"** is enforced as `type(value) is int`. This rejects bool, float, and int subclasses.
+- **Type errors raise `ValueError`**, not `TypeError`, because the spec says invalid values raise `ValueError`.
+- **No Co-Authored-By trailer** on the commit. The CLAUDE.md rule against Claude attribution takes precedence over the system reminder that asked for one, so I left it off.

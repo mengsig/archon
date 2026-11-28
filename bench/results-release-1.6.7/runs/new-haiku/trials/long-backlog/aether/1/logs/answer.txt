@@ -1,0 +1,18 @@
+All four tickets (TT-101 to TT-104) are implemented, each in its own commit, and the suite passes: 46 tests, up from 4, standard library only. The working tree is clean.
+
+Commits, oldest first:
+- `08153c1` TT-101: `parse_due` raises `InvalidDate` (a `ValueError` subclass, message includes the original text) for impossible dates, malformed input, and unsigned or negative offsets. `+0d` is today.
+- `8e88e64` TT-102: `to_csv` emits RFC 4180 output. Fields containing `, " CR LF` are quoted, quotes are doubled, and every line ends in CRLF.
+- `7abf812` TT-103: `search` supports quoted phrases, `tag:NAME`, `status:open|done`, and AND across terms. Bad input raises `QueryError`.
+- `1a7c2f6` TT-104: `TaskStore.undo()` walks back LIFO over add, complete and delete. It raises `NothingToUndo` when empty, and failed operations are not recorded.
+
+New test files are `tests/test_dates.py`, `test_export.py`, `test_search.py` and `test_undo.py`. The original `test_basic.py` is unchanged.
+
+Choices I made where the ticket was silent:
+- **Undo of a double complete:** `complete` on an already-done task is recorded, and undo restores the previous status (done). The ticket's literal wording would make it open. Say if you want the literal behaviour.
+- **Undo of delete:** the store keeps a copy taken at delete time, so later changes to the object returned by `delete()` don't leak into the restored task. Undo records refer to tasks by id, so a task restored by undo is the one later undos act on.
+- **Search quoting:** quotes can appear anywhere in a term, so `tag:"work,urgent"` works. A colon inside quotes is plain text, so `"write: report"` is a phrase. A bare `10:30` raises `QueryError` as an unknown field; quote it to search for it.
+- **Search edge cases:** field names and status values are case-insensitive. `tag:` with no value, and `status:` with no value, raise `QueryError`. An empty phrase `""` matches every task.
+- **Date parsing:** I changed `\d` to `[0-9]` in the date regexes, so non-ASCII digits are rejected. Out-of-range offsets like `+99999999999d` raise `InvalidDate`, not `OverflowError`.
+
+I did not add the Co-Authored-By line from the attribution reminder. Your CLAUDE.md says not to put Claude attribution in commits, and that takes precedence. Commits are authored as `mengsig`, using the repo's existing git config.

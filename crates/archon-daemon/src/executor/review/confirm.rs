@@ -189,7 +189,9 @@ impl Confirmation {
                 "The review reached the cap with fixes committed. Have exactly one reviewer read ",
                 "the fixes from base `{}` at head `{}`. Confirm each ID below as resolved in ",
                 "`resolved_findings` or still open by including its `id` in `findings`. Review the ",
-                "fix delta for regressions. Any real blocker you find anywhere fails. ",
+                "fix delta for regressions. The reviewer fails only on a defect in the commits ",
+                "it reads, or an open finding left unfixed: a new finding in code a pass already ",
+                "read is `\"blocking\": false`. ",
                 "Use the usual structured verdict and record the reviewer's result.\n\n{}",
             ),
             self.base, self.head, findings

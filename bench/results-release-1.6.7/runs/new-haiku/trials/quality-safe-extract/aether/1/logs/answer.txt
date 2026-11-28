@@ -1,0 +1,17 @@
+Implemented safe_extract.extract per SPEC.md and committed as 92fad18 on main. Working tree is clean; nothing is uncommitted. The suite (python3 -m unittest test_safe_extract) passes 34/34, including the two original tests, which are unchanged. The implementation validates the whole batch and the root before any directory or file is created. It checks batch type, entry shape, name syntax, in-batch duplicates and file/directory collisions, and filesystem conflicts (symlinks, dangling links, non-directory ancestors, existing targets). Files are written with exclusive create, so nothing is overwritten or followed through a link. Unexpected I/O errors propagate. Decisions the spec left open: entries must be 2-tuples, data must be bytes (not bytearray), root must be str or Path (empty string rejected), only the root component itself is checked for symlinks, and names that cannot be filesystem-encoded are rejected before any write. Not covered: case-insensitive collisions such as 'a' vs 'A'. No Co-Authored-By trailer was added, because CLAUDE.md forbids attributing commits to Claude.
+
+The work was already committed before the deadline reminder, so nothing was left uncommitted. The working tree is clean and the task is marked complete.
+
+The commit is `92fad18` on `main`, containing `safe_extract.py` and the extended `test_safe_extract.py`. All 34 tests pass, including the two original tests, which are unchanged.
+
+The implementation validates the whole batch and the root before creating anything. It writes files with exclusive create, so nothing is overwritten or followed through a link. Unexpected I/O errors propagate.
+
+Decisions the spec left open, so you can redirect them:
+- Entries must be 2-tuples, and data must be `bytes` (not `bytearray`).
+- Root must be `str` or `Path`; an empty string is rejected.
+- Only the root component itself is checked for being a symlink. Symlinks above the root are allowed.
+- Names that can't be encoded for the filesystem are rejected before any write.
+
+Not covered: on case-insensitive filesystems, `'a'` and `'A'` in one batch are not detected as a collision. The exclusive create will then raise `FileExistsError` mid-batch.
+
+I left out the `Co-Authored-By` trailer because CLAUDE.md forbids attributing commits to Claude Code.

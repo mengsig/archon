@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":26,"client_name":"archon",
- "client_version":"1.6.6","features":["history_expired"]}
+ "client_version":"1.6.7","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -174,6 +174,7 @@ Aether restarted, which triggers reconciliation (§16).
 | Operator → orchestrator | `send_message {to, content, idempotency_key}` | Key = feed item id. |
 | Team roster | `send_message {to, content, idempotency_key}` | Key = `roster:<stage run>:v<version>`; §13.1. |
 | Wake orchestrator with Archon news | `trigger {agent, source:"archon", payload, idempotency_key}` | Payload schema in §5.4. |
+| Review note to a stage lead | `trigger {agent, source:"archon", payload:{note}, idempotency_key}` | §8.7. A trigger, not `send_message`, so Aether never labels Archon's note an operator instruction. |
 | Answer an `ask_user` | `reply_to_question {to, question_seq, content}` | Used when the question came from Aether's `ask_user`. |
 | Read results | `get_task {id}` | `TaskStatus::{Completed{result:{summary,artifacts,structured}}, Failed{error,structured}, Cancelled{reason}}`. |
 | Inspect agents | `get_agent {id}`, `list_agents {query}` | Supervisor and reconciliation. |
@@ -521,7 +522,7 @@ at-least-once, so every handler is idempotent.
 | Subscription | Query | Handles |
 | --- | --- | --- |
 | `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","custom","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed","compaction.native"]}` | Waking conversation reads (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
-| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
+| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. A child's `agent.completed` also counts its lead's review (§8.2, review notes). An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 When Aether records `turn_ended_after_tool_error` for the current orchestrator,
 Archon sends one keyed trigger with the failed tool and error. A second
@@ -2322,6 +2323,16 @@ choice is refused rather than sent below the floor or to a provider weighted 0;
 a stage default then falls back as it does for any unresolved tier. Exact pins and named
 providers are never rerouted.
 
+**Opt-in providers.** `archon_core::opt_in` marks `antigravity` opt-in: its
+models are tier candidates (`ModelCatalog::tier_candidates`), learned-routing
+evidence, worker, reviewer, judge and distillation picks only when `[models]
+allow` names the model (a named provider alone is not enough, since internal
+callers name providers); a secondary route (agy's Claude or GPT models) also
+when the vendor's own provider lists no tiered model. Aether leaves them
+untiered, so `ModelCatalog::new` places them (`opt_in::placed_tier`). An
+unnamed opt-in provider weighs at most 1, and resolution without a preferred
+provider tries it last.
+
 **Quota headroom.** With weights set, the daemon reads `headroom` from Aether's
 `providers` reply at most every 30 seconds (`quota::QuotaCache`; trusted for 10
 minutes) and scores each provider weight × headroom (`archon_core::quota`). A
@@ -2754,10 +2765,33 @@ cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
 escalated lead. Archon does not edit the brief for it: the orchestrator's
 `brief_append` on the non-fresh `retry_item` gives the new lead the head, the
-open findings and the delta review. In each re-review the lead includes the
+open findings and the delta review. When a review leaves a blocking finding
+open, archond sends the lead the open blocking findings and their IDs for the
+next review. The note lists only blocking findings, never follow-ups, and
+none is sent when no blocking finding is open, from this review or an earlier
+one: a pass that leaves an earlier blocker open is told again. A blocker
+counts as resolved as the gate counts it: a read on the branch resolved it,
+and every read on the branch still listing it is at a strict ancestor of
+that read's head, whatever order the reviewers came in. A fail continues an
+earlier ID only from a head that descends from that ID's origin; otherwise it
+keeps its own. Only the
+settle of a reviewer whose verdict was read sends one; another child
+settling, a helper or an unreadable reviewer, does not. A verdict is read
+only once Aether lists its reviewer completed, which it does seconds after
+the task's `task.completed`, so a child's `agent.completed` counts the
+review again and sends the note then, with that verdict in it. The note is keyed by the stage run, that reviewer and the list, so a
+later review leaving the same blockers open is told again. The note each
+settle owes, or none, is saved in the review tally (`findings_notes`) before
+it is sent, so a replay resends exactly that note under its key and Aether
+drops it, even when verdicts read since changed the list. Every review note goes as Archon's
+trigger, never `send_message`: Aether labels a message from Archon's socket
+an authenticated operator instruction, and the fleet pump would record it
+as the operator's words in that inbox. In each re-review the lead includes the
 open findings and their IDs. A reviewer returns the IDs of confirmed fixes in
-`resolved_findings` and uses `findings[].id` for a finding still open. Any
-real blocker the reviewer discovers fails, including outside the delta.
+`resolved_findings` and uses `findings[].id` for a finding still open. A
+delta reviewer fails only on a defect in the commits it reads, or an open
+finding left unfixed: a new finding in code a pass already read is
+`"blocking": false`.
 Archon assigns each new finding an ID from its reviewer agent and ordinal.
 The stage's `structured.review_rounds` records each review's verdict, model
 and finding count by round, and when each finding was discovered and resolved.
@@ -2767,13 +2801,15 @@ its first round resolved the preceding round's findings.
 A child of a live, owing lead delegated with role `reviewer` that
 completes with no verdict the gate reads (`executor/review/restate.rs`) is
 told to the lead at once: archond records the reviewer under
-`review_restate:<stage run>`, interrupts the lead's turn (a Luna lead calls
-`complete_task` seconds after its reviewer settles) and sends one note keyed
+`review_restate:<stage run>` and sends one note keyed
 `archon:restate:<stage run>:<reviewer>` with the reason and the result shape
-for a replacement reviewer. A replayed event resends only the keyed note; a
-stage attempt gets at most `MAX_NOTES` (two) and a resumed one, never
-interrupted (§6.7), none. The note reads nothing as a verdict: the gate
-judges the record unchanged. When
+for a replacement reviewer. The note reaches a running turn at its next model
+call. It does not interrupt the turn: on codex an interrupted turn could end
+with the note read and the lead parked for mail that never came, until the
+item's deadline. A lead that completes first meets the record precheck, which
+refuses the same reviewer. A replayed event resends only the keyed note; a
+stage attempt gets at most `MAX_NOTES` (two) and a resumed one (§6.7) none.
+The note reads nothing as a verdict: the gate judges the record unchanged. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 
@@ -6088,8 +6124,11 @@ proposal gate and `approve_intent` unchanged.
 owns the headless Chromium (a child with a cleared environment, a fresh profile
 and a debugging pipe), the CDP client, the session and note store and the frame
 relay. The agent gets no browser handle; it reports with the MCP tools
-`design_preview` and `design_note`, and reads its chains with
-`design_history`, accepted only from the live design stage's agent.
+`design_preview` and `design_note`, reads its chains with `design_history`
+and its repository's saved preview recipe with `design_recipe`, accepted only
+from the live design stage's agent. `design_preview` saves the recipe it
+carries in the `kv` table once the page and the recipe's readiness checks
+answer.
 
 **Commit check and Undo.** archond accepts a note's `done` only when HEAD is
 the reported commit, that commit has one parent and the parent is the note's

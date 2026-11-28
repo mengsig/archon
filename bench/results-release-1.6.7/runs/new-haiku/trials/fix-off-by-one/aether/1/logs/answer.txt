@@ -1,0 +1,13 @@
+`python3 -m unittest` now passes all 3 tests, and the fix is committed as `142ae62` on `main`.
+
+**The bug:** `sliding_windows` used `range(len(items) - size)`, which skips the last valid start index. For `[1, 2, 3]` with size 2 it returned only `[[1, 2]]` instead of `[[1, 2], [2, 3]]`.
+
+**The fix** in `window.py` is a one-line change to `range(len(items) - size + 1)`. When `size > len(items)` the range is empty, so the result is `[]`, the same as before.
+
+**Verification:**
+- The three unit tests pass, and the tests are unchanged.
+- I also compared the function against a reference implementation for every list length 0–11 and every size 1–13. All matched, including the empty-list and size-larger-than-list cases.
+
+**Decisions to review:**
+- **Commit attribution:** I left out the `Co-Authored-By: Claude` line from the attribution reminder. Your CLAUDE.md says not to put Claude attribution in commits, and it takes precedence. The commit uses the repo's configured git identity (`mengsig`), which I did not change.
+- **No new assertions:** I did not add assertions to `window.py`. The function is a single expression, and the existing `size <= 0` check already covers the invalid-input case.

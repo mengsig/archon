@@ -1,0 +1,338 @@
+diff --git a/src/billing.rs b/src/billing.rs
+index 7461335..ea08738 100644
+--- a/src/billing.rs
++++ b/src/billing.rs
+@@ -1,10 +1,14 @@
+ use crate::order::Order;
++use crate::status::OrderStatus;
+ 
+ pub fn pay(order: &mut Order) -> Result<(), String> {
+-    if order.status != "pending" {
+-        return Err(format!("order {} cannot be paid: it is {}", order.id, order.status));
++    if order.status != OrderStatus::Pending {
++        return Err(format!(
++            "order {} cannot be paid: it is {}",
++            order.id, order.status
++        ));
+     }
+-    order.status = "paid".to_string();
++    order.status = OrderStatus::Paid;
+     Ok(())
+ }
+ 
+@@ -12,7 +16,7 @@ pub fn pay(order: &mut Order) -> Result<(), String> {
+ pub fn outstanding_cents(orders: &[Order]) -> u64 {
+     orders
+         .iter()
+-        .filter(|o| o.status == "pending")
++        .filter(|o| o.status == OrderStatus::Pending)
+         .map(|o| o.total_cents)
+         .sum()
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 7c4d99c..ce702d5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,5 +4,7 @@ pub mod billing;
+ pub mod order;
+ pub mod report;
+ pub mod shipping;
++pub mod status;
+ 
+ pub use order::Order;
++pub use status::{OrderStatus, ParseStatusError};
+diff --git a/src/order.rs b/src/order.rs
+index a252f7a..53fabfb 100644
+--- a/src/order.rs
++++ b/src/order.rs
+@@ -1,9 +1,11 @@
++use crate::status::OrderStatus;
++
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct Order {
+     pub id: u32,
+     pub customer: String,
+     pub total_cents: u64,
+-    pub status: String,
++    pub status: OrderStatus,
+ }
+ 
+ impl Order {
+@@ -12,20 +14,23 @@ impl Order {
+             id,
+             customer: customer.to_string(),
+             total_cents,
+-            status: "pending".to_string(),
++            status: OrderStatus::Pending,
+         }
+     }
+ 
+     /// Still expected to move: not shipped and not cancelled.
+     pub fn is_open(&self) -> bool {
+-        self.status == "pending" || self.status == "paid"
++        matches!(self.status, OrderStatus::Pending | OrderStatus::Paid)
+     }
+ 
+     pub fn cancel(&mut self) -> Result<(), String> {
+-        if self.status == "shipped" || self.status == "cancelled" {
+-            return Err(format!("order {} cannot be cancelled: it is {}", self.id, self.status));
++        if !self.status.can_transition_to(OrderStatus::Cancelled) {
++            return Err(format!(
++                "order {} cannot be cancelled: it is {}",
++                self.id, self.status
++            ));
+         }
+-        self.status = "cancelled".to_string();
++        self.status = OrderStatus::Cancelled;
+         Ok(())
+     }
+ }
+diff --git a/src/report.rs b/src/report.rs
+index 5a076b2..19f8d75 100644
+--- a/src/report.rs
++++ b/src/report.rs
+@@ -1,21 +1,26 @@
+-use std::collections::BTreeMap;
++use std::{collections::BTreeMap, str::FromStr};
+ 
+ use crate::order::Order;
+-
+-const KNOWN: [&str; 4] = ["pending", "paid", "shipped", "cancelled"];
++use crate::status::OrderStatus;
+ 
+ /// How many orders are in each status, sorted by status name.
+ pub fn status_counts(orders: &[Order]) -> Vec<(String, usize)> {
+-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
++    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+     for order in orders {
+-        *counts.entry(order.status.clone()).or_default() += 1;
++        *counts.entry(order.status.as_str()).or_default() += 1;
+     }
+-    counts.into_iter().collect()
++    counts
++        .into_iter()
++        .map(|(status, n)| (status.to_string(), n))
++        .collect()
+ }
+ 
+ /// One CSV line: `id,customer,total_cents,status`.
+ pub fn to_line(order: &Order) -> String {
+-    format!("{},{},{},{}", order.id, order.customer, order.total_cents, order.status)
++    format!(
++        "{},{},{},{}",
++        order.id, order.customer, order.total_cents, order.status
++    )
+ }
+ 
+ pub fn from_line(line: &str) -> Result<Order, String> {
+@@ -23,15 +28,17 @@ pub fn from_line(line: &str) -> Result<Order, String> {
+     if fields.len() != 4 {
+         return Err(format!("expected 4 fields, got {}", fields.len()));
+     }
+-    let id = fields[0].parse().map_err(|e| format!("bad id {:?}: {e}", fields[0]))?;
+-    let total_cents = fields[2].parse().map_err(|e| format!("bad total {:?}: {e}", fields[2]))?;
+-    if !KNOWN.contains(&fields[3]) {
+-        return Err(format!("unknown status {:?}", fields[3]));
+-    }
++    let id = fields[0]
++        .parse()
++        .map_err(|e| format!("bad id {:?}: {e}", fields[0]))?;
++    let total_cents = fields[2]
++        .parse()
++        .map_err(|e| format!("bad total {:?}: {e}", fields[2]))?;
++    let status = OrderStatus::from_str(fields[3]).map_err(|e| e.to_string())?;
+     Ok(Order {
+         id,
+         customer: fields[1].to_string(),
+         total_cents,
+-        status: fields[3].to_string(),
++        status,
+     })
+ }
+diff --git a/src/shipping.rs b/src/shipping.rs
+index b6c9ea4..8c2631a 100644
+--- a/src/shipping.rs
++++ b/src/shipping.rs
+@@ -1,10 +1,14 @@
+ use crate::order::Order;
++use crate::status::OrderStatus;
+ 
+ pub fn ship(order: &mut Order) -> Result<(), String> {
+-    if order.status != "paid" {
+-        return Err(format!("order {} cannot be shipped: it is {}", order.id, order.status));
++    if order.status != OrderStatus::Paid {
++        return Err(format!(
++            "order {} cannot be shipped: it is {}",
++            order.id, order.status
++        ));
+     }
+-    order.status = "shipped".to_string();
++    order.status = OrderStatus::Shipped;
+     Ok(())
+ }
+ 
+@@ -12,7 +16,7 @@ pub fn ship(order: &mut Order) -> Result<(), String> {
+ pub fn ready_to_ship(orders: &[Order]) -> Vec<u32> {
+     orders
+         .iter()
+-        .filter(|o| o.status == "paid")
++        .filter(|o| o.status == OrderStatus::Paid)
+         .map(|o| o.id)
+         .collect()
+ }
+diff --git a/src/status.rs b/src/status.rs
+new file mode 100644
+index 0000000..6d8b7ec
+--- /dev/null
++++ b/src/status.rs
+@@ -0,0 +1,65 @@
++use std::{error::Error, fmt, str::FromStr};
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
++pub enum OrderStatus {
++    Pending,
++    Paid,
++    Shipped,
++    Cancelled,
++}
++
++impl OrderStatus {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Pending => "pending",
++            Self::Paid => "paid",
++            Self::Shipped => "shipped",
++            Self::Cancelled => "cancelled",
++        }
++    }
++
++    pub fn can_transition_to(self, next: Self) -> bool {
++        matches!(
++            (self, next),
++            (Self::Pending, Self::Paid)
++                | (Self::Pending, Self::Cancelled)
++                | (Self::Paid, Self::Shipped)
++                | (Self::Paid, Self::Cancelled)
++        )
++    }
++}
++
++impl fmt::Display for OrderStatus {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.write_str((*self).as_str())
++    }
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct ParseStatusError {
++    rejected: String,
++}
++
++impl fmt::Display for ParseStatusError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(f, "unknown status {:?}", self.rejected)
++    }
++}
++
++impl Error for ParseStatusError {}
++
++impl FromStr for OrderStatus {
++    type Err = ParseStatusError;
++
++    fn from_str(value: &str) -> Result<Self, Self::Err> {
++        match value {
++            "pending" => Ok(Self::Pending),
++            "paid" => Ok(Self::Paid),
++            "shipped" => Ok(Self::Shipped),
++            "cancelled" => Ok(Self::Cancelled),
++            _ => Err(ParseStatusError {
++                rejected: value.to_string(),
++            }),
++        }
++    }
++}
+diff --git a/tests/orders.rs b/tests/orders.rs
+index 62d9b83..af0dc50 100644
+--- a/tests/orders.rs
++++ b/tests/orders.rs
+@@ -1,4 +1,4 @@
+-use orders::{billing, report, shipping, Order};
++use orders::{billing, report, shipping, Order, OrderStatus};
+ 
+ fn status(order: &Order) -> String {
+     order.status.to_string()
+@@ -7,11 +7,11 @@ fn status(order: &Order) -> String {
+ #[test]
+ fn an_order_moves_through_its_lifecycle() {
+     let mut order = Order::new(1, "ada", 1200);
+-    assert_eq!(status(&order), "pending");
++    assert_eq!(status(&order), OrderStatus::Pending.as_str());
+     billing::pay(&mut order).unwrap();
+-    assert_eq!(status(&order), "paid");
++    assert_eq!(status(&order), OrderStatus::Paid.as_str());
+     shipping::ship(&mut order).unwrap();
+-    assert_eq!(status(&order), "shipped");
++    assert_eq!(status(&order), OrderStatus::Shipped.as_str());
+     assert!(!order.is_open());
+     assert!(order.cancel().is_err());
+ }
+@@ -20,10 +20,16 @@ fn an_order_moves_through_its_lifecycle() {
+ fn illegal_steps_are_refused_with_the_current_status() {
+     let mut order = Order::new(2, "bob", 500);
+     let err = shipping::ship(&mut order).unwrap_err();
+-    assert_eq!(err, "order 2 cannot be shipped: it is pending");
++    assert_eq!(
++        err,
++        format!("order 2 cannot be shipped: it is {}", OrderStatus::Pending)
++    );
+     order.cancel().unwrap();
+     let err = billing::pay(&mut order).unwrap_err();
+-    assert_eq!(err, "order 2 cannot be paid: it is cancelled");
++    assert_eq!(
++        err,
++        format!("order 2 cannot be paid: it is {}", OrderStatus::Cancelled)
++    );
+ }
+ 
+ #[test]
+@@ -40,12 +46,38 @@ fn reports_count_and_round_trip() {
+         .collect();
+     assert_eq!(
+         counts,
+-        [("cancelled".into(), 1), ("paid".into(), 1), ("pending".into(), 1)]
++        [
++            (OrderStatus::Cancelled.as_str().into(), 1),
++            (OrderStatus::Paid.as_str().into(), 1),
++            (OrderStatus::Pending.as_str().into(), 1)
++        ]
+     );
+     assert_eq!(billing::outstanding_cents(&orders), 250);
+     assert_eq!(shipping::ready_to_ship(&orders), [1]);
+     let line = report::to_line(&a);
+-    assert_eq!(line, "1,ada,100,paid");
++    assert_eq!(line, format!("1,ada,100,{}", OrderStatus::Paid));
+     assert_eq!(report::from_line(&line).unwrap(), a);
+     assert!(report::from_line("4,dee,1,lost").is_err());
+ }
++
++#[test]
++fn status_parsing_and_transitions_match_the_lifecycle() {
++    use std::str::FromStr;
++
++    for status in [
++        OrderStatus::Pending,
++        OrderStatus::Paid,
++        OrderStatus::Shipped,
++        OrderStatus::Cancelled,
++    ] {
++        assert_eq!(OrderStatus::from_str(status.as_str()).unwrap(), status);
++        assert_eq!(status.to_string(), status.as_str());
++    }
++    assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Paid));
++    assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Cancelled));
++    assert!(OrderStatus::Paid.can_transition_to(OrderStatus::Shipped));
++    assert!(OrderStatus::Paid.can_transition_to(OrderStatus::Cancelled));
++    assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Cancelled));
++    let error = OrderStatus::from_str("lost").unwrap_err();
++    assert_eq!(error.to_string(), "unknown status \"lost\"");
++}

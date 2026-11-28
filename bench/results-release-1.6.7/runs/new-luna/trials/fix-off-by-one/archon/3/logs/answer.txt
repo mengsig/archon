@@ -1,0 +1,14 @@
+Queued **Fix sliding window boundary** (`qi_01M8GRW53N25KMD8VFW0Y0FC1P`). The item requires the fix to pass `python3 -m unittest`, preserve correct boundary behavior, leave tests unchanged, and commit the change.
+
+Done: Fix sliding window boundary. Fixed sliding_windows to include every valid start position, including the final and whole-sequence windows. python3 -m unittest passes (3 tests); additional boundary checks pass (6 valid cases, 2 invalid sizes). Committed as 8b2a1c649a747a44bb0fbf819e63f78611e28748; no remaining work.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 8b2a1c649a747a44bb0fbf819e63f78611e28748 on the run branch
+Branch `archon/w0y0fc1p-fix-sliding-window-boundary` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/ea6a23351a01ba1909bb61fc/fix-off-by-one holds it (1 file changed, 1 insertion(+), 1 deletion(-)). Review: `archon diff qi_01M8GRW53N25KMD8VFW0Y0FC1P`; land it in `main`: `archon merge qi_01M8GRW53N25KMD8VFW0Y0FC1P`.
+
+Fixed sliding_windows to include every valid start position, including the final and whole-sequence windows. python3 -m unittest passes (3 tests); additional boundary checks pass (6 valid cases, 2 invalid sizes). Committed as 8b2a1c649a747a44bb0fbf819e63f78611e28748; no remaining work.
+
+REVIEW: none, as this item's review level asks
+
+SHIPPED: commit 8b2a1c649a747a44bb0fbf819e63f78611e28748 on the run branch

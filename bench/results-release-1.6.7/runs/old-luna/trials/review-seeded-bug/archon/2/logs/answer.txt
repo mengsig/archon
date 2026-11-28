@@ -1,0 +1,11 @@
+## Findings
+
+1. **Critical — `verify`: accepts unsigned or truncated signatures**  
+   [src/tokens.js:27](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/bcb99cd07bd73ad7818dc472/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:27)  
+   `expected.startsWith(signature)` accepts an empty signature and any prefix of the real HMAC. For example, a token whose body is the base64url encoding of `{"user":"root","exp":9999999999999}`, followed by a period (`body + "."`), passes verification with any secret. A one-character signature also has a 1-in-64 chance of matching. This allows forged session claims; require a complete, correctly sized signature and compare it safely.
+
+2. **Medium — `verify`: malformed tokens can throw instead of returning `null`**  
+   [src/tokens.js:28-29](/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/bcb99cd07bd73ad7818dc472/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js:28)  
+   With the empty-signature bypass, a token like `bnVsbA.` decodes to JSON `null`; accessing `payload.exp` then throws a `TypeError`. Invalid JSON can likewise make `JSON.parse` throw. If callers don’t catch these exceptions, an unauthenticated request can trigger errors or disrupt request handling. Reject malformed payloads and handle parse failures.
+
+This is a static review of the mirror’s `session-lib` code; I did not modify files or run tests.

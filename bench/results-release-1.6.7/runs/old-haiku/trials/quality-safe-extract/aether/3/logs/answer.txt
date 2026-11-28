@@ -1,0 +1,35 @@
+Implemented `extract(entries, root)` in safe_extract.py per SPEC.md and added focused stdlib unittest coverage in test_safe_extract.py. Committed as 2b1306e on main. All 27 tests pass (`python3 -m unittest -v test_safe_extract`).
+
+Behaviour:
+- Batch must be a `list` (tuples, iterators, generators, None, etc. rejected with ValueError, even when empty; not consumed).
+- Root must be a non-empty str or Path naming an existing real directory (not a symlink).
+- Every entry is validated before any write: tuple of length 2, str name, bytes data. Names must be non-empty relative paths with no empty, '.' or '..' components and no backslash, colon, or NUL. Names are not normalized, and literal '%' is kept.
+- Duplicate names and ancestor/file collisions are rejected in either order.
+- For each target, `lstat` walks the components below root: any symlink (including dangling) is rejected, intermediates must be directories, and the target must be absent.
+- Validation is read-only. Only after the whole batch passes are missing parent directories created and files written. Files are opened with O_EXCL, so nothing is overwritten or followed.
+
+Assumptions I made where the spec was open:
+- Entries must be tuples. A 2-element list is rejected as malformed.
+- Names that are not UTF-8 encodable (e.g. lone surrogates) are rejected as malformed.
+- A Path root is accepted as given; only the root itself is checked for symlinks, not its ancestors. The spec scopes the symlink rule to components below root.
+- Commit used the repo's configured git identity (mengsig). I left out the Co-Authored-By trailer because CLAUDE.md forbids Claude attribution in commits.
+
+Not covered by validation: I/O errors and races during writing (out of scope per spec), and case-insensitive collisions on macOS-style filesystems. These surface as OSError from O_EXCL or the write rather than being pre-checked.
+
+`extract(entries, root)` is implemented in `safe_extract.py` per `SPEC.md`, with focused tests in `test_safe_extract.py`. The work is committed as `2b1306e` on `main`. All 27 tests pass with `python3 -m unittest -v test_safe_extract`.
+
+**How it behaves**
+- **Batch:** must be a `list`. Tuples, iterators, generators and other types raise `ValueError` even when empty, and are not consumed.
+- **Root:** must be a non-empty `str` or `Path` naming an existing real directory, not a symlink.
+- **Entries:** each must be a 2-tuple with a `str` name and `bytes` data. Names must be relative paths with no empty, `.` or `..` components, and no backslash, colon or NUL. Names are not normalized, and literal `%` is kept.
+- **Collisions:** duplicate names and ancestor/file collisions (`a` with `a/b`) are rejected in either order.
+- **Targets:** each path is checked with `lstat` below root. Any symlink, including a dangling one, is rejected. Intermediates must be directories, and the target must not exist.
+- **Writes:** validation is read-only. Only after the whole batch passes are missing parent directories created and files written. Files are opened with `O_EXCL`, so nothing is overwritten or followed.
+
+**Assumptions where the spec was open**
+- Entries must be tuples, so a 2-element list is rejected as malformed.
+- Names that cannot be encoded as UTF-8 (e.g. lone surrogates) are rejected.
+- Only the root itself is checked for being a symlink, not its ancestors. The spec scopes the symlink rule to components below root.
+- I used the repo's configured git identity (`mengsig`, `[redacted-email]`). I left out the Co-Authored-By trailer because CLAUDE.md forbids Claude attribution in commits.
+
+**Not covered by validation:** I/O errors and races during writing, which the spec puts out of scope, and case-insensitive collisions on filesystems such as macOS's default. These surface as `OSError` from `O_EXCL` or the write rather than being caught up front.

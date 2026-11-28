@@ -1,0 +1,133 @@
+diff --git a/README.md b/README.md
+index bfda2ff..2e5051e 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,12 @@
+ Client for `inventory-api`. Every function takes a `transport`,
+ `async (request) => response`, so callers choose HTTP, IPC or a fake.
+ 
+-- `listItems(transport)` → every item, ordered by `id`.
++- `listItems(transport)` → every item, ordered by `id`. It sends `GET /items`
++  with no cursor, then follows
++  `next_cursor` from each response, passing the cursor back unchanged, until
++  `next_cursor` is `null` or absent. A transport failure or a non-200 response
++  (including 400) on any page rejects the whole call; no partial list is
++  returned.
+ - `getItem(transport, id)` → one item; rejects on any non-200 response.
+ - `lowStock(items, threshold)` → SKUs with `qty` below the threshold.
+ 
+diff --git a/client.js b/client.js
+index 6825096..8cf76ef 100644
+--- a/client.js
++++ b/client.js
+@@ -12,8 +12,23 @@ async function request(transport, path, query = {}) {
+ }
+ 
+ async function listItems(transport) {
+-  const body = await request(transport, '/items');
+-  return body.items;
++  const items = [];
++  const seenCursors = new Set();
++  let query = {};
++  for (;;) {
++    const body = await request(transport, '/items', query);
++    if (!Array.isArray(body.items)) {
++      throw new Error(`GET /items returned no items array: ${JSON.stringify(body)}`);
++    }
++    items.push(...body.items);
++    const next = body.next_cursor;
++    if (next === undefined || next === null) return items;
++    if (seenCursors.has(next)) {
++      throw new Error(`GET /items returned a cursor already followed: ${next}`);
++    }
++    seenCursors.add(next);
++    query = { cursor: next };
++  }
+ }
+ 
+ async function getItem(transport, id) {
+diff --git a/test/client.test.js b/test/client.test.js
+index db0605e..2c3f818 100644
+--- a/test/client.test.js
++++ b/test/client.test.js
+@@ -16,10 +16,80 @@ async function singlePage(request) {
+   return { status: 404, body: { error: 'not found' } };
+ }
+ 
++const PAGES = {
++  '': { items: [ITEMS[0]], next_cursor: 'c1' },
++  c1: { items: [ITEMS[1]], next_cursor: 'c2' },
++  c2: { items: [{ id: 3, sku: 'SKU-0003', qty: 0 }], next_cursor: null },
++};
++
++function paged(pages) {
++  const sent = [];
++  const transport = async (request) => {
++    sent.push(request);
++    const page = pages[request.query.cursor ?? ''];
++    if (page === undefined) return { status: 400, body: { error: 'invalid cursor' } };
++    return { status: 200, body: page };
++  };
++  return { transport, sent };
++}
++
+ test('lists items', async () => {
+   assert.deepEqual(await listItems(singlePage), ITEMS);
+ });
+ 
++test('follows next_cursor across pages in order', async () => {
++  const { transport, sent } = paged(PAGES);
++  const items = await listItems(transport);
++  assert.deepEqual(items.map((item) => item.id), [1, 2, 3]);
++  assert.deepEqual(
++    sent.map((request) => request.query),
++    [{}, { cursor: 'c1' }, { cursor: 'c2' }],
++  );
++});
++
++test('a single page with null next_cursor is one request', async () => {
++  const { transport, sent } = paged({ '': { items: ITEMS, next_cursor: null } });
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.equal(sent.length, 1);
++});
++
++test('an absent next_cursor ends the listing', async () => {
++  const { transport, sent } = paged({ '': { items: ITEMS } });
++  assert.deepEqual(await listItems(transport), ITEMS);
++  assert.equal(sent.length, 1);
++});
++
++test('rejects with the 400 when a later page fails', async () => {
++  const pages = { '': { items: ITEMS, next_cursor: 'bad' } };
++  await assert.rejects(listItems(paged(pages).transport), /400/);
++});
++
++test('rejects when the transport fails mid-way', async () => {
++  let calls = 0;
++  const transport = async () => {
++    calls += 1;
++    if (calls === 1) return { status: 200, body: { items: ITEMS, next_cursor: 'c1' } };
++    throw new Error('socket hang up');
++  };
++  await assert.rejects(listItems(transport), /socket hang up/);
++});
++
++test('rejects when a cursor repeats instead of looping forever', async () => {
++  const pages = { '': { items: ITEMS, next_cursor: 'c1' }, c1: { items: [], next_cursor: 'c1' } };
++  await assert.rejects(listItems(paged(pages).transport), /already followed/);
++});
++
++test('rejects a longer cursor cycle instead of looping forever', async () => {
++  const pages = {
++    '': { items: ITEMS, next_cursor: 'c1' },
++    c1: { items: [], next_cursor: 'c2' },
++    c2: { items: [], next_cursor: 'c1' },
++  };
++  const { transport, sent } = paged(pages);
++  await assert.rejects(listItems(transport), /already followed/);
++  assert.equal(sent.length, 3);
++});
++
+ test('gets one item and reports failures', async () => {
+   assert.equal((await getItem(singlePage, 2)).sku, 'SKU-0002');
+   await assert.rejects(getItem(singlePage, 9), /404/);

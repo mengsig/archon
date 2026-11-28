@@ -1,0 +1,3 @@
+Implemented `TokenBucket` refill, acquisition, availability, and wait-time behavior, plus `KeyedLimiter` with LRU eviction. Backward clock readings do not change bucket state, and invalid requests are rejected before keyed state changes.
+
+Committed as `62f9658` (`Implement token bucket rate limiter`). `git diff --check` passed; tests were not run.

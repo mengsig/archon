@@ -207,6 +207,14 @@ pub trait BrowserFactory: Send + Sync {
     ) -> Result<Arc<dyn adb::UpstreamGuard>, ArchonError> {
         super::server_origin::verify(worktree, url).await
     }
+    /// Check that the page and the recipe's readiness checks answer.
+    async fn check_stack(
+        &self,
+        url: &str,
+        recipe: Option<&archon_core::design::recipe::PreviewRecipe>,
+    ) -> Result<(), ArchonError> {
+        super::recipe::check_stack(url, recipe).await
+    }
     async fn launch(
         &self,
         spec: adb::LaunchSpec,

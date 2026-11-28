@@ -1,0 +1,36 @@
+Enqueued initiative **Add currency-aware ledger exports and reports** as `ini_01M8GMFD9GY3NFK0243P5SCBMA`.
+
+- `ledger`: `qi_01M8GMFD9MTF9FBEE88RC4CJK9`
+- `reports`: `qi_01M8GMFJ021JZPR4Z9WXCE0193`
+
+Both are queued with the shared CSV contract, README updates, requested test commands, and local commits.
+
+Done: Group report totals by currency. Updated the Python CSV report reader to aggregate by account and currency, default legacy CSV to USD, validate supplied currency codes, and document the schema. python3 -m unittest passed (3 tests); git diff --check passed. Committed as 5996ed2; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMJN30Y47KJZCN3SYEWQJ1)
+
+SHIPPED: commit 5996ed2886b3da27bdbf2f403044bf1c419c8840 on the run branch
+Branch `archon/wxce0193-group-report-totals-by-currency` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/b7c4440cc9538283b8af87ab/reports holds it (3 files changed, 52 insertions(+), 14 deletions(-)). Review: `archon diff qi_01M8GMFJ021JZPR4Z9WXCE0193`; land it in `main`: `archon merge qi_01M8GMFJ021JZPR4Z9WXCE0193`.
+
+Done: Emit validated currency codes from ledger. Added optional validated TSV currency output with USD default, status 2 for malformed currency, and status 1 for other input errors. Updated README and added parser plus CLI integration coverage. cargo fmt and cargo test pass; independent review passed after a test coverage fix. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMKPE047RFJY3YR13ABR46), codex/gpt-6-luna (agent agt_01M8GMPCJVZ98NKD931270Q9CB)
+
+SHIPPED: commit 9b67c58eeeee9c9b72b29f1609528e501e71527c on the run branch
+Branch `archon/8rc4cjk9-emit-validated-currency-codes-from-ledge` in /home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-lzwaa8jj/archon-bench/work/20261128T072020Z/b7c4440cc9538283b8af87ab/ledger holds it (4 files changed, 85 insertions(+), 13 deletions(-)). Review: `archon diff qi_01M8GMFD9MTF9FBEE88RC4CJK9`; land it in `main`: `archon merge qi_01M8GMFD9MTF9FBEE88RC4CJK9`.
+
+Initiative finished; coordinated result queued.
+
+Freed 0.0 GiB of build output: item qi_01M8GMFD9MTF9FBEE88RC4CJK9 ended and its cargo target directory went.
+
+Updated the Python CSV report reader to aggregate by account and currency, default legacy CSV to USD, validate supplied currency codes, and document the schema. python3 -m unittest passed (3 tests); git diff --check passed. Committed as 5996ed2; independent review passed with no findings.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMJN30Y47KJZCN3SYEWQJ1)
+
+SHIPPED: commit 5996ed2886b3da27bdbf2f403044bf1c419c8840 on the run branch
+
+Added optional validated TSV currency output with USD default, status 2 for malformed currency, and status 1 for other input errors. Updated README and added parser plus CLI integration coverage. cargo fmt and cargo test pass; independent review passed after a test coverage fix. Nothing remains open.
+
+REVIEW: pass, by codex/gpt-6-luna (agent agt_01M8GMKPE047RFJY3YR13ABR46), codex/gpt-6-luna (agent agt_01M8GMPCJVZ98NKD931270Q9CB)
+
+SHIPPED: commit 9b67c58eeeee9c9b72b29f1609528e501e71527c on the run branch

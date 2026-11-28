@@ -1,0 +1,3 @@
+Implemented and committed as `afb1a11` (`Refactor order status to enum`).
+
+`OrderStatus` now owns status parsing, display, and lifecycle transitions. `Order::status` uses the enum, and report output and error messages remain compatible. `cargo test` passed (3 integration tests), and the working tree is clean.

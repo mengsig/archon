@@ -1,0 +1,199 @@
+[
+  {
+    "acceptance": {
+      "status": "not_required"
+    },
+    "item": {
+      "id": "qi_01M8GKREM7J990WT4TGFZ87ADG",
+      "repo": "repo_01M8GKQJK400YM2BWHXW37ZH8R",
+      "pipeline": "direct",
+      "title": "Implement spec-compliant rate limiter",
+      "brief": "Implement the rate limiter described in SPEC.md in ratelimit.py, which currently contains stubs. Follow SPEC.md exactly, including all error cases and edge cases; do not rely only on the basic coverage in test_ratelimit.py. Keep the implementation dependency-free using only the Python standard library. Add or update tests as needed to cover the spec's behavior and edge cases, run the relevant test suite, and commit the completed work. Acceptance criteria: behavior matches SPEC.md; tests cover error and edge cases beyond basic existing tests; no third-party dependencies; changes are committed.",
+      "priority": "normal",
+      "dependencies": [],
+      "tags": [],
+      "model_plan": {
+        "implement": [
+          {
+            "model": {
+              "provider": "codex",
+              "model": "gpt-6-luna"
+            },
+            "effort": "medium",
+            "tier": {
+              "requested": "balanced",
+              "resolved": "fast"
+            }
+          }
+        ]
+      },
+      "model_origins": {
+        "item": "qi_01M8GKREM7J990WT4TGFZ87ADG",
+        "entries": {
+          "implement": [
+            {
+              "model": {
+                "source": "tier",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:45.627957140Z"
+              },
+              "effort": {
+                "source": "sizer",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:45.644132652Z",
+                "note": "was fallback: medium"
+              },
+              "tier": {
+                "source": "fallback",
+                "by": "daemon",
+                "at": "2026-11-28T08:18:45.627957140Z"
+              }
+            }
+          ]
+        }
+      },
+      "effort_sizing": {
+        "risk_class": "ordinary",
+        "keys": {
+          "implement": {
+            "risk_class": "ordinary",
+            "facts": {
+              "base": "medium",
+              "checks": false
+            },
+            "cap": "medium",
+            "reasons": [
+              "sizer: ordinary -> medium; unchanged"
+            ]
+          }
+        }
+      },
+      "budget_usd": null,
+      "autonomy": {
+        "review": "none",
+        "proposal": "off",
+        "report": "off",
+        "merge": "manual",
+        "tools": "guarded"
+      },
+      "fresh_retries": 0,
+      "state": {
+        "state": "succeeded",
+        "run": "prun_01M8GKRF9XQGTF516F6XNS8KFE",
+        "summary": "Implemented the spec-compliant token bucket and keyed LRU limiter, with edge-case tests for validation, fractional refill, clock rollback, wait behavior, and eviction. Final verification passed: 8 unit tests, diff check, and Python compilation. Committed as 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec; tree 0ae600c1cff272abcf56bcb67302877669c8bf27.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec on the run branch"
+      },
+      "created_at": "2026-11-28T08:18:44.999872968Z",
+      "updated_at": "2026-11-28T08:20:39.353087512Z"
+    },
+    "runs": [
+      {
+        "id": "prun_01M8GKRF9XQGTF516F6XNS8KFE",
+        "item": "qi_01M8GKREM7J990WT4TGFZ87ADG",
+        "pipeline": "direct",
+        "shipped": true,
+        "aether_run": "run_01M8GKRFHV88S2KF6SYVJR19K8",
+        "workspace": "/home/mengsig/.local/share/archon-bench/release-167-R4V9TB/r-a7e9g5pr/archon-bench/work/20261128T072017Z/206a617ac27a9f77ab57e64b/.archon/data/worktrees/feature-token-bucket/qi_01M8GKREM7J990WT4TGFZ87ADG",
+        "branch": "archon/gfz87adg-implement-spec-compliant-rate-limiter",
+        "state": {
+          "state": "succeeded",
+          "summary": "Implemented the spec-compliant token bucket and keyed LRU limiter, with edge-case tests for validation, fractional refill, clock rollback, wait behavior, and eviction. Final verification passed: 8 unit tests, diff check, and Python compilation. Committed as 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec; tree 0ae600c1cff272abcf56bcb67302877669c8bf27.\n\nREVIEW: none, as this item's review level asks\n\nSHIPPED: commit 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec on the run branch"
+        },
+        "cost_usd": 0.010296960000000004,
+        "started_at": "2026-11-28T08:18:45.874488909Z",
+        "finished_at": "2026-11-28T08:20:39.353087512Z"
+      }
+    ],
+    "stages": [
+      {
+        "id": "stg_01M8GKRFH4E3ECEJD8JGDG6WKX",
+        "run": "prun_01M8GKRF9XQGTF516F6XNS8KFE",
+        "stage_id": "implement",
+        "kind": "work",
+        "only_reviews": false,
+        "attempt": 1,
+        "fan_index": 0,
+        "choice": {
+          "model": {
+            "provider": "codex",
+            "model": "gpt-6-luna"
+          },
+          "effort": "medium",
+          "tier": {
+            "requested": "balanced",
+            "resolved": "fast"
+          }
+        },
+        "infrastructure_failure": false,
+        "host_context": "full",
+        "record_repair": "open",
+        "aether_agent": "agt_01M8GKRFJW7DKNDBJMNGV0WNWV",
+        "aether_task": "tsk_01M8GKRFJWZXPAJ7GA5XQGX69V",
+        "state": {
+          "state": "completed"
+        },
+        "verdict": "unknown",
+        "risk_class": "ordinary",
+        "effort_source": "sizer",
+        "effort_reasons": "sizer: ordinary -> medium; unchanged",
+        "summary": "Implemented the spec-compliant token bucket and keyed LRU limiter, with edge-case tests for validation, fractional refill, clock rollback, wait behavior, and eviction. Final verification passed: 8 unit tests, diff check, and Python compilation. Committed as 56f7fe3244c9386c4b0836738f393bf1ed5cd5ec; tree 0ae600c1cff272abcf56bcb67302877669c8bf27.",
+        "structured": {
+          "checks": [
+            "python -m unittest -v test_ratelimit (8 passed)",
+            "git diff --check HEAD^ HEAD (passed)",
+            "python -m py_compile ratelimit.py test_ratelimit.py (passed)"
+          ],
+          "commit": "56f7fe3244c9386c4b0836738f393bf1ed5cd5ec",
+          "evidence": [
+            {
+              "after": "Ran 8 tests in 0.001s\nOK",
+              "before": "Ran 3 tests in 0.001s\nFAILED (errors=3)\nAll errors raised NotImplementedError.",
+              "caption": "Before, the three existing tests failed on stubs; after, all 8 existing and added tests pass.",
+              "kind": "output"
+            }
+          ],
+          "local_commit": "56f7fe3244c9386c4b0836738f393bf1ed5cd5ec",
+          "pr": {
+            "body": "Implemented dependency-free TokenBucket and KeyedLimiter using the injected clock and standard-library OrderedDict. Added coverage for invalid parameters and requests, fractional refill, non-consuming wait calculations, refill caps, clock rollback, keyed validation, and LRU behavior. Final checks: all 8 unit tests passed, diff check passed, and both Python files compiled. Assumption: constructor/request numeric values follow the spec's stated comparison-based validation rules.",
+            "summary": "Implemented continuous token refill, acquisition and wait calculations, backward-clock handling, and keyed LRU eviction. Before: limiter methods raised NotImplementedError; now both classes follow SPEC.md.",
+            "title": "Implement spec-compliant token bucket limiter"
+          },
+          "risk": {
+            "level": "medium",
+            "why": "Contained behavior change in ratelimit.py with tests in test_ratelimit.py. Changes are isolated to the documented rate-limiter API; all 8 tests and syntax/diff checks pass. No persistence, external dependencies, concurrency primitives, or caller code were changed."
+          },
+          "tree": "0ae600c1cff272abcf56bcb67302877669c8bf27"
+        },
+        "cost_usd": 0.010296960000000004,
+        "started_at": "2026-11-28T08:18:45.924233065Z",
+        "finished_at": "2026-11-28T08:20:39.087910546Z"
+      }
+    ],
+    "spent_usd": 0.010296960000000004,
+    "gates": [],
+    "plan_origins": {
+      "implement": [
+        {
+          "model": {
+            "source": "tier",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:45.627957140Z"
+          },
+          "effort": {
+            "source": "sizer",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:45.644132652Z",
+            "note": "was fallback: medium"
+          },
+          "tier": {
+            "source": "fallback",
+            "by": "daemon",
+            "at": "2026-11-28T08:18:45.627957140Z"
+          }
+        }
+      ]
+    },
+    "default_efforts": {
+      "implement": "medium"
+    }
+  }
+]

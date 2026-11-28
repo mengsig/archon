@@ -253,29 +253,28 @@ Three trials per cell leave wide intervals, and a single task flip is within noi
 
 ### Commands
 
-From the repository root, at the candidate commit, with `gh` signed in. Stage the binaries first. `stage.sh` downloads Archon v1.6.6 and Aether v1.4.3 and v1.4.4 (x86_64 musl), checks each archive against its release's `SHA256SUMS`, unpacks it, builds the candidate with `cargo build --release --locked -p archon -p archon-bench`, and copies the results into `.work/bin`. It prints every SHA-256 and version for comparison with the table above.
+Run everything from the root of a checkout that has these scripts: this branch or later, not the candidate itself. The candidate `acaad050` predates the scripts. `stage.sh` therefore exports it with `git archive` into `.work/candidate-source` and builds it there with `cargo build --release --locked -p archon -p archon-bench`. It also downloads Archon v1.6.6 and Aether v1.4.3 and v1.4.4 (x86_64 musl, which needs `gh` signed in), checks each archive against its release's `SHA256SUMS` and unpacks it. Finally it copies everything to where `run.py` looks and prints every SHA-256 and version for comparison with the table above. Set `CARGO_TARGET_DIR` to an absolute path, or leave it unset to build in `.work/candidate-source/target`.
 
 ```sh
-export CARGO_TARGET_DIR=<your cargo target dir>   # default: target
-sh bench/results-release-1.6.7/scripts/stage.sh
+git clone https://github.com/mengsig/archon.git && cd archon
+git checkout <this branch or a later commit>
+sh bench/results-release-1.6.7/scripts/stage.sh acaad050
 ```
 
-Start the load logger, then all four runs side by side, each from the repository root. `run.py` builds each run's private sandbox, copies the engine credentials into it (mode 600), runs the harness and removes the sandbox.
+Start the load logger, then all four runs side by side. `run.py` builds each run's private sandbox, copies the engine credentials into it (mode 600), runs the harness and removes the sandbox. Raw runs land in `.work/<label>`.
 
 ```sh
-sh bench/results-release-1.6.7/scripts/loadlog.sh bench/results-release-1.6.7/.work/load.log & logger=$!
+W=bench/results-release-1.6.7/.work
+sh bench/results-release-1.6.7/scripts/loadlog.sh "$W/load.log" & logger=$!
 python3 -I bench/results-release-1.6.7/scripts/run.py old haiku old-haiku & p1=$!
 python3 -I bench/results-release-1.6.7/scripts/run.py old luna old-luna & p2=$!
 python3 -I bench/results-release-1.6.7/scripts/run.py new haiku new-haiku & p3=$!
 python3 -I bench/results-release-1.6.7/scripts/run.py new luna new-luna & p4=$!
 wait "$p1" "$p2" "$p3" "$p4"
 kill "$logger"
-cp bench/results-release-1.6.7/.work/load.log bench/results-release-1.6.7/load.log
 ```
 
-No run used `--only`.
-
-Each run executes:
+No run used `--only`. Each run executes:
 
 ```sh
 archon-bench run --archon-bin <sandbox>/bin/archon --aether-socket <sandbox>/run/a.sock \
@@ -283,15 +282,20 @@ archon-bench run --archon-bin <sandbox>/bin/archon --aether-socket <sandbox>/run
   --effort high --max-usd 37 --model <claude-code/claude-haiku-5-5|codex/gpt-6-luna>
 ```
 
-Then the reports. `collect.py` copies the trial records and redacts them. The last three steps run on the committed `runs/` and `load.log` alone, so they reproduce `summary.json`, `walltime.json` and `report.html` from this checkout:
+Then build the reports into a new, empty directory `F`. `F` must be outside `.work`, and it must not be this directory: the committed `runs/` holds this release's records, and `collect.py` refuses to mix them with a new run. `collect.py` copies and redacts the trial records and totals each run's spend from its usage database.
 
 ```sh
-python3 -I bench/results-release-1.6.7/scripts/collect.py bench/results-release-1.6.7/.work bench/results-release-1.6.7/runs
-python3 -I bench/results-release-1.6.7/scripts/analyze.py bench/results-release-1.6.7/runs bench/results-release-1.6.7
-python3 -I bench/results-release-1.6.7/scripts/walltime.py bench/results-release-1.6.7 bench/results-release-1.6.7/load.log > bench/results-release-1.6.7/walltime.json
-python3 -I bench/results-release-1.6.7/scripts/report.py bench/results-release-1.6.7 "<make ci result>"
+F=bench/results-release-1.6.7-rerun
+python3 -I bench/results-release-1.6.7/scripts/collect.py "$W" "$F/runs"
+python3 -I bench/results-release-1.6.7/scripts/analyze.py "$F/runs" "$F"
+python3 -I bench/results-release-1.6.7/scripts/walltime.py "$F" "$W/load.log" > "$F/walltime.json"
+python3 -I bench/results-release-1.6.7/scripts/report.py "$F" "<make ci result>"
 ```
 
-Afterwards, delete `bench/results-release-1.6.7/.work`. It holds the downloaded and built binaries and the unredacted raw runs.
+To rebuild this release's own reports from the committed records alone, run the last three steps with `F=bench/results-release-1.6.7` and `bench/results-release-1.6.7/load.log`. They reproduce `summary.json` and `walltime.json` byte for byte.
+
+`walltime.py` keeps this release's traced timeout cause and its host-job window (`TRACED_CAUSES`, `HOST_JOBS`). A new run's timeouts get the automatic cause from their logs.
+
+Afterwards, delete `.work`. It holds the downloaded and built binaries, the exported candidate source and the unredacted raw runs.
 
 `runs/` holds the trial records and grading evidence. The configured Git email is redacted in copied logs.
